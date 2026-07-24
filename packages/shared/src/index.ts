@@ -1,5 +1,5 @@
 /**
- * NekkoMCP shared types & contracts.
+ * Hypergate shared types & contracts.
  *
  * The core insight: every isolation mode reduces to "what command do we spawn
  * over stdio." Process = the server's own command; Docker = `docker run -i …`.
@@ -26,7 +26,7 @@ export type RemoteAuth = 'oauth' | 'none';
  */
 export type ServerState = 'stopped' | 'starting' | 'ready' | 'errored' | 'authorizing';
 
-/** A server NekkoMCP manages. Persisted in the daemon's config. */
+/** A server Hypergate manages. Persisted in the daemon's config. */
 export interface ManagedServerConfig {
   id: string;
   name: string;
@@ -151,7 +151,7 @@ export interface RegistryEntry {
    * an explicitly community (not first-party) pick; `undefined` = unknown.
    */
   official?: boolean;
-  /** In NekkoMCP's recommended set — sorts first and gets a ★ marker. */
+  /** In Hypergate's recommended set — sorts first and gets a ★ marker. */
   recommended?: boolean;
   /**
    * The registry namespace this entry was published under (e.g. `app.linear`,
@@ -176,7 +176,7 @@ export interface RegistryEntry {
 export type PopularityMap = Record<string, number>;
 
 /**
- * A command-line tool NekkoMCP knows about — usually a prerequisite for running
+ * A command-line tool Hypergate knows about — usually a prerequisite for running
  * some MCP servers (e.g. `flyctl` for the Fly server, `uvx` for Python servers,
  * `docker` for the Docker runtime). The CLIs section detects which are present.
  */
@@ -214,7 +214,7 @@ export interface CliCheckResult {
 }
 
 /**
- * Usage analytics — a first-class perk of routing through NekkoMCP: local,
+ * Usage analytics — a first-class perk of routing through Hypergate: local,
  * private visibility into *what* your agents actually call. Every gateway tool
  * call becomes a UsageEvent; the daemon aggregates them per server, per tool,
  * and per client. Nothing leaves the machine.
@@ -295,7 +295,7 @@ export interface AnalyticsSummary {
 /**
  * Serializable dump of the supervisor's analytics aggregates + event feed, so
  * usage survives a daemon restart. The daemon persists this to
- * `~/.nekko-mcp/analytics.json` and re-hydrates it on boot. Maps/Sets are
+ * `~/.hypergate/analytics.json` and re-hydrates it on boot. Maps/Sets are
  * flattened to arrays for JSON.
  */
 export interface AnalyticsSnapshot {
@@ -360,13 +360,13 @@ export interface AgentClientInfo extends AgentClient {
 
 /**
  * Desktop/service preferences for the local daemon. Persisted in
- * `~/.nekko-mcp/settings.json`. `runOnStartup` is backed by an OS autostart
+ * `~/.hypergate/settings.json`. `runOnStartup` is backed by an OS autostart
  * entry (Windows: an HKCU `…\Run` value launching the tray hidden);
  * `startMinimized` is read by the tray launcher to decide whether to open the
  * manager UI on launch or just sit in the notification area.
  */
 export interface DaemonSettings {
-  /** Launch NekkoMCP automatically when the user signs in. */
+  /** Launch Hypergate automatically when the user signs in. */
   runOnStartup: boolean;
   /** Stay in the tray on launch instead of opening the manager UI. */
   startMinimized: boolean;

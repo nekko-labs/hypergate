@@ -13,7 +13,7 @@ import type {
   PopularityMap,
   CliStatus,
   CliCheckResult,
-} from '@nekko-mcp/shared';
+} from '@hypergate/shared';
 import { api } from './api';
 
 type View = 'servers' | 'analytics' | 'settings';
@@ -51,14 +51,14 @@ const fmtClock = (iso: string): string => new Date(iso).toLocaleTimeString([], {
 /** Open a provider's OAuth sign-in in a popup window (falls back to a new tab). */
 const openAuth = (authUrl?: string): void => {
   if (!authUrl) return;
-  window.open(authUrl, 'nekko-oauth', 'width=600,height=760,noopener');
+  window.open(authUrl, 'hypergate-oauth', 'width=600,height=760,noopener');
 };
 
 const RUNTIME_CHIP: Record<string, string> = { docker: '🐳 docker', remote: '🌐 remote', process: '⚡ process' };
 
 /**
  * Order the catalog like the daemon's sortRegistry, but client-side (we don't
- * bundle @nekko-mcp/core into the browser): recommended entries first — keeping
+ * bundle @hypergate/core into the browser): recommended entries first — keeping
  * the daemon's authored order (kotrain, context7, supabase, linear, figma) — then
  * the rest by popularity desc, with a stable fallback to the original order.
  */
@@ -146,9 +146,9 @@ export function App() {
     <>
       <header className="topbar">
         <div className="topbar-in">
-          <div className="logo-tile">🐾</div>
-          <span className="wordmark">NekkoMCP</span>
-          <span className="chip">v0.6</span>
+          <div className="logo-tile"><img src="/favicon.svg" alt="" width="22" height="22" /></div>
+          <span className="wordmark">Hypergate</span>
+          <span className="chip">v0.7</span>
           <nav className="nav">
             <button className={view === 'servers' ? 'active' : ''} onClick={() => setView('servers')}>Servers</button>
             <button className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}>
@@ -162,7 +162,7 @@ export function App() {
             <span className="dot" />
             {offline ? 'daemon offline' : 'daemon up'}
           </span>
-          <a className="small muted" href="https://github.com/nekko-labs/nekko-mcp" target="_blank" rel="noreferrer">GitHub</a>
+          <a className="small muted" href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noreferrer">GitHub</a>
         </div>
       </header>
 
@@ -235,7 +235,7 @@ export function App() {
         <div className="footer">
           <span>Local-first · MIT · Nekko Labs</span>
           <div className="spacer" style={{ flex: 1 }} />
-          <a href="https://github.com/nekko-labs/nekko-mcp" target="_blank" rel="noreferrer">nekko-labs/nekko-mcp</a>
+          <a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noreferrer">nekko-labs/hypergate</a>
         </div>
       </div>
     </>
@@ -247,7 +247,7 @@ function ThemeSwitch() {
   const set = (t: Theme) => {
     setTheme(t);
     document.documentElement.setAttribute('data-theme', t);
-    try { localStorage.setItem('nekko-theme', t); } catch { /* ignore */ }
+    try { localStorage.setItem('hypergate-theme', t); } catch { /* ignore */ }
   };
   const opts: [Theme, string, string][] = [['light', '☀', 'Light'], ['medium', '◐', 'Medium'], ['dark', '☾', 'Dark']];
   return (
@@ -266,10 +266,10 @@ function GatewayBar({ gateway }: { gateway: GatewayInfo }) {
   const [tab, setTab] = useState<'claude' | 'json' | 'stdio' | 'openpaw'>('claude');
   const token = gateway.token ?? '';
   const snippets: Record<string, string> = {
-    claude: `claude mcp add -t http nekko-mcp ${gateway.url} -H "Authorization: Bearer ${token}"`,
+    claude: `claude mcp add -t http hypergate ${gateway.url} -H "Authorization: Bearer ${token}"`,
     json: JSON.stringify(gateway.clientSnippet, null, 2),
-    stdio: JSON.stringify(gateway.stdioSnippet ?? { mcpServers: { 'nekko-mcp': { command: 'nekko-mcpd', args: ['--stdio'] } } }, null, 2),
-    openpaw: 'Open Paw auto-detects NekkoMCP.\nSettings → MCP servers → "Connect NekkoMCP gateway" — one click, done.',
+    stdio: JSON.stringify(gateway.stdioSnippet ?? { mcpServers: { 'hypergate': { command: 'hypergated', args: ['--stdio'] } } }, null, 2),
+    openpaw: 'Open Paw auto-detects Hypergate.\nSettings → MCP servers → "Connect Hypergate gateway" — one click, done.',
   };
   return (
     <div className="gwbar">
@@ -482,7 +482,7 @@ function SettingsView() {
       <div className="pagehead">
         <div>
           <h1><span className="grad-text">Settings</span></h1>
-          <p>How NekkoMCP runs on this machine. Local-first — these only affect your own device.</p>
+          <p>How Hypergate runs on this machine. Local-first — these only affect your own device.</p>
         </div>
       </div>
 
@@ -496,7 +496,7 @@ function SettingsView() {
               label="Run on startup"
               desc={
                 s.startupSupported
-                  ? 'Launch NekkoMCP in the tray automatically when you sign in to Windows.'
+                  ? 'Launch Hypergate in the tray automatically when you sign in to Windows.'
                   : `Autostart isn't wired up on ${s.platform} yet — it's coming with the desktop shell.`
               }
               checked={s.runOnStartup}
@@ -542,8 +542,8 @@ function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
       <div className="callout">
         <span className="ic">🔎</span>
         <div>
-          <div className="t">Why route through NekkoMCP? You get an audit trail for free.</div>
-          <div className="d">Point agents at one gateway and NekkoMCP records every call — per server, per client, per byte — so you can see exactly what your tools are doing. No dashboards to wire up, no data leaving localhost.</div>
+          <div className="t">Why route through Hypergate? You get an audit trail for free.</div>
+          <div className="d">Point agents at one gateway and Hypergate records every call — per server, per client, per byte — so you can see exactly what your tools are doing. No dashboards to wire up, no data leaving localhost.</div>
         </div>
       </div>
 

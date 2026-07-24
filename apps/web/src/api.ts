@@ -10,7 +10,7 @@ import type {
   PopularityMap,
   CliStatus,
   CliCheckResult,
-} from '@nekko-mcp/shared';
+} from '@hypergate/shared';
 
 // Dev proxies /api → daemon; in a packaged build set VITE_DAEMON_URL.
 const BASE = (import.meta.env.VITE_DAEMON_URL ?? '').replace(/\/$/, '');

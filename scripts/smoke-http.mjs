@@ -11,10 +11,10 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 7877;
 const BASE = `http://localhost:${PORT}`;
-const DIR = mkdtempSync(join(tmpdir(), 'nekko-mcp-smoke-'));
+const DIR = mkdtempSync(join(tmpdir(), 'hypergate-smoke-'));
 
 const daemon = spawn(process.execPath, ['--experimental-strip-types', join(ROOT, 'apps/daemon/src/index.ts')], {
-  env: { ...process.env, NEKKO_MCP_DIR: DIR, PORT: String(PORT) },
+  env: { ...process.env, HYPERGATE_DIR: DIR, PORT: String(PORT) },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 daemon.stderr.on('data', (d) => process.stderr.write(d));

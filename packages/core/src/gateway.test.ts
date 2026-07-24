@@ -4,7 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Supervisor } from './supervisor.js';
 import { createGateway, NS } from './gateway.js';
-import type { ManagedServerConfig } from '@nekko-mcp/shared';
+import type { ManagedServerConfig } from '@hypergate/shared';
 
 const echoPath = fileURLToPath(new URL('./fixtures/echo-server.mjs', import.meta.url));
 const echoConfig: ManagedServerConfig = {
@@ -81,11 +81,11 @@ describe('Supervisor + Gateway (end-to-end via process runtime)', () => {
   it('does not leak the host env into the sandboxed child', async () => {
     // The supervisor only forwards an allow-listed base env + declared vars,
     // so an ambient secret set in this process must not reach the child.
-    process.env.NEKKO_SECRET_LEAK_TEST = 'should-not-pass';
+    process.env.HYPERGATE_SECRET_LEAK_TEST = 'should-not-pass';
     // (echo server doesn't expose env, but the runtime spec is what we assert)
     const { ProcessRuntime } = await import('./runtime.js');
     const spec = new ProcessRuntime().spawnSpec(echoConfig);
-    expect(spec.env.NEKKO_SECRET_LEAK_TEST).toBeUndefined();
-    delete process.env.NEKKO_SECRET_LEAK_TEST;
+    expect(spec.env.HYPERGATE_SECRET_LEAK_TEST).toBeUndefined();
+    delete process.env.HYPERGATE_SECRET_LEAK_TEST;
   });
 });

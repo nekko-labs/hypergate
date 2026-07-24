@@ -1,4 +1,4 @@
-import type { RegistryEntry, PopularityMap } from '@nekko-mcp/shared';
+import type { RegistryEntry, PopularityMap } from '@hypergate/shared';
 
 /**
  * Curated catalog of popular MCP servers users can add in one click. Process
@@ -7,7 +7,7 @@ import type { RegistryEntry, PopularityMap } from '@nekko-mcp/shared';
  * Users can override the runtime.
  *
  * `official` is hand-set from vendor docs (see the feature research in the
- * project memory); `recommended` marks NekkoMCP's suggested starting set, which
+ * project memory); `recommended` marks Hypergate's suggested starting set, which
  * sorts first (see RECOMMENDED_IDS / sortRegistry).
  */
 export const REGISTRY: RegistryEntry[] = [
@@ -90,8 +90,8 @@ export const REGISTRY: RegistryEntry[] = [
     official: true,
     // GitHub has no dynamic client registration and requires client auth at the
     // token endpoint even with PKCE, so it needs a pre-registered app id + secret:
-    // set NEKKO_MCP_CLIENTID_GITHUB and NEKKO_MCP_CLIENTSECRET_GITHUB.
-    note: 'Needs a registered GitHub OAuth app (set NEKKO_MCP_CLIENTID_GITHUB + NEKKO_MCP_CLIENTSECRET_GITHUB) — GitHub has no automatic app registration.',
+    // set HYPERGATE_CLIENTID_GITHUB and HYPERGATE_CLIENTSECRET_GITHUB.
+    note: 'Needs a registered GitHub OAuth app (set HYPERGATE_CLIENTID_GITHUB + HYPERGATE_CLIENTSECRET_GITHUB) — GitHub has no automatic app registration.',
     homepage: 'https://github.com/github/github-mcp-server',
   },
   {
@@ -275,7 +275,7 @@ export const REGISTRY: RegistryEntry[] = [
 export const registryEntry = (id: string): RegistryEntry | undefined => REGISTRY.find((e) => e.id === id);
 
 /**
- * NekkoMCP's recommended starting set, in display order. These sort to the top
+ * Hypergate's recommended starting set, in display order. These sort to the top
  * of the catalog ahead of everything else (which is then ordered by popularity).
  */
 export const RECOMMENDED_IDS: readonly string[] = ['kotrain', 'context7', 'supabase', 'linear', 'figma'];

@@ -9,7 +9,7 @@ import type {
 /**
  * A tiny key→string store the OAuth provider persists through. Kept as an
  * interface so `packages/core` stays IO-free: the daemon supplies a file-backed
- * store (one directory per server under `~/.nekko-mcp/oauth/`), while tests use
+ * store (one directory per server under `~/.hypergate/oauth/`), while tests use
  * an in-memory Map. Values are opaque JSON strings.
  */
 export interface OAuthStore {
@@ -40,7 +40,7 @@ const K_VERIFIER = 'verifier'; // PKCE code_verifier
 const K_STATE = 'state'; // CSRF state — also how the callback maps back to a server
 const K_AUTH_URL = 'authUrl'; // the last authorization URL we asked the user to open
 
-export interface NekkoOAuthProviderOpts {
+export interface HypergateOAuthProviderOpts {
   /** The daemon's OAuth callback, e.g. `http://localhost:7777/oauth/callback`. */
   redirectUrl: string;
   /** Client name presented at dynamic registration. */
@@ -75,10 +75,10 @@ export interface NekkoOAuthProviderOpts {
  * the injected {@link OAuthStore} so the callback (a separate request) can finish
  * the exchange.
  */
-export class NekkoOAuthProvider implements OAuthClientProvider {
+export class HypergateOAuthProvider implements OAuthClientProvider {
   constructor(
     private store: OAuthStore,
-    private opts: NekkoOAuthProviderOpts,
+    private opts: HypergateOAuthProviderOpts,
   ) {}
 
   get redirectUrl(): string {
@@ -87,7 +87,7 @@ export class NekkoOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: this.opts.clientName ?? 'NekkoMCP',
+      client_name: this.opts.clientName ?? 'Hypergate',
       redirect_uris: [this.opts.redirectUrl],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],

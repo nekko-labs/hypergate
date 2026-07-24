@@ -1,4 +1,4 @@
-import type { RegistryEntry } from '@nekko-mcp/shared';
+import type { RegistryEntry } from '@hypergate/shared';
 
 /**
  * Search the official, open-source MCP Registry (registry.modelcontextprotocol.io,
@@ -6,7 +6,7 @@ import type { RegistryEntry } from '@nekko-mcp/shared';
  * map each hit into our RegistryEntry so the existing Add flow can consume it
  * unchanged.
  *
- * This is the one deliberate outbound call NekkoMCP makes: it fires only when a
+ * This is the one deliberate outbound call Hypergate makes: it fires only when a
  * user searches, never on boot. `fetchImpl` is injectable so the mapper is
  * unit-tested against canned JSON with no network.
  */
@@ -132,7 +132,7 @@ export function mapRegistryServer(srv: RegistryServer): RegistryEntry {
   }
 
   const unknownPkg = packages.find((p) => pkgType(p));
-  if (unknownPkg) return { ...base, note: `Package type "${pkgType(unknownPkg)}" not launchable by NekkoMCP yet.` };
+  if (unknownPkg) return { ...base, note: `Package type "${pkgType(unknownPkg)}" not launchable by Hypergate yet.` };
 
   if ((srv.remotes ?? []).length > 0) {
     return { ...base, note: 'Remote server (streamable-http) — not locally runnable yet.' };

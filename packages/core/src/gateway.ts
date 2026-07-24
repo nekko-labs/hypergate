@@ -13,7 +13,7 @@ export const NS = '__';
  */
 export function createGateway(
   supervisor: Supervisor,
-  info: { name: string; version: string } = { name: 'nekko-mcp-gateway', version: '0.1.0' },
+  info: { name: string; version: string } = { name: 'hypergate-gateway', version: '0.1.0' },
   opts: { caller?: string; allowServer?: (serverId: string) => boolean } = {},
 ): Server {
   const server = new Server(info, { capabilities: { tools: {} } });
