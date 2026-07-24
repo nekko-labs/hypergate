@@ -1,4 +1,4 @@
-import type { ManagedServerConfig, RuntimeKind, SpawnSpec } from '@nekko-mcp/shared';
+import type { ManagedServerConfig, RuntimeKind, SpawnSpec } from '@hypergate/shared';
 
 /**
  * RuntimeAdapter — turns a server config into the concrete stdio process to

@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, renameSync } from 'node:fs';
 import { join, extname, dirname, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
-import { Supervisor, createGateway, REGISTRY, searchRegistry, KNOWN_CLIS, NekkoOAuthProvider, type OAuthStore } from '@nekko-mcp/core';
+import { Supervisor, createGateway, REGISTRY, searchRegistry, KNOWN_CLIS, HypergateOAuthProvider, type OAuthStore } from '@hypergate/core';
 import type {
   ManagedServerConfig,
   GatewayInfo,
@@ -24,22 +24,34 @@ import type {
   PopularityMap,
   CliStatus,
   CliCheckResult,
-} from '@nekko-mcp/shared';
+} from '@hypergate/shared';
 
 /**
- * nekko-mcpd — the NekkoMCP daemon. Two modes:
+ * hypergated — the Hypergate daemon. Two modes:
  *   • default: one localhost port serving the management API, the web UI, and
  *     the streamable-HTTP MCP gateway at /mcp (bearer-token auth).
  *   • `--stdio`: connect the aggregating gateway to stdio so an agent harness
- *     (Claude Code, Cursor, Open Paw) can spawn `nekko-mcpd --stdio` as ONE
+ *     (Claude Code, Cursor, Open Paw) can spawn `hypergated --stdio` as ONE
  *     MCP endpoint that fans out to all enabled servers.
  *
  * Local-first: binds to localhost. The daemon makes outbound calls only for
  * user-initiated actions — registry search, and connecting to the remote MCP
  * servers a user adds (plus their OAuth login/token exchange). OAuth tokens are
- * stored locally under ~/.nekko-mcp/oauth/ and nothing phones home on its own.
+ * stored locally under ~/.hypergate/oauth/ and nothing phones home on its own.
  */
-const DATA_DIR = process.env.NEKKO_MCP_DIR ?? join(homedir(), '.nekko-mcp');
+const DATA_DIR = process.env.HYPERGATE_DIR ?? join(homedir(), '.hypergate');
+// One-time migration from the pre-rename data dir (NekkoMCP → Hypergate, v0.7.0):
+// adopt ~/.nekko-mcp wholesale so servers, tokens, analytics, and OAuth grants survive.
+if (!process.env.HYPERGATE_DIR && !existsSync(DATA_DIR)) {
+  const legacyDir = join(homedir(), '.nekko-mcp');
+  if (existsSync(legacyDir)) {
+    try {
+      renameSync(legacyDir, DATA_DIR);
+    } catch {
+      /* cross-device or locked: fall through and start fresh */
+    }
+  }
+}
 const CONFIG_PATH = join(DATA_DIR, 'servers.json');
 const TOKEN_PATH = join(DATA_DIR, 'gateway-token');
 const ANALYTICS_PATH = join(DATA_DIR, 'analytics.json');
@@ -48,7 +60,7 @@ const SETTINGS_PATH = join(DATA_DIR, 'settings.json');
 const POPULARITY_PATH = join(DATA_DIR, 'popularity.json');
 const OAUTH_DIR = join(DATA_DIR, 'oauth');
 const PORT = Number(process.env.PORT ?? 7777);
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 /** How long a fetched popularity snapshot stays fresh before we refetch (24h). */
 const POPULARITY_TTL = 24 * 60 * 60 * 1000;
 /** Where OAuth providers send the user back after the browser login. */
@@ -123,15 +135,15 @@ const loadToken = (): string => {
 };
 
 // ── desktop / service settings (autostart + tray behavior) ─────────────────
-// Preferences live in ~/.nekko-mcp/settings.json. `runOnStartup` is backed by
+// Preferences live in ~/.hypergate/settings.json. `runOnStartup` is backed by
 // an OS autostart entry so it reflects reality even when changed outside the
-// app; `startMinimized` is read by the tray launcher (scripts/nekko-tray.ps1)
+// app; `startMinimized` is read by the tray launcher (scripts/hypergate-tray.ps1)
 // to decide whether to open the manager UI on launch. Windows-only for now
 // (matches the tray); a no-op that reports `startupSupported: false` elsewhere.
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const TRAY_PS1 = join(REPO_ROOT, 'scripts', 'nekko-tray.ps1');
+const TRAY_PS1 = join(REPO_ROOT, 'scripts', 'hypergate-tray.ps1');
 const RUN_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-const RUN_VALUE = 'NekkoMCP';
+const RUN_VALUE = 'Hypergate';
 const STARTUP_SUPPORTED = process.platform === 'win32';
 const pexecFile = promisify(execFile);
 
@@ -191,7 +203,7 @@ const fetchNpmDownloads = async (pkg: string, signal: AbortSignal): Promise<numb
 const fetchGithubStars = async (repo: string, signal: AbortSignal): Promise<number | undefined> => {
   const res = await fetch(`https://api.github.com/repos/${repo}`, {
     signal,
-    headers: { 'User-Agent': 'nekko-mcp', Accept: 'application/vnd.github+json' },
+    headers: { 'User-Agent': 'hypergate', Accept: 'application/vnd.github+json' },
   });
   if (!res.ok) return undefined;
   const d = (await res.json()) as { stargazers_count?: number };
@@ -342,8 +354,8 @@ const settingsInfo = async (): Promise<SettingsInfo> => {
 
 // ── OAuth for remote servers ───────────────────────────────────────────────
 // Each remote server's OAuth state (registered client, tokens, PKCE verifier,
-// CSRF state) lives in one JSON file under ~/.nekko-mcp/oauth/. The provider is
-// store-backed (see @nekko-mcp/core) so the daemon owns all the filesystem IO.
+// CSRF state) lives in one JSON file under ~/.hypergate/oauth/. The provider is
+// store-backed (see @hypergate/core) so the daemon owns all the filesystem IO.
 const oauthFile = (id: string): string => join(OAUTH_DIR, `${encodeURIComponent(id)}.json`);
 const readOAuth = (id: string): Record<string, string> => {
   try {
@@ -369,18 +381,18 @@ const fileStore = (id: string): OAuthStore => ({
  * Pre-registered OAuth credentials for a provider that lacks dynamic registration
  * (e.g. GitHub). Resolved from the server config, or from env so they can be set
  * without a rebuild and kept out of the repo/catalog:
- *   NEKKO_MCP_CLIENTID_GITHUB=Iv1...   NEKKO_MCP_CLIENTSECRET_GITHUB=...
+ *   HYPERGATE_CLIENTID_GITHUB=Iv1...   HYPERGATE_CLIENTSECRET_GITHUB=...
  * The secret is only needed by servers that require client auth at the token
  * endpoint even with PKCE; DCR providers (Context7) need neither.
  */
 const envKey = (prefix: string, id: string): string | undefined =>
   process.env[`${prefix}_${id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`];
-const resolvedClientId = (cfg: ManagedServerConfig): string | undefined => cfg.clientId || envKey('NEKKO_MCP_CLIENTID', cfg.id);
-const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined => cfg.clientSecret || envKey('NEKKO_MCP_CLIENTSECRET', cfg.id);
-const makeProvider = (cfg: ManagedServerConfig): NekkoOAuthProvider =>
-  new NekkoOAuthProvider(fileStore(cfg.id), {
+const resolvedClientId = (cfg: ManagedServerConfig): string | undefined => cfg.clientId || envKey('HYPERGATE_CLIENTID', cfg.id);
+const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined => cfg.clientSecret || envKey('HYPERGATE_CLIENTSECRET', cfg.id);
+const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
+  new HypergateOAuthProvider(fileStore(cfg.id), {
     redirectUrl: OAUTH_REDIRECT,
-    clientName: 'NekkoMCP',
+    clientName: 'Hypergate',
     clientId: resolvedClientId(cfg),
     clientSecret: resolvedClientSecret(cfg),
     scope: cfg.scope,
@@ -437,7 +449,7 @@ const runOAuth = async (
     // The common gotcha: the provider needs a pre-registered app (id [+ secret]).
     const ID = cfg.id.toUpperCase().replace(/[^A-Z0-9]/g, '_');
     if (/dynamic client registration/i.test(msg) && !resolvedClientId(cfg))
-      msg = `${cfg.name} doesn't support automatic app registration — it needs a pre-registered OAuth app. Register one (callback ${OAUTH_REDIRECT}) and set NEKKO_MCP_CLIENTID_${ID} (and NEKKO_MCP_CLIENTSECRET_${ID} if the provider requires a secret, e.g. GitHub).`;
+      msg = `${cfg.name} doesn't support automatic app registration — it needs a pre-registered OAuth app. Register one (callback ${OAUTH_REDIRECT}) and set HYPERGATE_CLIENTID_${ID} (and HYPERGATE_CLIENTSECRET_${ID} if the provider requires a secret, e.g. GitHub).`;
     return { authorized: false, error: msg };
   }
 };
@@ -449,10 +461,10 @@ const serverForState = (state: string): ManagedServerConfig | undefined =>
 // ── stdio gateway mode (the single aggregated endpoint for harnesses) ──────
 if (process.argv.includes('--stdio')) {
   await startEnabled();
-  const gateway = createGateway(supervisor, { name: 'nekko-mcp-gateway', version: VERSION }, { caller: 'stdio (local)' });
+  const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller: 'stdio (local)' });
   await gateway.connect(new StdioServerTransport());
   // stdout is the MCP channel now; logs must go to stderr only.
-  process.stderr.write(`nekko-mcpd gateway (stdio) up — ${supervisor.ids().length} server(s)\n`);
+  process.stderr.write(`hypergated gateway (stdio) up — ${supervisor.ids().length} server(s)\n`);
 } else {
   // ── HTTP: management API + web UI + streamable-HTTP MCP gateway ──────────
   // Restore analytics before serving so the first response already reflects history.
@@ -478,7 +490,7 @@ if (process.argv.includes('--stdio')) {
   const persistClients = debounce(() => saveClients(clients), 1500);
 
   await startEnabled();
-  const TOKEN = process.env.NEKKO_MCP_TOKEN ?? loadToken();
+  const TOKEN = process.env.HYPERGATE_TOKEN ?? loadToken();
   const json = (res: ServerResponse, status: number, body: unknown): void => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify(body));
@@ -487,7 +499,7 @@ if (process.argv.includes('--stdio')) {
   const oauthPage = (res: ServerResponse, ok: boolean, message: string): void => {
     const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
     res.writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(`<!doctype html><html><head><meta charset="utf-8"><title>NekkoMCP · ${ok ? 'Connected' : 'Sign-in failed'}</title>
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Hypergate · ${ok ? 'Connected' : 'Sign-in failed'}</title>
 <style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.5 system-ui,sans-serif;background:#0f1117;color:#e7e9ee}
 .card{max-width:420px;padding:32px 34px;border-radius:16px;background:#171a23;border:1px solid #262b38;text-align:center}
 .mark{font-size:38px}.h{font-size:19px;font-weight:600;margin:14px 0 6px;background:linear-gradient(90deg,#8b5cf6,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -519,7 +531,7 @@ if (process.argv.includes('--stdio')) {
   // a named agent token = that agent's per-server allow-list.
   type Scope = { kind: 'master' } | { kind: 'agent'; agent: AgentClient };
   const authScope = (req: IncomingMessage): Scope | null => {
-    if (process.env.NEKKO_MCP_NO_AUTH === '1') return { kind: 'master' };
+    if (process.env.HYPERGATE_NO_AUTH === '1') return { kind: 'master' };
     const got = bearer(req);
     if (!got) return null;
     if (tokenEq(got, TOKEN)) return { kind: 'master' };
@@ -554,11 +566,11 @@ if (process.argv.includes('--stdio')) {
     return {
       url,
       token: TOKEN,
-      stdioCommand: 'nekko-mcpd --stdio',
+      stdioCommand: 'hypergated --stdio',
       clientSnippet: {
-        mcpServers: { 'nekko-mcp': { type: 'http', url, headers: { Authorization: `Bearer ${TOKEN}` } } },
+        mcpServers: { 'hypergate': { type: 'http', url, headers: { Authorization: `Bearer ${TOKEN}` } } },
       },
-      stdioSnippet: { mcpServers: { 'nekko-mcp': { command: 'nekko-mcpd', args: ['--stdio'] } } },
+      stdioSnippet: { mcpServers: { 'hypergate': { command: 'hypergated', args: ['--stdio'] } } },
       uiUrl: `http://localhost:${PORT}/`,
     };
   };
@@ -569,9 +581,9 @@ if (process.argv.includes('--stdio')) {
     return {
       ...a,
       url,
-      connectCommand: `claude mcp add -t http nekko-mcp-${a.id} ${url} -H "Authorization: Bearer ${a.token}"`,
+      connectCommand: `claude mcp add -t http hypergate-${a.id} ${url} -H "Authorization: Bearer ${a.token}"`,
       clientSnippet: {
-        mcpServers: { [`nekko-mcp-${a.id}`]: { type: 'http', url, headers: { Authorization: `Bearer ${a.token}` } } },
+        mcpServers: { [`hypergate-${a.id}`]: { type: 'http', url, headers: { Authorization: `Bearer ${a.token}` } } },
       },
     };
   };
@@ -608,7 +620,7 @@ if (process.argv.includes('--stdio')) {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(`nekko-mcpd ${VERSION} — build the web UI (npm run build) to serve it here.\n`);
+    res.end(`hypergated ${VERSION} — build the web UI (npm run build) to serve it here.\n`);
   };
 
   const server = createServer(async (req, res) => {
@@ -642,7 +654,7 @@ if (process.argv.includes('--stdio')) {
           caller = callerFor(req, body);
         }
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-        const gateway = createGateway(supervisor, { name: 'nekko-mcp-gateway', version: VERSION }, { caller, allowServer });
+        const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller, allowServer });
         res.on('close', () => {
           void transport.close();
           void gateway.close();
@@ -672,10 +684,10 @@ if (process.argv.includes('--stdio')) {
         saveConfig(servers);
         await supervisor.start(live);
       }
-      return oauthPage(res, true, `${cfg.name} is connected. You can close this tab and return to NekkoMCP.`);
+      return oauthPage(res, true, `${cfg.name} is connected. You can close this tab and return to Hypergate.`);
     }
 
-    if (pathname === '/health') return json(res, 200, { ok: true, service: 'nekko-mcpd', version: VERSION, servers: supervisor.list().length });
+    if (pathname === '/health') return json(res, 200, { ok: true, service: 'hypergated', version: VERSION, servers: supervisor.list().length });
     if (pathname === '/api/registry') return json(res, 200, REGISTRY);
 
     // Search the official MCP Registry. The one deliberate outbound call, and only
@@ -895,5 +907,5 @@ if (process.argv.includes('--stdio')) {
     // Anything else is the web UI.
     return serveUi(res, pathname);
   });
-  server.listen(PORT, '127.0.0.1', () => process.stdout.write(`nekko-mcpd up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`));
+  server.listen(PORT, '127.0.0.1', () => process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`));
 }

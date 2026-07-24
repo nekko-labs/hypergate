@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ProcessRuntime, DockerRuntime, runtimeFor } from './runtime.js';
-import type { ManagedServerConfig } from '@nekko-mcp/shared';
+import type { ManagedServerConfig } from '@hypergate/shared';
 
 const base: ManagedServerConfig = { id: 'x', name: 'X', runtime: 'process', command: 'mycmd', args: ['--flag'], enabled: true };
 

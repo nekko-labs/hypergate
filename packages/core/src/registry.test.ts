@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { REGISTRY, RECOMMENDED_IDS, sortRegistry, registryEntry } from './registry.js';
 import { KNOWN_CLIS, knownCli } from './clis.js';
-import type { RegistryEntry } from '@nekko-mcp/shared';
+import type { RegistryEntry } from '@hypergate/shared';
 
 const entry = (id: string, over: Partial<RegistryEntry> = {}): RegistryEntry => ({
   id,

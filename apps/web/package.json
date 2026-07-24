@@ -1,5 +1,5 @@
 {
-  "name": "@nekko-mcp/web",
+  "name": "@hypergate/web",
   "version": "0.2.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@nekko-mcp/shared": "*",
+    "@hypergate/shared": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

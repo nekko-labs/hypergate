@@ -1,6 +1,6 @@
 // Run the daemon + web UI together. Dependency-free; prefixes output; Ctrl-C
 // tears both down. Distinct: `npm run dev:daemon` / `npm run dev:web`.
-// Once Vite is ready it opens the UI in your browser — set NEKKO_MCP_OPEN=0
+// Once Vite is ready it opens the UI in your browser — set HYPERGATE_OPEN=0
 // (or CI=1) to skip, e.g. under an automated preview harness.
 import { spawn } from 'node:child_process';
 
@@ -13,7 +13,7 @@ const reset = '\x1b[0m';
 const children = [];
 
 // Open the web UI in the default browser, once, when Vite reports it's ready.
-const noOpen = process.env.NEKKO_MCP_OPEN === '0' || process.env.CI;
+const noOpen = process.env.HYPERGATE_OPEN === '0' || process.env.CI;
 let opened = false;
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 const openBrowser = (url) => {

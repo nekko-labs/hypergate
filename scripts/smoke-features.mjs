@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 7878;
 const BASE = `http://localhost:${PORT}`;
-const DIR = mkdtempSync(join(tmpdir(), 'nekko-mcp-feat-'));
+const DIR = mkdtempSync(join(tmpdir(), 'hypergate-feat-'));
 const ECHO = join(ROOT, 'packages/core/src/fixtures/echo-server.mjs');
 
 const ok = (m) => console.log(`✓ ${m}`);
@@ -25,7 +25,7 @@ const fail = (m) => {
 
 const boot = async () => {
   const d = spawn(process.execPath, ['--experimental-strip-types', join(ROOT, 'apps/daemon/src/index.ts')], {
-    env: { ...process.env, NEKKO_MCP_DIR: DIR, PORT: String(PORT) },
+    env: { ...process.env, HYPERGATE_DIR: DIR, PORT: String(PORT) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   d.stderr.on('data', (x) => process.stderr.write(x));

@@ -14,7 +14,7 @@ import type {
   ServerUsage,
   ToolInfo,
   UsageEvent,
-} from '@nekko-mcp/shared';
+} from '@hypergate/shared';
 import { runtimeFor } from './runtime.js';
 
 /** Builds the OAuth provider for a remote server, or undefined when none is needed. */
@@ -305,7 +305,7 @@ export class Supervisor {
     try {
       const transport =
         config.runtime === 'remote' ? this.remoteTransport(config, inst) : this.stdioTransport(config, inst);
-      const client = new Client({ name: 'nekko-mcp', version: '0.1.0' }, { capabilities: {} });
+      const client = new Client({ name: 'hypergate', version: '0.1.0' }, { capabilities: {} });
       await client.connect(transport);
       const { tools } = await client.listTools();
       inst.client = client;

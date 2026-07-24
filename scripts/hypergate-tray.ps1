@@ -1,10 +1,10 @@
-# NekkoMCP system-tray launcher (Windows).
+# Hypergate system-tray launcher (Windows).
 #
-# Puts a NekkoMCP icon in the taskbar notification area so you can see the
+# Puts a Hypergate icon in the taskbar notification area so you can see the
 # daemon is running, open the manager UI, restart it, or quit. This is the
 # lightweight interim desktop presence; a full Electron shell is planned.
 #
-# Launch it hidden with scripts\nekko-tray.cmd (or `npm run tray`), and add a
+# Launch it hidden with scripts\hypergate-tray.cmd (or `npm run tray`), and add a
 # shortcut to that .cmd in your Startup folder (Win+R -> shell:startup) to have
 # it run at login.
 
@@ -19,8 +19,8 @@ $port = 7777
 $uiUrl = "http://localhost:$port/"
 
 # Service preference: open the manager UI on launch, or stay in the tray?
-# Managed from the app's Settings view; persisted in ~/.nekko-mcp/settings.json.
-$dataDir = if ($env:NEKKO_MCP_DIR) { $env:NEKKO_MCP_DIR } else { Join-Path $env:USERPROFILE '.nekko-mcp' }
+# Managed from the app's Settings view; persisted in ~/.hypergate/settings.json.
+$dataDir = if ($env:HYPERGATE_DIR) { $env:HYPERGATE_DIR } else { Join-Path $env:USERPROFILE '.hypergate' }
 $settingsPath = Join-Path $dataDir 'settings.json'
 $startMinimized = $true
 try {
@@ -42,15 +42,15 @@ function Start-Daemon {
   if (Test-Daemon) { return }                            # already up (started elsewhere)
   if (Test-Path $flyBin) { $env:PATH = "$env:PATH;$flyBin" }
   if (-not (Test-Path $daemonJs)) {
-    [System.Windows.Forms.MessageBox]::Show("Build first: npm run build`n(missing $daemonJs)", 'NekkoMCP') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("Build first: npm run build`n(missing $daemonJs)", 'Hypergate') | Out-Null
     return
   }
   $script:daemonProc = Start-Process -FilePath 'node' -ArgumentList "`"$daemonJs`"" -WindowStyle Hidden -PassThru
 }
 
-# Tray icon: the NekkoMCP mark (violet->cyan rounded square + white cat),
+# Tray icon: the Hypergate mark (a violet->cyan warp-gate ring on deep space),
 # drawn with GDI+ so there's no .ico asset to ship or rasterize.
-function New-NekkoIcon {
+function New-HypergateIcon {
   $bmp = New-Object System.Drawing.Bitmap 32, 32
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
@@ -66,23 +66,20 @@ function New-NekkoIcon {
   $path.AddArc(32 - $r, 32 - $r, $r, $r, 0, 90)
   $path.AddArc(0, 32 - $r, $r, $r, 90, 90)
   $path.CloseFigure()
-  $g.FillPath($grad, $path)
-  $white = [System.Drawing.Brushes]::White
-  $g.FillPolygon($white, @(
-    (New-Object System.Drawing.Point 9, 8), (New-Object System.Drawing.Point 14, 18), (New-Object System.Drawing.Point 6, 16)))
-  $g.FillPolygon($white, @(
-    (New-Object System.Drawing.Point 23, 8), (New-Object System.Drawing.Point 18, 18), (New-Object System.Drawing.Point 26, 16)))
-  $g.FillEllipse($white, 8, 12, 16, 16)
-  $eye = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(0x4a, 0x3f, 0xd0))
-  $g.FillEllipse($eye, 12, 18, 3, 3)
-  $g.FillEllipse($eye, 17, 18, 3, 3)
+  $dark = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(0x0b, 0x0d, 0x1a))
+  $g.FillPath($dark, $path)
+  $pen = New-Object System.Drawing.Pen $grad, 4
+  $g.DrawEllipse($pen, 7, 7, 18, 18)
+  $core = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(0xa5, 0xf3, 0xfc))
+  $g.FillEllipse($core, 13, 13, 6, 6)
+  $pen.Dispose()
   $g.Dispose()
   return [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
 }
 
 $notify = New-Object System.Windows.Forms.NotifyIcon
-$notify.Icon = New-NekkoIcon
-$notify.Text = 'NekkoMCP'
+$notify.Icon = New-HypergateIcon
+$notify.Text = 'Hypergate'
 $notify.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -93,7 +90,7 @@ $restartItem.add_Click({
     if ($script:daemonProc -and -not $script:daemonProc.HasExited) { $script:daemonProc.Kill() }
     Start-Sleep -Milliseconds 500
     Start-Daemon
-    $notify.ShowBalloonTip(1500, 'NekkoMCP', 'Daemon restarted', [System.Windows.Forms.ToolTipIcon]::Info)
+    $notify.ShowBalloonTip(1500, 'Hypergate', 'Daemon restarted', [System.Windows.Forms.ToolTipIcon]::Info)
   })
 $quitItem = New-Object System.Windows.Forms.ToolStripMenuItem 'Quit'
 $quitItem.add_Click({
@@ -111,5 +108,5 @@ $notify.add_MouseDoubleClick({ Start-Process $uiUrl })
 Start-Daemon
 # Honor the "Start minimized" preference: when off, pop the manager UI on launch.
 if (-not $startMinimized) { Start-Process $uiUrl }
-$notify.ShowBalloonTip(2000, 'NekkoMCP', "Running - manager at $uiUrl", [System.Windows.Forms.ToolTipIcon]::Info)
+$notify.ShowBalloonTip(2000, 'Hypergate', "Running - manager at $uiUrl", [System.Windows.Forms.ToolTipIcon]::Info)
 [System.Windows.Forms.Application]::Run()
