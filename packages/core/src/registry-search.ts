@@ -78,9 +78,24 @@ const argTokens = (args: RegistryArg[] | undefined): string[] => {
 const pkgType = (p: RegistryPackage): string => (p.registryType ?? p.registry_type ?? '').toLowerCase();
 const pkgId = (p: RegistryPackage): string => p.identifier ?? p.name ?? '';
 
+/**
+ * Trust signal from the registry's reverse-DNS namespace (the part before `/`).
+ * Domain namespaces (`com.linear`, `app.linear`) require DNS/HTTP domain
+ * verification to publish ⇒ first-party. `io.github.*` only proves control of a
+ * GitHub account, and the anonymous namespace proves nothing ⇒ community.
+ * Returns `undefined` when there's no namespace to judge.
+ */
+export function officialFromNamespace(namespace: string): boolean | undefined {
+  const ns = namespace.trim();
+  if (!ns) return undefined;
+  if (ns.startsWith('io.github.') || ns === 'io.modelcontextprotocol.anonymous') return false;
+  return ns.includes('.'); // a real reverse-DNS (domain-verified) namespace
+}
+
 /** Map one registry server to a RegistryEntry (or a non-runnable, noted entry). */
 export function mapRegistryServer(srv: RegistryServer): RegistryEntry {
   const rawName = srv.name ?? 'unknown';
+  const namespace = rawName.includes('/') ? rawName.split('/')[0] : '';
   const base: RegistryEntry = {
     id: slug(rawName),
     name: srv.title || shortName(rawName),
@@ -90,6 +105,8 @@ export function mapRegistryServer(srv: RegistryServer): RegistryEntry {
     homepage: srv.repository?.url ?? srv.websiteUrl,
     source: 'registry',
     runnable: false,
+    publisher: namespace || undefined,
+    official: officialFromNamespace(namespace),
   };
 
   // Prefer a stdio package we know how to launch (npm/pypi/oci).

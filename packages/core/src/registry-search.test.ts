@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapRegistryServer, searchRegistry } from './registry-search.js';
+import { mapRegistryServer, searchRegistry, officialFromNamespace } from './registry-search.js';
 
 describe('mapRegistryServer', () => {
   it('maps an npm package to an npx process command with env requires', () => {
@@ -65,6 +65,33 @@ describe('mapRegistryServer', () => {
     expect(e.id).toBe('io-github-acme-cool-server');
     expect(e.name).toBe('cool-server');
     expect(e.runnable).toBe(false);
+  });
+
+  it('sets publisher + official from the namespace', () => {
+    const community = mapRegistryServer({ name: 'io.github.acme/weather', packages: [] });
+    expect(community.publisher).toBe('io.github.acme');
+    expect(community.official).toBe(false);
+    const firstParty = mapRegistryServer({
+      name: 'app.linear/linear',
+      remotes: [{ type: 'streamable-http', url: 'https://mcp.linear.app/mcp' }],
+    });
+    expect(firstParty.publisher).toBe('app.linear');
+    expect(firstParty.official).toBe(true);
+  });
+});
+
+describe('officialFromNamespace', () => {
+  it('treats a domain-verified namespace as official', () => {
+    expect(officialFromNamespace('app.linear')).toBe(true);
+    expect(officialFromNamespace('com.atlassian')).toBe(true);
+  });
+  it('treats github + anonymous namespaces as community', () => {
+    expect(officialFromNamespace('io.github.acme')).toBe(false);
+    expect(officialFromNamespace('io.modelcontextprotocol.anonymous')).toBe(false);
+  });
+  it('returns undefined with no namespace, and not-official for a non-domain word', () => {
+    expect(officialFromNamespace('')).toBeUndefined();
+    expect(officialFromNamespace('bareword')).toBe(false);
   });
 });
 

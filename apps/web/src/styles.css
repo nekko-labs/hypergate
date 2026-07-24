@@ -190,6 +190,12 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .chip { font-size: 11px; padding: 2.5px 9px; border-radius: 999px; background: var(--card-2); color: var(--ink-2); border: 1px solid var(--line); }
 .chip.mono { font-size: 10.5px; }
 .chip-accent { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+/* Official / verified-publisher chip (green, like the ready pill) */
+.chip-official { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); border-color: color-mix(in srgb, var(--success) 32%, transparent); font-weight: 600; }
+/* Recommended star, before a catalog entry's name */
+.rec-star { color: var(--warning); font-size: 14px; line-height: 1; flex: none; }
+/* Ad-hoc CLI availability-check row sits atop the known list, subtly set apart */
+.cli-check { background: var(--paper-2); }
 
 /* ── tabs (gateway snippets) ────────────────────────────────────────────── */
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
