@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join, extname, dirname, resolve } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
+import { join, extname, dirname, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
-import { Supervisor, createGateway, REGISTRY, searchRegistry, NekkoOAuthProvider, type OAuthStore } from '@nekko-mcp/core';
+import { Supervisor, createGateway, REGISTRY, searchRegistry, KNOWN_CLIS, NekkoOAuthProvider, type OAuthStore } from '@nekko-mcp/core';
 import type {
   ManagedServerConfig,
   GatewayInfo,
@@ -20,6 +20,10 @@ import type {
   DaemonSettings,
   SettingsInfo,
   UpdateSettingsRequest,
+  RegistryEntry,
+  PopularityMap,
+  CliStatus,
+  CliCheckResult,
 } from '@nekko-mcp/shared';
 
 /**
@@ -41,9 +45,12 @@ const TOKEN_PATH = join(DATA_DIR, 'gateway-token');
 const ANALYTICS_PATH = join(DATA_DIR, 'analytics.json');
 const CLIENTS_PATH = join(DATA_DIR, 'clients.json');
 const SETTINGS_PATH = join(DATA_DIR, 'settings.json');
+const POPULARITY_PATH = join(DATA_DIR, 'popularity.json');
 const OAUTH_DIR = join(DATA_DIR, 'oauth');
 const PORT = Number(process.env.PORT ?? 7777);
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
+/** How long a fetched popularity snapshot stays fresh before we refetch (24h). */
+const POPULARITY_TTL = 24 * 60 * 60 * 1000;
 /** Where OAuth providers send the user back after the browser login. */
 const OAUTH_REDIRECT = `http://localhost:${PORT}/oauth/callback`;
 
@@ -135,6 +142,149 @@ const runPowerShell = async (script: string): Promise<string> => {
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded,
   ]);
   return stdout.trim();
+};
+
+// ── popularity ranking (lazy, cached; never fetched on boot) ────────────────
+// The catalog sorts the recommended set first, then the rest by popularity. We
+// fetch that signal (npm monthly downloads, else GitHub stars) ONLY when the UI
+// asks — i.e. when the user opens the catalog — never on boot, so SPEC §1's
+// "no outbound calls on its own" invariant holds. Results cache to disk (24h).
+interface PopularityCache {
+  fetchedAt: number;
+  scores: PopularityMap;
+}
+const loadPopularityCache = (): PopularityCache | undefined => {
+  try {
+    if (existsSync(POPULARITY_PATH)) return JSON.parse(readFileSync(POPULARITY_PATH, 'utf8')) as PopularityCache;
+  } catch {
+    /* ignore a corrupt cache */
+  }
+  return undefined;
+};
+const savePopularityCache = (c: PopularityCache): void => {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(POPULARITY_PATH, JSON.stringify(c));
+  } catch {
+    /* best-effort; popularity is non-critical */
+  }
+};
+/** The npm package a curated `npx` entry installs, minus any trailing @version. */
+const npmPackage = (e: RegistryEntry): string | undefined => {
+  if (e.command !== 'npx') return undefined;
+  const arg = (e.args ?? []).find((a) => a && !a.startsWith('-'));
+  if (!arg) return undefined;
+  const at = arg.lastIndexOf('@');
+  return (at > 0 ? arg.slice(0, at) : arg) || undefined; // keep a leading scope @
+};
+/** `owner/repo` from a github.com homepage, for a GitHub-stars fallback. */
+const githubRepo = (e: RegistryEntry): string | undefined => {
+  const m = /github\.com\/([^/]+)\/([^/#?]+)/.exec(e.homepage ?? '');
+  return m ? `${m[1]}/${m[2].replace(/\.git$/, '')}` : undefined;
+};
+const fetchNpmDownloads = async (pkg: string, signal: AbortSignal): Promise<number | undefined> => {
+  const res = await fetch(`https://api.npmjs.org/downloads/point/last-month/${pkg.replace('/', '%2F')}`, { signal });
+  if (!res.ok) return undefined;
+  const d = (await res.json()) as { downloads?: number };
+  return typeof d.downloads === 'number' ? d.downloads : undefined;
+};
+const fetchGithubStars = async (repo: string, signal: AbortSignal): Promise<number | undefined> => {
+  const res = await fetch(`https://api.github.com/repos/${repo}`, {
+    signal,
+    headers: { 'User-Agent': 'nekko-mcp', Accept: 'application/vnd.github+json' },
+  });
+  if (!res.ok) return undefined;
+  const d = (await res.json()) as { stargazers_count?: number };
+  return typeof d.stargazers_count === 'number' ? d.stargazers_count : undefined;
+};
+/** Score every curated entry we can (npm downloads first, GitHub stars fallback). */
+const computePopularity = async (): Promise<PopularityMap> => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  const scores: PopularityMap = {};
+  try {
+    await Promise.allSettled(
+      REGISTRY.map(async (e) => {
+        const pkg = npmPackage(e);
+        let score = pkg ? await fetchNpmDownloads(pkg, ctrl.signal).catch(() => undefined) : undefined;
+        if (score === undefined) {
+          const repo = githubRepo(e);
+          if (repo) score = await fetchGithubStars(repo, ctrl.signal).catch(() => undefined);
+        }
+        if (typeof score === 'number') scores[e.id] = score;
+      }),
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+  return scores;
+};
+
+// ── CLI detection (local, shell-free; powers the CLIs section) ──────────────
+// "Is this command-line tool installed, where, and what version." Pure PATH
+// scanning + a bounded `--version` probe — no network, no shell (so an ad-hoc
+// search can't be turned into command injection).
+const WIN = process.platform === 'win32';
+// Prefer real executable extensions (node.exe, npm.cmd) over an extensionless
+// shim of the same name — a bare name isn't runnable on Windows anyway, and the
+// shim (e.g. a git-bash script) can't be version-probed. Extensionless is tried
+// last so tools that only ship that way are still detected.
+const PATH_EXTS = WIN
+  ? [...(process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.trim()).filter(Boolean), '']
+  : [''];
+/** Resolve a bare command name to an absolute path on PATH, or undefined. */
+const resolveOnPath = (command: string): string | undefined => {
+  for (const dir of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
+    for (const ext of PATH_EXTS) {
+      const candidate = join(dir, command + ext);
+      try {
+        if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+      } catch {
+        /* unreadable dir/entry — skip */
+      }
+    }
+  }
+  return undefined;
+};
+/** First version-looking token in some `--version` output. */
+const parseVersion = (out: string): string | undefined => {
+  const line = out.split('\n').map((l) => l.trim()).find((l) => l.length > 0);
+  if (!line) return undefined;
+  const m = line.match(/\d+\.\d+(?:\.\d+)?(?:[-+][\w.]+)?/);
+  return m ? m[0] : line.slice(0, 48);
+};
+/** Best-effort `<file> --version`, bounded + shell-free. `.cmd`/`.bat` go via cmd.exe. */
+const probeVersion = async (file: string, args: string[]): Promise<string | undefined> => {
+  const opts = { timeout: 4000, windowsHide: true, maxBuffer: 1_000_000 } as const;
+  const low = file.toLowerCase();
+  const viaCmd = WIN && (low.endsWith('.cmd') || low.endsWith('.bat'));
+  try {
+    const { stdout, stderr } = viaCmd
+      ? await pexecFile(process.env.ComSpec ?? 'cmd.exe', ['/c', file, ...args], opts)
+      : await pexecFile(file, args, opts);
+    return parseVersion(stdout || stderr);
+  } catch (e) {
+    // Many tools print --version to stderr and/or exit non-zero — still usable.
+    const err = e as { stdout?: string; stderr?: string };
+    return parseVersion(`${err.stdout ?? ''}\n${err.stderr ?? ''}`) || undefined;
+  }
+};
+/** Detect every known CLI (parallel, each bounded). */
+const detectClis = async (): Promise<CliStatus[]> =>
+  Promise.all(
+    KNOWN_CLIS.map(async (c): Promise<CliStatus> => {
+      const path = resolveOnPath(c.command);
+      if (!path) return { ...c, found: false };
+      return { ...c, found: true, path, version: await probeVersion(path, c.versionArgs ?? ['--version']) };
+    }),
+  );
+// Short in-memory memo so opening/closing the section doesn't re-spawn ~20 probes.
+let cliMemo: { at: number; result: CliStatus[] } | undefined;
+const detectClisCached = async (): Promise<CliStatus[]> => {
+  if (cliMemo && Date.now() - cliMemo.at < 10_000) return cliMemo.result;
+  const result = await detectClis();
+  cliMemo = { at: Date.now(), result };
+  return result;
 };
 
 const defaultSettings = (): DaemonSettings => ({ runOnStartup: false, startMinimized: true });
@@ -544,6 +694,40 @@ if (process.argv.includes('--stdio')) {
         clearTimeout(timer);
       }
     }
+    // Popularity scores for ordering the catalog (recommended set first, then by
+    // this). Lazy + cached: served from disk while fresh (24h), otherwise fetched
+    // now (npm + GitHub, 8s budget) and cached. Only ever hit when the UI opens
+    // the catalog — never on boot. Soft-fails to stale cache or {}.
+    if (pathname === '/api/registry/popularity' && req.method === 'GET') {
+      const cached = loadPopularityCache();
+      const fresh = cached && Date.now() - cached.fetchedAt < POPULARITY_TTL && Object.keys(cached.scores).length > 0;
+      if (fresh) return json(res, 200, cached!.scores);
+      try {
+        const scores = await computePopularity();
+        if (Object.keys(scores).length > 0) {
+          savePopularityCache({ fetchedAt: Date.now(), scores });
+          return json(res, 200, scores);
+        }
+        return json(res, 200, cached?.scores ?? {}); // nothing fetched → stale beats empty
+      } catch {
+        return json(res, 200, cached?.scores ?? {});
+      }
+    }
+
+    // CLIs section: which command-line tools are installed (local, no network).
+    if (pathname === '/api/clis' && req.method === 'GET') return json(res, 200, await detectClisCached());
+    // Ad-hoc "is <name> available?" search. Name is validated to a safe charset
+    // and only used for a PATH filename lookup — never passed to a shell.
+    if (pathname === '/api/clis/check' && req.method === 'GET') {
+      const name = (url.searchParams.get('name') ?? '').trim();
+      if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) return json(res, 400, { error: 'invalid command name' });
+      const path = resolveOnPath(name);
+      const result: CliCheckResult = path
+        ? { command: name, found: true, path, version: await probeVersion(path, ['--version']) }
+        : { command: name, found: false };
+      return json(res, 200, result);
+    }
+
     if (pathname === '/api/gateway') return json(res, 200, gatewayInfo());
     if (pathname === '/api/analytics') return json(res, 200, supervisor.analytics());
 

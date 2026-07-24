@@ -144,6 +144,73 @@ export interface RegistryEntry {
   note?: string;
   /** True when the entry can't be launched as a local stdio child (remote-only). */
   runnable?: boolean;
+  /**
+   * First-party / verified-publisher server. For curated entries this is hand-set
+   * from vendor docs; for registry-search hits it's derived from a domain-verified
+   * reverse-DNS namespace (see `publisher`). `false` on a curated entry marks it as
+   * an explicitly community (not first-party) pick; `undefined` = unknown.
+   */
+  official?: boolean;
+  /** In NekkoMCP's recommended set — sorts first and gets a ★ marker. */
+  recommended?: boolean;
+  /**
+   * The registry namespace this entry was published under (e.g. `app.linear`,
+   * `io.github.someone`). A non-`io.github.*` / non-anonymous namespace is
+   * domain-verified, which is what backs `official` for registry-search hits.
+   */
+  publisher?: string;
+  /**
+   * Popularity signal used to order non-recommended entries: npm downloads/month
+   * when the entry is an npm package, else GitHub stars. Filled in lazily by the
+   * daemon's `/api/registry/popularity` when the catalog opens; absent until then.
+   */
+  popularity?: number;
+}
+
+/**
+ * Popularity scores keyed by catalog entry id — npm monthly downloads when the
+ * entry is an npm package, otherwise GitHub stars. Fetched lazily by the daemon
+ * (npm + GitHub public APIs) only when the user opens the catalog, then cached;
+ * never fetched on boot (see SPEC §1). Missing ids simply have no known score.
+ */
+export type PopularityMap = Record<string, number>;
+
+/**
+ * A command-line tool NekkoMCP knows about — usually a prerequisite for running
+ * some MCP servers (e.g. `flyctl` for the Fly server, `uvx` for Python servers,
+ * `docker` for the Docker runtime). The CLIs section detects which are present.
+ */
+export interface CliTool {
+  id: string;
+  /** Display name, e.g. "Docker" or "GitHub CLI". */
+  name: string;
+  /** The executable to look for on PATH, e.g. `docker`, `gh`, `uvx`. */
+  command: string;
+  description: string;
+  /** Grouping for the UI: runtime · package · container · cloud · vcs · mcp · other. */
+  category: string;
+  homepage?: string;
+  /** A short install hint (URL or one-line command). */
+  install?: string;
+  /** Args used to read the version; defaults to `['--version']`. */
+  versionArgs?: string[];
+}
+
+/** Detection result for a known CLI: is it on PATH, where, and what version. */
+export interface CliStatus extends CliTool {
+  found: boolean;
+  /** Parsed version string when found (best-effort). */
+  version?: string;
+  /** Absolute path the command resolved to on PATH, when found. */
+  path?: string;
+}
+
+/** Result of an ad-hoc "is this command available?" search (any command name). */
+export interface CliCheckResult {
+  command: string;
+  found: boolean;
+  path?: string;
+  version?: string;
 }
 
 /**
