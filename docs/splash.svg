@@ -38,27 +38,27 @@
   <rect x="0" y="0" width="1280" height="4" fill="url(#accent)"/>
 
   <!-- left: wordmark + tagline -->
-  <g transform="translate(84, 150)">
+  <g transform="translate(84, 166)">
     <g transform="translate(0,-26)">
       <circle cx="16" cy="16" r="13" fill="none" stroke="url(#accent)" stroke-width="4.5"/>
       <circle cx="16" cy="16" r="6" fill="url(#core)"/>
     </g>
     <text x="52" y="0" font-size="28" font-weight="700" fill="#8a93b8" letter-spacing="4">HYPERGATE</text>
-    <text x="-4" y="118" font-size="88" font-weight="800" letter-spacing="-2" fill="#f2f5ff">Every MCP server.<tspan x="-2" dy="0"></tspan></text>
-    <text x="-4" y="212" font-size="88" font-weight="800" letter-spacing="-2" fill="url(#accent)">One gate.</text>
-    <text x="2" y="272" font-size="21" fill="#aab3d6">Run MCP servers securely on your machine — sandboxed, supervised, aggregated —</text>
-    <text x="2" y="302" font-size="21" fill="#aab3d6">and jump any agent through a single gateway endpoint.</text>
+    <text x="-3" y="102" font-size="66" font-weight="800" letter-spacing="-1.5" fill="#f2f5ff">Every MCP server.</text>
+    <text x="-3" y="176" font-size="66" font-weight="800" letter-spacing="-1.5" fill="url(#accent)">One gate.</text>
+    <text x="2" y="232" font-size="20" fill="#aab3d6">Run MCP servers securely: sandboxed, supervised, aggregated.</text>
+    <text x="2" y="262" font-size="20" fill="#aab3d6">One gateway endpoint for every agent. Analytics built in.</text>
 
-    <g transform="translate(0, 344)" font-size="17" font-weight="600">
+    <g transform="translate(0, 302)" font-size="17" font-weight="600">
       <g>
         <rect x="0" y="0" width="140" height="40" rx="20" fill="#10132a" stroke="#232a4d"/>
         <text x="70" y="26" text-anchor="middle" fill="#22d3ee">local-first</text>
       </g>
       <g transform="translate(156,0)">
-        <rect x="0" y="0" width="248" height="40" rx="20" fill="#10132a" stroke="#232a4d"/>
-        <text x="124" y="26" text-anchor="middle" fill="#8f83ff">process or Docker isolation</text>
+        <rect x="0" y="0" width="252" height="40" rx="20" fill="#10132a" stroke="#232a4d"/>
+        <text x="126" y="26" text-anchor="middle" fill="#8f83ff">process · Docker · remote</text>
       </g>
-      <g transform="translate(420,0)">
+      <g transform="translate(424,0)">
         <rect x="0" y="0" width="92" height="40" rx="20" fill="#10132a" stroke="#232a4d"/>
         <text x="46" y="26" text-anchor="middle" fill="#45d99a">MIT</text>
       </g>
@@ -66,7 +66,7 @@
   </g>
 
   <!-- right: servers → the gate → agents motif -->
-  <g transform="translate(760, 132)" filter="url(#soft)">
+  <g transform="translate(742, 132)" filter="url(#soft)">
     <!-- managed servers -->
     <g font-size="15" fill="#dfe5ff" text-anchor="middle">
       <g transform="translate(0,0)"><rect width="118" height="50" rx="12" fill="#0e1126" stroke="#26305c"/><text x="59" y="30">filesystem</text></g>
@@ -77,26 +77,29 @@
 
     <!-- streams bending into the gate -->
     <g stroke="url(#accent)" stroke-width="2.5" fill="none" opacity="0.9">
-      <path d="M118 25 C 190 25, 210 142, 262 142"/>
-      <path d="M118 103 C 185 103, 205 142, 262 142"/>
-      <path d="M118 181 C 185 181, 205 142, 262 142"/>
-      <path d="M118 259 C 190 259, 210 142, 262 142"/>
+      <path d="M118 25 C 190 25, 212 142, 264 142"/>
+      <path d="M118 103 C 185 103, 207 142, 264 142"/>
+      <path d="M118 181 C 185 181, 207 142, 264 142"/>
+      <path d="M118 259 C 190 259, 212 142, 264 142"/>
     </g>
 
     <!-- the gate: a warp ring -->
     <g transform="translate(316,142)">
-      <circle r="54" fill="none" stroke="url(#accent)" stroke-width="10"/>
-      <circle r="26" fill="url(#core)"/>
+      <circle r="50" fill="none" stroke="url(#accent)" stroke-width="10"/>
+      <circle r="24" fill="url(#core)"/>
     </g>
 
     <!-- gate → agent -->
-    <path d="M372 142 C 400 142, 402 142, 428 142" stroke="#dfe5ff" stroke-opacity="0.55" stroke-width="2.5" fill="none"/>
+    <path d="M371 142 C 392 142, 396 142, 414 142" stroke="#dfe5ff" stroke-opacity="0.55" stroke-width="2.5" fill="none"/>
 
     <!-- agent -->
-    <g transform="translate(428,110)">
+    <g transform="translate(414,110)">
       <rect width="122" height="64" rx="14" fill="#0e1126" stroke="#26305c"/>
       <text x="61" y="30" text-anchor="middle" font-size="15" fill="#dfe5ff">your agent</text>
       <text x="61" y="50" text-anchor="middle" font-size="13" fill="#8a93b8">one endpoint</text>
     </g>
   </g>
+
+  <!-- footer url -->
+  <text x="1230" y="576" text-anchor="end" font-size="14" fill="#5b648c" letter-spacing="1">hypergate.app</text>
 </svg>
