@@ -2,12 +2,12 @@
 
 ![Hypergate — run MCP servers securely; one gateway for every agent](docs/splash.png)
 
-**Local-first runtime & manager for MCP servers — a [ToolHive](https://github.com/stacklok/toolhive) rival you own.** Run MCP servers securely, supervise them, and expose **one gateway endpoint** any agent harness (Claude Code, Cursor, [Open Paw](https://github.com/nekko-labs/open-paw), Codex) can use. Not just a connector list — a proper server runtime.
+**Local-first runtime & manager for MCP servers** Run MCP servers securely, supervise them, and expose **one gateway endpoint** any agent harness (Claude Code, Cursor, [Kotrain](https://github.com/nekko-labs/kotrain), Codex) can use. Not just a connector list — a proper server runtime.
 
-> Open source · MIT · [nekko-labs](https://github.com/nekko-labs). Standalone app **and** an embeddable tab in Open Paw.
+> Open source · MIT · [nekko-labs](https://github.com/nekko-labs). Standalone app **and** an embeddable tab in Kotrain.
 
 ## Why
-Open Paw and Claude Code are MCP *clients*. Hypergate is the piece they need: a secure local *server runtime/manager* — a supervisor + an aggregating gateway. Add servers from a catalog (or custom), pick how they're isolated, start them, and paste one URL/command into your agent.
+Kotrain and Claude Code are MCP *clients*. Hypergate is the piece they need: a secure local *server runtime/manager* — a supervisor + an aggregating gateway. Add servers from a catalog (or custom), pick how they're isolated, start them, and paste one URL/command into your agent.
 
 ## Isolation — your choice (the tradeoff, plainly)
 
@@ -74,10 +74,10 @@ or stdio: `{ "mcpServers": { "hypergate": { "command": "hypergated", "args": ["-
 
 **Scoped agents.** The master token above sees every server. To hand a specific client a narrower token, add a **connected agent** in the UI (or `POST /api/clients`), pick which servers it may use, and give it that agent's token — it will only see and call the servers you allowed, and its calls show up under its name in Analytics.
 
-**Open Paw** auto-detects a running daemon: Settings → MCP servers → **Connect gateway** (one click), plus an **Open manager** button that opens this UI in a workbench pane.
+**Kotrain** auto-detects a running daemon: Settings → MCP servers → **Connect gateway** (one click), plus an **Open manager** button that opens this UI in a workbench pane.
 
 ## Status
-Kicked off 2026-06-28. **v0.4** adds **connected agents** (named, per-server-scoped gateway tokens), **registry search** (search the official open-source MCP registry from the Add flow), a **tool inspector** (click a tool to see its description + parameters), and **analytics persistence** (usage survives a daemon restart). On top of **v0.3**: process + Docker runtimes, supervisor, aggregating gateway over stdio **and** streamable HTTP (bearer token), daemon-served web UI, curated catalog, Open Paw one-click integration, a list-first redesign, and usage analytics. Next: resources/prompts aggregation, crash backoff, keychain secrets, registry background sync. See `SPEC.md`/`TASKS.md`.
+Kicked off 2026-06-28. **v0.4** adds **connected agents** (named, per-server-scoped gateway tokens), **registry search** (search the official open-source MCP registry from the Add flow), a **tool inspector** (click a tool to see its description + parameters), and **analytics persistence** (usage survives a daemon restart). On top of **v0.3**: process + Docker runtimes, supervisor, aggregating gateway over stdio **and** streamable HTTP (bearer token), daemon-served web UI, curated catalog, Kotrain one-click integration, a list-first redesign, and usage analytics. Next: resources/prompts aggregation, crash backoff, keychain secrets, registry background sync. See `SPEC.md`/`TASKS.md`.
 
 ## Analytics — visibility for free
 Because every tool call fans through the one gateway, Hypergate records it: server, tool, caller (from the MCP handshake), success/error, latency, and bytes in/out. The web UI's **Analytics** tab turns that into headline metrics, a 24h call-volume sparkline, usage-by-server, a who's-calling breakdown, and a live recent-calls feed — served from `/api/analytics`. It's a private audit trail with nothing to wire up and no data leaving your machine.
