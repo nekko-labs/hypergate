@@ -1,0 +1,322 @@
+//! `hypergate` — the desktop shell and CLI for the Hypergate daemon.
+//!
+//! One binary, several jobs, all of them thin:
+//!
+//!   • `hypergate tray`         the per-user logon agent (tray icon + menu)
+//!   • `hypergate start|stop|…` a CLI over the daemon's existing HTTP API
+//!   • `hypergate sandbox-exec` the resource-limit launcher the supervisor uses
+//!   • `hypergate secret`       OS keychain access, including for the daemon
+//!
+//! Nothing here reimplements daemon logic. The CLI is a client of the same API
+//! the web UI calls, so there is exactly one source of truth for behaviour.
+
+mod api;
+mod autostart;
+mod daemon;
+mod icon;
+mod paths;
+mod sandbox;
+mod secrets;
+mod tray;
+
+use std::io::Read;
+use std::process::ExitCode;
+use std::time::Duration;
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(
+    name = "hypergate",
+    version,
+    about = "Local-first runtime and gateway for MCP servers",
+    long_about = None
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run the tray agent in the foreground (what the login item launches).
+    Tray,
+    /// Start the daemon in the background if it is not already running.
+    Start,
+    /// Stop a daemon started by this shell.
+    Stop,
+    /// Restart the daemon.
+    Restart,
+    /// Show whether the daemon is up, and what it is serving.
+    Status,
+    /// List managed MCP servers and their state.
+    List,
+    /// Print a managed server's logs.
+    Logs {
+        /// Server id, as shown by `hypergate list`.
+        id: String,
+    },
+    /// Open the manager UI in the default browser.
+    Open,
+    /// Print the gateway endpoint and token for pasting into an agent harness.
+    Gateway {
+        /// Print only the bearer token.
+        #[arg(long)]
+        token_only: bool,
+    },
+    /// Manage the login item that starts the tray agent.
+    Autostart {
+        #[command(subcommand)]
+        action: AutostartAction,
+    },
+    /// Read and write Hypergate's secrets in the OS keychain.
+    Secret {
+        #[command(subcommand)]
+        action: SecretAction,
+    },
+    /// Apply OS resource limits, then run a command (used by the supervisor).
+    #[command(name = "sandbox-exec")]
+    SandboxExec {
+        /// Memory ceiling in MB (Windows Job Object limit / POSIX RLIMIT_AS).
+        #[arg(long)]
+        mem: Option<u64>,
+        /// CPU ceiling as a percentage of the machine (Windows only).
+        #[arg(long)]
+        cpu: Option<u8>,
+        /// Maximum open file descriptors (POSIX only).
+        #[arg(long)]
+        nofile: Option<u64>,
+        /// Fail rather than warn when a requested limit cannot be applied here.
+        #[arg(long)]
+        strict: bool,
+        /// The command to run, after `--`.
+        #[arg(last = true, required = true)]
+        argv: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AutostartAction {
+    /// Enable the login item.
+    On,
+    /// Disable the login item.
+    Off,
+    /// Report whether the login item is present.
+    Status,
+}
+
+#[derive(Subcommand)]
+enum SecretAction {
+    /// Print a secret's value to stdout.
+    Get { key: String },
+    /// Store a secret, read from stdin (never argv, which is world-readable).
+    Set { key: String },
+    /// Delete a secret.
+    Delete { key: String },
+    /// Report whether a usable keychain exists on this machine.
+    Check,
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    match dispatch(cli.command) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("hypergate: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn dispatch(command: Command) -> Result<ExitCode, String> {
+    match command {
+        Command::Tray => {
+            tray::run()?;
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Start => {
+            if api::is_up() {
+                println!("Daemon already running at {}", paths::base_url());
+                return Ok(ExitCode::SUCCESS);
+            }
+            // Keychain first, so the daemon inherits HYPERGATE_TOKEN and never
+            // writes the token to disk in the clear.
+            let _ = secrets::adopt_gateway_token();
+            let pid = daemon::spawn_detached()?;
+            if daemon::wait_until_up(Duration::from_secs(20)) {
+                println!("Daemon started (pid {pid}) at {}", paths::base_url());
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Err(format!("daemon (pid {pid}) did not answer /health within 20s"))
+            }
+        }
+
+        Command::Stop => {
+            if daemon::stop()? {
+                println!("Daemon stopped");
+                Ok(ExitCode::SUCCESS)
+            } else if api::is_up() {
+                Err("a daemon is running but this shell did not start it; stop it where it was started".into())
+            } else {
+                println!("No daemon running");
+                Ok(ExitCode::SUCCESS)
+            }
+        }
+
+        Command::Restart => {
+            let _ = daemon::stop();
+            let _ = secrets::adopt_gateway_token();
+            let pid = daemon::spawn_detached()?;
+            if daemon::wait_until_up(Duration::from_secs(20)) {
+                println!("Daemon restarted (pid {pid})");
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Err(format!("daemon (pid {pid}) did not answer /health within 20s"))
+            }
+        }
+
+        Command::Status => match api::health() {
+            Ok(h) => {
+                println!("Daemon    running (v{}) at {}", h.version, paths::base_url());
+                println!("Servers   {}", h.servers);
+                if let Ok(a) = api::analytics() {
+                    println!("Usage     {} call(s), {} error(s)", a.total_calls, a.total_errors);
+                }
+                println!(
+                    "Keychain  {}",
+                    if secrets::available() { "available" } else { "unavailable (file fallback)" }
+                );
+                println!(
+                    "Autostart {}",
+                    if !autostart::is_supported() {
+                        "unsupported on this platform"
+                    } else if autostart::is_enabled() {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+                Ok(ExitCode::SUCCESS)
+            }
+            Err(e) => {
+                println!("Daemon    not running ({e})");
+                // Not an error: "is it up?" answered honestly is a successful query.
+                Ok(ExitCode::SUCCESS)
+            }
+        },
+
+        Command::List => {
+            let servers = api::servers()?;
+            if servers.is_empty() {
+                println!("No managed servers yet. Add one in the manager UI: {}", api::ui_url());
+                return Ok(ExitCode::SUCCESS);
+            }
+            let id_w = servers.iter().map(|s| s.id.len()).max().unwrap_or(2).max(2);
+            let name_w = servers.iter().map(|s| s.name.len()).max().unwrap_or(4).max(4);
+            println!(
+                "{:<id_w$}  {:<name_w$}  {:<11}  {:<8}  {}",
+                "ID", "NAME", "STATE", "RUNTIME", "TOOLS",
+                id_w = id_w,
+                name_w = name_w
+            );
+            for s in &servers {
+                println!(
+                    "{:<id_w$}  {:<name_w$}  {:<11}  {:<8}  {}{}",
+                    s.id,
+                    s.name,
+                    s.state,
+                    s.runtime,
+                    s.tools.len(),
+                    s.error.as_deref().map(|e| format!("  ({e})")).unwrap_or_default(),
+                    id_w = id_w,
+                    name_w = name_w
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Logs { id } => {
+            let logs = api::logs(&id)?;
+            if logs.logs.is_empty() {
+                println!("(no logs for {id})");
+            }
+            for line in logs.logs {
+                println!("{line}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Open => {
+            open::that_detached(api::ui_url()).map_err(|e| format!("could not open a browser: {e}"))?;
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Gateway { token_only } => {
+            let g = api::gateway()?;
+            if token_only {
+                println!("{}", g.token);
+            } else {
+                println!("URL     {}", g.url);
+                println!("Token   {}", g.token);
+                println!("stdio   {}", g.stdio_command);
+                println!("UI      {}", if g.ui_url.is_empty() { api::ui_url() } else { g.ui_url });
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Autostart { action } => match action {
+            AutostartAction::On => {
+                autostart::enable()?;
+                println!("Hypergate will start at login");
+                Ok(ExitCode::SUCCESS)
+            }
+            AutostartAction::Off => {
+                autostart::disable()?;
+                println!("Hypergate will no longer start at login");
+                Ok(ExitCode::SUCCESS)
+            }
+            AutostartAction::Status => {
+                println!("{}", if autostart::is_enabled() { "enabled" } else { "disabled" });
+                Ok(ExitCode::SUCCESS)
+            }
+        },
+
+        Command::Secret { action } => match action {
+            SecretAction::Get { key } => match secrets::get(&key)? {
+                Some(v) => {
+                    // No trailing newline: callers (including the daemon) read
+                    // this as an exact value.
+                    print!("{v}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                // Absent is not a failure; exit 1 lets a caller branch on it.
+                None => Ok(ExitCode::from(1)),
+            },
+            SecretAction::Set { key } => {
+                let mut value = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut value)
+                    .map_err(|e| format!("could not read the value from stdin: {e}"))?;
+                secrets::set(&key, &value)?;
+                Ok(ExitCode::SUCCESS)
+            }
+            SecretAction::Delete { key } => {
+                secrets::delete(&key)?;
+                Ok(ExitCode::SUCCESS)
+            }
+            SecretAction::Check => {
+                let ok = secrets::available();
+                println!("{}", if ok { "available" } else { "unavailable" });
+                Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(1) })
+            }
+        },
+
+        Command::SandboxExec { mem, cpu, nofile, strict, argv } => {
+            let (program, args) = argv.split_first().ok_or("sandbox-exec needs a command after `--`")?;
+            let code = sandbox::exec(program, args, sandbox::Limits { mem_mb: mem, cpu_pct: cpu, nofile, strict })?;
+            // Propagate the child's exit code, so the supervisor sees the truth.
+            Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
+        }
+    }
+}

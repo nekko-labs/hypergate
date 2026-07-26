@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, renameSync, rmSync } from 'node:fs';
 import { join, extname, dirname, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -10,6 +10,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import { Supervisor, createGateway, REGISTRY, searchRegistry, KNOWN_CLIS, HypergateOAuthProvider, type OAuthStore } from '@hypergate/core';
+import { openStore } from './store.ts';
+import * as shell from './shell.ts';
 import type {
   ManagedServerConfig,
   GatewayInfo,
@@ -37,7 +39,11 @@ import type {
  * Local-first: binds to localhost. The daemon makes outbound calls only for
  * user-initiated actions — registry search, and connecting to the remote MCP
  * servers a user adds (plus their OAuth login/token exchange). OAuth tokens are
- * stored locally under ~/.hypergate/oauth/ and nothing phones home on its own.
+ * stored in the OS keychain (via the `hypergate` shell binary), falling back to
+ * ~/.hypergate/oauth/ where no keychain exists. Nothing phones home on its own.
+ *
+ * Durable state (usage history, server logs) lives in SQLite at
+ * ~/.hypergate/hypergate.db — see store.ts.
  */
 const DATA_DIR = process.env.HYPERGATE_DIR ?? join(homedir(), '.hypergate');
 // One-time migration from the pre-rename data dir (NekkoMCP → Hypergate, v0.7.0):
@@ -60,7 +66,15 @@ const SETTINGS_PATH = join(DATA_DIR, 'settings.json');
 const POPULARITY_PATH = join(DATA_DIR, 'popularity.json');
 const OAUTH_DIR = join(DATA_DIR, 'oauth');
 const PORT = Number(process.env.PORT ?? 7777);
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
+/**
+ * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
+ * It deliberately does NOT open the durable store: the rolled-up aggregates are
+ * written as absolute values, so a short-lived process starting from an empty
+ * in-memory state would stomp the resident daemon's counts with lower ones.
+ * (Its calls therefore go unrecorded, exactly as before this store existed.)
+ */
+const STDIO_MODE = process.argv.includes('--stdio');
 /** How long a fetched popularity snapshot stays fresh before we refetch (24h). */
 const POPULARITY_TTL = 24 * 60 * 60 * 1000;
 /** Where OAuth providers send the user back after the browser login. */
@@ -79,13 +93,17 @@ const saveConfig = (servers: ManagedServerConfig[]): void => {
   writeFileSync(CONFIG_PATH, JSON.stringify(servers, null, 2));
 };
 
-/** Analytics survive restarts: hydrate from disk on boot, persist (debounced) on each call. */
-const loadAnalytics = (): AnalyticsSnapshot | undefined => {
+/**
+ * The durable store (SQLite/WAL). Undefined in `--stdio` mode (see STDIO_MODE)
+ * and on a runtime without `node:sqlite`, in which case analytics fall back to
+ * the legacy JSON snapshot below and stay in-memory-only.
+ */
+const store = STDIO_MODE ? undefined : openStore(DATA_DIR);
+
+/** Legacy fallback: the pre-SQLite snapshot, used only when the store is unavailable. */
+const loadLegacyAnalytics = (): AnalyticsSnapshot | undefined => {
   try {
-    if (existsSync(ANALYTICS_PATH)) {
-      const raw = readFileSync(ANALYTICS_PATH, 'utf8');
-      if (raw.length < 16_000_000) return JSON.parse(raw) as AnalyticsSnapshot;
-    }
+    if (existsSync(ANALYTICS_PATH)) return JSON.parse(readFileSync(ANALYTICS_PATH, 'utf8')) as AnalyticsSnapshot;
   } catch {
     /* ignore a corrupt snapshot */
   }
@@ -118,8 +136,20 @@ const debounce = (fn: () => void, ms: number): (() => void) => {
   };
 };
 
-/** The gateway bearer token: generated once, persisted, never logged. */
+/**
+ * The gateway bearer token: generated once, persisted, never logged.
+ *
+ * Resolution order is keychain → legacy plaintext file → mint a new one. When
+ * the shell launches the daemon it passes the token in `HYPERGATE_TOKEN` (which
+ * wins over all of this), so in the normal desktop flow the token lives only in
+ * the OS keychain and no plaintext copy is ever written. A bare daemon with no
+ * shell keeps the old file behaviour.
+ */
 const loadToken = (): string => {
+  if (shell.hasShell()) {
+    const fromKeychain = shell.secretGet('gateway-token')?.trim();
+    if (fromKeychain) return fromKeychain;
+  }
   try {
     if (existsSync(TOKEN_PATH)) {
       const t = readFileSync(TOKEN_PATH, 'utf8').trim();
@@ -129,32 +159,24 @@ const loadToken = (): string => {
     /* regenerate below */
   }
   const t = randomBytes(24).toString('hex');
+  // Prefer the keychain for a freshly minted token; only fall back to a file.
+  if (shell.hasShell() && shell.secretSet('gateway-token', t)) return t;
   mkdirSync(DATA_DIR, { recursive: true });
   writeFileSync(TOKEN_PATH, t);
   return t;
 };
 
 // ── desktop / service settings (autostart + tray behavior) ─────────────────
-// Preferences live in ~/.hypergate/settings.json. `runOnStartup` is backed by
-// an OS autostart entry so it reflects reality even when changed outside the
-// app; `startMinimized` is read by the tray launcher (scripts/hypergate-tray.ps1)
-// to decide whether to open the manager UI on launch. Windows-only for now
-// (matches the tray); a no-op that reports `startupSupported: false` elsewhere.
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const TRAY_PS1 = join(REPO_ROOT, 'scripts', 'hypergate-tray.ps1');
-const RUN_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-const RUN_VALUE = 'Hypergate';
-const STARTUP_SUPPORTED = process.platform === 'win32';
+// Preferences live in ~/.hypergate/settings.json. `runOnStartup` is backed by a
+// real OS login item, so it reflects reality even when changed outside the app.
+//
+// That login item is delegated to the `hypergate` shell binary, which implements
+// the idiomatic per-user mechanism on each platform (HKCU Run key, LaunchAgent,
+// XDG autostart). It is therefore supported wherever the shell is installed,
+// replacing the old Windows-only PowerShell path; without the shell we report
+// `startupSupported: false` and the toggle is inert.
+const STARTUP_SUPPORTED = shell.hasShell();
 const pexecFile = promisify(execFile);
-
-/** Run a PowerShell script via -EncodedCommand (base64/UTF-16LE) to sidestep all shell quoting. */
-const runPowerShell = async (script: string): Promise<string> => {
-  const encoded = Buffer.from(script, 'utf16le').toString('base64');
-  const { stdout } = await pexecFile('powershell', [
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded,
-  ]);
-  return stdout.trim();
-};
 
 // ── popularity ranking (lazy, cached; never fetched on boot) ────────────────
 // The catalog sorts the recommended set first, then the rest by popularity. We
@@ -316,29 +338,13 @@ const saveSettings = (s: DaemonSettings): void => {
   writeFileSync(SETTINGS_PATH, JSON.stringify(s, null, 2));
 };
 
-/** Is the Windows autostart entry present? (Always false on unsupported platforms.) */
-const isStartupEnabled = async (): Promise<boolean> => {
-  if (!STARTUP_SUPPORTED) return false;
-  try {
-    const out = await runPowerShell(
-      `$p = Get-ItemProperty -Path '${RUN_KEY}' -Name '${RUN_VALUE}' -ErrorAction SilentlyContinue; if ($p) { 'yes' } else { 'no' }`,
-    );
-    return out.endsWith('yes');
-  } catch {
-    return false;
-  }
-};
-/** Add/remove the autostart entry that launches the tray hidden at login. */
+/** Is the login item present? Answered by the shell, so it reflects real OS state. */
+const isStartupEnabled = async (): Promise<boolean> => (STARTUP_SUPPORTED ? shell.autostartEnabled() : false);
+
+/** Add or remove the login item that starts the tray agent. */
 const setStartupEnabled = async (on: boolean): Promise<void> => {
   if (!STARTUP_SUPPORTED) return;
-  if (on) {
-    const launch = `powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${TRAY_PS1}"`;
-    await runPowerShell(
-      `New-Item -Path '${RUN_KEY}' -Force | Out-Null; Set-ItemProperty -Path '${RUN_KEY}' -Name '${RUN_VALUE}' -Value '${launch.replace(/'/g, "''")}'`,
-    );
-  } else {
-    await runPowerShell(`Remove-ItemProperty -Path '${RUN_KEY}' -Name '${RUN_VALUE}' -ErrorAction SilentlyContinue`);
-  }
+  if (!shell.setAutostart(on)) throw new Error('the hypergate shell could not change the login item');
 };
 
 /** The `/api/settings` payload: persisted prefs reconciled with the real OS autostart state. */
@@ -354,10 +360,16 @@ const settingsInfo = async (): Promise<SettingsInfo> => {
 
 // ── OAuth for remote servers ───────────────────────────────────────────────
 // Each remote server's OAuth state (registered client, tokens, PKCE verifier,
-// CSRF state) lives in one JSON file under ~/.hypergate/oauth/. The provider is
-// store-backed (see @hypergate/core) so the daemon owns all the filesystem IO.
+// CSRF state) is one blob. It now lives in the OS keychain under `oauth:<id>`,
+// via the `hypergate` shell binary, instead of plaintext JSON under
+// ~/.hypergate/oauth/. The whole blob is one keychain entry, cached in memory,
+// so a boot costs one subprocess per remote server rather than one per key.
+//
+// Without the shell (or without a working keychain, e.g. headless Linux with no
+// Secret Service) this falls back to exactly the previous file behaviour, so
+// nothing breaks; the grants are simply no better protected than before.
 const oauthFile = (id: string): string => join(OAUTH_DIR, `${encodeURIComponent(id)}.json`);
-const readOAuth = (id: string): Record<string, string> => {
+const readOAuthFile = (id: string): Record<string, string> => {
   try {
     if (existsSync(oauthFile(id))) return JSON.parse(readFileSync(oauthFile(id), 'utf8')) as Record<string, string>;
   } catch {
@@ -365,16 +377,68 @@ const readOAuth = (id: string): Record<string, string> => {
   }
   return {};
 };
-const fileStore = (id: string): OAuthStore => ({
+const writeOAuthFile = (id: string, blob: Record<string, string>): void => {
+  mkdirSync(OAUTH_DIR, { recursive: true });
+  writeFileSync(oauthFile(id), JSON.stringify(blob, null, 2));
+};
+
+/** Keychain entry name for one server's grant blob. */
+const oauthKey = (id: string): string => `oauth:${id}`;
+/** In-memory cache, so repeated `load()` calls don't each spawn a subprocess. */
+const oauthCache = new Map<string, Record<string, string>>();
+/** Whether the keychain is usable. Probed once; false means stay on files. */
+let keychainOk: boolean | undefined;
+const useKeychain = (): boolean => {
+  if (keychainOk === undefined) keychainOk = shell.hasShell() && shell.keychainAvailable();
+  return keychainOk;
+};
+
+const readOAuth = (id: string): Record<string, string> => {
+  const cached = oauthCache.get(id);
+  if (cached) return cached;
+
+  let blob: Record<string, string> = {};
+  if (useKeychain()) {
+    const raw = shell.secretGet(oauthKey(id));
+    if (raw) {
+      try {
+        blob = JSON.parse(raw) as Record<string, string>;
+      } catch {
+        /* corrupt entry → start fresh */
+      }
+    } else {
+      // One-time migration: adopt an existing plaintext grant, then delete it.
+      const fromFile = readOAuthFile(id);
+      if (Object.keys(fromFile).length > 0 && shell.secretSet(oauthKey(id), JSON.stringify(fromFile))) {
+        blob = fromFile;
+        try {
+          rmSync(oauthFile(id));
+          process.stderr.write(`[oauth] moved ${id} grant into the OS keychain\n`);
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+  } else {
+    blob = readOAuthFile(id);
+  }
+  oauthCache.set(id, blob);
+  return blob;
+};
+
+const writeOAuth = (id: string, blob: Record<string, string>): void => {
+  oauthCache.set(id, blob);
+  if (useKeychain() && shell.secretSet(oauthKey(id), JSON.stringify(blob))) return;
+  writeOAuthFile(id, blob);
+};
+
+const secretStore = (id: string): OAuthStore => ({
   load: (key) => readOAuth(id)[key],
-  save: (key, value) => {
-    mkdirSync(OAUTH_DIR, { recursive: true });
-    writeFileSync(oauthFile(id), JSON.stringify({ ...readOAuth(id), [key]: value }, null, 2));
-  },
+  save: (key, value) => writeOAuth(id, { ...readOAuth(id), [key]: value }),
   remove: (key) => {
-    const o = readOAuth(id);
-    delete o[key];
-    if (existsSync(oauthFile(id))) writeFileSync(oauthFile(id), JSON.stringify(o, null, 2));
+    const blob = { ...readOAuth(id) };
+    delete blob[key];
+    writeOAuth(id, blob);
   },
 });
 /**
@@ -390,7 +454,7 @@ const envKey = (prefix: string, id: string): string | undefined =>
 const resolvedClientId = (cfg: ManagedServerConfig): string | undefined => cfg.clientId || envKey('HYPERGATE_CLIENTID', cfg.id);
 const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined => cfg.clientSecret || envKey('HYPERGATE_CLIENTSECRET', cfg.id);
 const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
-  new HypergateOAuthProvider(fileStore(cfg.id), {
+  new HypergateOAuthProvider(secretStore(cfg.id), {
     redirectUrl: OAUTH_REDIRECT,
     clientName: 'Hypergate',
     clientId: resolvedClientId(cfg),
@@ -401,14 +465,27 @@ const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
 const needsAuth = (cfg: ManagedServerConfig): boolean =>
   cfg.runtime === 'remote' && cfg.auth !== 'none' && !makeProvider(cfg).hasTokens();
 
-// Set to a debounced disk writer in HTTP mode; stays a no-op in stdio mode so a
-// transient `--stdio` spawn never clobbers the resident daemon's analytics file.
+// Set to a debounced store writer in HTTP mode; stays a no-op in stdio mode so a
+// transient `--stdio` spawn never clobbers the resident daemon's aggregates.
 let persistAnalytics: () => void = () => {};
 const supervisor = new Supervisor({
-  onUsage: () => persistAnalytics(),
+  onUsage: (e) => {
+    // Queue the raw call for durable history (O(1)); the SQLite write is batched
+    // into the debounced flush so the gateway's hot path never touches the disk.
+    store?.appendEvent(e);
+    persistAnalytics();
+  },
+  onLog: (serverId, line) => {
+    store?.appendLog(serverId, line);
+    persistAnalytics();
+  },
   // The supervisor connects remote servers with this provider (attaches + refreshes
   // the bearer token); the interactive login is driven by the daemon's OAuth routes.
   authProviderFor: (cfg) => (cfg.runtime === 'remote' && cfg.auth !== 'none' ? makeProvider(cfg) : undefined),
+  // Enforces per-server resource limits by spawning through `hypergate
+  // sandbox-exec`. Undefined when the shell is not installed, in which case a
+  // limited server starts unsandboxed and says so in its logs.
+  launcher: shell.shellBin(),
 });
 let servers = loadConfig();
 
@@ -456,10 +533,10 @@ const runOAuth = async (
 
 /** Find the managed remote server whose live OAuth flow used this CSRF `state`. */
 const serverForState = (state: string): ManagedServerConfig | undefined =>
-  servers.find((s) => s.runtime === 'remote' && fileStore(s.id).load('state') === state);
+  servers.find((s) => s.runtime === 'remote' && secretStore(s.id).load('state') === state);
 
 // ── stdio gateway mode (the single aggregated endpoint for harnesses) ──────
-if (process.argv.includes('--stdio')) {
+if (STDIO_MODE) {
   await startEnabled();
   const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller: 'stdio (local)' });
   await gateway.connect(new StdioServerTransport());
@@ -467,20 +544,36 @@ if (process.argv.includes('--stdio')) {
   process.stderr.write(`hypergated gateway (stdio) up — ${supervisor.ids().length} server(s)\n`);
 } else {
   // ── HTTP: management API + web UI + streamable-HTTP MCP gateway ──────────
-  // Restore analytics before serving so the first response already reflects history.
-  supervisor.hydrate(loadAnalytics());
-  const flushAnalytics = (): void => {
+  // Restore analytics before serving so the first response already reflects
+  // history. The tail matches the supervisor's in-memory event ring (EVENT_CAP);
+  // everything older stays queryable via /api/usage/events.
+  const EVENT_TAIL = 2000;
+  supervisor.hydrate(store ? store.loadSnapshot(EVENT_TAIL) : loadLegacyAnalytics());
+
+  /** Persist queued events/logs + the rolled-up aggregates. Cheap and idempotent. */
+  const flushStore = (): void => {
     try {
+      if (store) {
+        store.flush(supervisor.snapshot());
+        return;
+      }
       mkdirSync(DATA_DIR, { recursive: true });
       writeFileSync(ANALYTICS_PATH, JSON.stringify(supervisor.snapshot()));
     } catch {
       /* best-effort; analytics are non-critical */
     }
   };
-  persistAnalytics = debounce(flushAnalytics, 2000);
+  persistAnalytics = debounce(flushStore, 2000);
+
+  // Age off old rows on boot, then once a day for a long-running daemon.
+  store?.prune();
+  const pruneTimer = setInterval(() => store?.prune(), 24 * 60 * 60 * 1000);
+  pruneTimer.unref();
+
   for (const sig of ['SIGINT', 'SIGTERM', 'beforeExit'] as const) {
     process.once(sig, () => {
-      flushAnalytics();
+      flushStore();
+      store?.close();
       if (sig !== 'beforeExit') process.exit(0);
     });
   }
@@ -741,7 +834,34 @@ if (process.argv.includes('--stdio')) {
     }
 
     if (pathname === '/api/gateway') return json(res, 200, gatewayInfo());
-    if (pathname === '/api/analytics') return json(res, 200, supervisor.analytics());
+    if (pathname === '/api/analytics') {
+      const summary = supervisor.analytics();
+      if (!store) return json(res, 200, summary);
+      // The in-memory series can only see the last EVENT_TAIL calls; the store
+      // buckets in SQL, so the 24h chart stays correct however busy the gateway
+      // is. Flush first, or calls still sitting in the debounced write queue
+      // would be missing from the chart for up to two seconds.
+      flushStore();
+      return json(res, 200, { ...summary, series: store.hourlySeries(24) });
+    }
+
+    // ── durable usage history (the user's own audit trail; never leaves the box) ──
+    // Filterable itemised feed backing "management of MCP usage": which tool, by
+    // which client, when, how long, how much data, and whether it failed.
+    if (pathname === '/api/usage/events' && req.method === 'GET') {
+      if (!store) return json(res, 200, []);
+      flushStore(); // include calls still sitting in the write queue
+      return json(
+        res,
+        200,
+        store.events({
+          limit: Number(url.searchParams.get('limit')) || 100,
+          serverId: url.searchParams.get('server') ?? undefined,
+          client: url.searchParams.get('client') ?? undefined,
+          since: url.searchParams.get('since') ?? undefined,
+        }),
+      );
+    }
 
     // ── desktop/service settings (autostart + start-minimized) ───────────────
     if (pathname === '/api/settings' && req.method === 'GET') return json(res, 200, await settingsInfo());
@@ -843,8 +963,20 @@ if (process.argv.includes('--stdio')) {
       }
     }
 
+    // Server logs. Durable rows survive restarts, so they're preferred; the
+    // in-memory ring is the fallback when the store is unavailable. Flushing
+    // first means the queue can't hide log lines from the last couple of seconds.
     const logsM = /^\/api\/servers\/([^/]+)\/logs$/.exec(pathname);
-    if (logsM && req.method === 'GET') return json(res, 200, { logs: supervisor.logs(logsM[1]) });
+    if (logsM && req.method === 'GET') {
+      const id = logsM[1];
+      const limit = Math.min(10_000, Math.max(1, Number(url.searchParams.get('limit')) || 500));
+      if (store) {
+        flushStore();
+        const rows = store.logs(id, limit);
+        if (rows.length) return json(res, 200, { logs: rows.map((l) => l.line), entries: rows });
+      }
+      return json(res, 200, { logs: supervisor.logs(id) });
+    }
 
     const rmM = /^\/api\/servers\/([^/]+)$/.exec(pathname);
     if (rmM && req.method === 'DELETE') {

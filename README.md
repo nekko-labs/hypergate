@@ -53,18 +53,55 @@ npm run daemon                           # UI + API + /mcp gateway on http://loc
 node apps/daemon/dist/index.js --stdio   # the aggregated gateway over stdio
 ```
 
-### Run it as a desktop app (Windows)
+The desktop shell is Rust, so it builds separately (needs a Rust toolchain):
 
 ```bash
-npm run build && npm run tray            # tray icon in the taskbar; keeps the daemon up
+npm run shell:build   # cargo build --release → apps/shell/target/release/hypergate
+npm run shell:test    # unit + integration tests for the tray, CLI and sandbox launcher
+npm run smoke:shell   # daemon ↔ shell bridge: keychain, autostart, sandbox-exec, CLI
 ```
 
-`scripts/hypergate-tray.cmd` launches a system-tray icon (right-click for **Open manager / Restart / Quit**, double-click opens the UI). A cross-platform Electron shell is planned; this is the lightweight interim.
+### Run it as a desktop app (Windows, macOS, Linux)
 
-The manager's **Settings** tab has the service options:
+```bash
+npm run build && npm run shell:build && npm run tray
+```
 
-- **Run on startup**: launches the tray automatically at login (Windows: an `HKCU\…\Run` entry). No need to place a Startup-folder shortcut by hand.
-- **Start minimized**: on launch, stay in the tray instead of opening the manager window.
+`hypergate tray` puts a tray icon in the notification area (menu bar on macOS, StatusNotifierItem on Linux) and keeps the daemon running. The menu has a live status line, **Open manager**, **Start/Stop all servers**, **Restart daemon**, **Start at login**, and **Quit**. Interaction is menu-only on every platform, because Linux's StatusNotifierItem delivers no click events and a click gesture would silently not exist there.
+
+"Open manager" opens the web UI in your **default browser**. There is deliberately no bundled webview: you already have a better browser than any embedded one, and it avoids a hard `webkit2gtk` dependency on Linux.
+
+The daemon stays independently runnable, so headless Linux, WSL and containers need no shell at all: run `npm run daemon` (or a systemd user unit) and skip the tray.
+
+### The CLI
+
+The same binary is the CLI, talking to the daemon over its HTTP API:
+
+```bash
+hypergate start          # start the daemon in the background
+hypergate status         # daemon, servers, usage, keychain and autostart state
+hypergate list           # managed servers and their state
+hypergate logs <id>      # a server's logs
+hypergate gateway        # the endpoint + token to paste into a harness
+hypergate open           # the manager UI in your browser
+hypergate autostart on   # login item: HKCU Run key / LaunchAgent / XDG autostart
+hypergate secret check   # is an OS keychain available here?
+```
+
+The manager's **Settings** tab exposes the same service options:
+
+- **Run on startup**: a real login item on all three platforms (`HKCU\…\Run`, a LaunchAgent, or an XDG autostart entry), so it reflects reality even if you change it outside the app.
+- **Start minimized**: on launch, stay in the tray instead of opening the manager.
+
+### Where things are stored
+
+Everything is local, under `~/.hypergate/` (override with `HYPERGATE_DIR`):
+
+| What | Where |
+| --- | --- |
+| Server configs, agent tokens, settings | `servers.json`, `clients.json`, `settings.json` |
+| Usage history + server logs | `hypergate.db` (SQLite, WAL). Retention: 90 days of usage, 14 days of logs (`HYPERGATE_RETAIN_USAGE_DAYS` / `_LOG_DAYS`, `0` = forever) |
+| Gateway token, OAuth grants | The **OS keychain** (Credential Manager / Keychain / Secret Service), falling back to files here where no keychain exists |
 
 `npm run dev` runs the daemon + web UI together and opens the site in your browser once Vite is ready (set `HYPERGATE_OPEN=0` to skip).
 

@@ -1,15 +1,18 @@
 {
   "name": "@hypergate/daemon",
-  "version": "0.2.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
-  "bin": { "hypergated": "dist/index.js" },
+  "bin": {
+    "hypergated": "dist/index.js"
+  },
   "scripts": {
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "dev:bun": "bun run --watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -19,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
   }
 }

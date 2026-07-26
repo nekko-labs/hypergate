@@ -1,7 +1,7 @@
 {
   "name": "hypergate",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Local-first runtime & manager for MCP servers — run servers securely (process sandbox or Docker), supervise them, and expose one gateway endpoint for any agent harness. A ToolHive rival you own.",
   "license": "MIT",
   "type": "module",
@@ -12,14 +12,17 @@
   ],
   "scripts": {
     "build": "npm run build -w @hypergate/shared && npm run build -w @hypergate/core && npm run build -w @hypergate/daemon && npm run build -w @hypergate/web",
-    "test": "npm run test -w @hypergate/core",
+    "test": "npm run test -w @hypergate/core && npm run test -w @hypergate/daemon",
     "dev": "node scripts/dev-all.mjs",
     "dev:daemon": "npm run dev -w @hypergate/daemon",
     "dev:web": "npm run dev -w @hypergate/web",
     "daemon": "node --experimental-strip-types apps/daemon/src/index.ts",
-    "tray": "scripts\\hypergate-tray.cmd",
     "smoke:http": "node scripts/smoke-http.mjs",
     "smoke:features": "node scripts/smoke-features.mjs",
+    "smoke:shell": "node scripts/smoke-shell.mjs",
+    "shell:build": "cargo build --release --manifest-path apps/shell/Cargo.toml",
+    "shell:test": "cargo test --manifest-path apps/shell/Cargo.toml",
+    "tray": "cargo run --release --manifest-path apps/shell/Cargo.toml -- tray",
     "typecheck": "tsc -b --noEmit || true"
   },
   "engines": {
