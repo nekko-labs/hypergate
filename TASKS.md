@@ -26,8 +26,20 @@ type: code
 | MCP | `@modelcontextprotocol/sdk` (client per managed server, one aggregated server for the gateway) | Official SDK; same dep Open Paw + the Notes CLI already use. |
 | UI | Vite + React + TS + Tailwind + Zustand (Nekko design tokens) | Consistent with Notes/Open Paw; the UI package embeds as an Open Paw pane. |
 | Isolation | **RuntimeAdapter** interface: `ProcessRuntime` (default) + `DockerRuntime` (opt-in), user-selectable at setup | Don't force Docker; make the security tradeoff explicit (see spec §1). |
-| Desktop (later) | Electron (reuse Open Paw's desktop pattern) | "Real app" shell; deferred past the web MVP. |
+| Store | **SQLite (`node:sqlite`, WAL)** at `~/.hypergate/hypergate.db` | Durable, queryable usage history and logs. Replaced whole-file JSON rewrites, which capped history at 2000 calls. Built into Node ≥22, so no native addon to sign or notarize. |
+| Desktop shell | **Rust, per-user logon agent** (`apps/shell`): tray icon + menu + autostart + CLI + sandbox launcher | The hard parts are OS-level (tray, login items, Job Objects, keychain), not UI. Rust gets `windows-rs`/`objc2`/`zbus` as plain dependencies. Replaces the Electron plan and the PowerShell tray. |
+| Desktop UI | **The existing web UI, opened in the user's default browser** | No second UI, no bundled webview. Devs already have a browser, and it beats WebKitGTK on Linux. |
 | Test/CI | Vitest (core units) + a daemon smoke/probe (spawn a stdio server through the gateway) + GitHub Actions | Same gate discipline as Notes. |
+
+### 1.1 Stack amendment (2026-07-27)
+
+Superseded the Electron row above. Decisions and the reasoning, so this isn't relitigated either:
+
+- **Per-user logon agent, never a Windows Service / `launchd` daemon at root.** Managed MCP servers need the user's `PATH`, home dir, npx cache, per-user Docker socket, and the OAuth grants under `~/.hypergate/`. A SYSTEM/root service gets none of that, adds UAC friction, and Windows Session 0 isolation would kill any UI.
+- **Rust shell, TypeScript daemon.** The shell owns what needs native APIs (tray, menu, login items, keychain, resource limits). The daemon keeps the MCP protocol work in TypeScript, where the official SDK lives and moves fastest. The daemon stays independently runnable so headless Linux, WSL, and containers work with no tray at all.
+- **Rejected: Flutter and React Native.** Both are UI toolkits, not service runtimes; neither can be a background agent without keeping a rendering engine resident. React Native additionally has no Linux desktop target.
+- **Rejected: billing, accounts, and a hosted control plane.** Local-first with no account is the differentiator against ToolHive, and SPEC §1 sells it directly ("no account or cloud required", "the daemon makes no outbound calls on its own"). We are not trading that for a revenue line. Usage metering exists purely so the *user* can see their own traffic; it never leaves the machine.
+- **Tray crates, not full Tauri, for now.** `tray-icon` + `muda` + `tao` are the same crates Tauri uses for its tray, so tray behavior is identical, but we don't link a webview we never render (which on Linux would be a hard `webkit2gtk` runtime dependency for zero benefit). Shell logic lives in a lib crate with a thin binary, so adding Tauri's bundler/updater later is a build-config change and not a rewrite.
 
 ## 2. Repo Layout
 
@@ -43,7 +55,7 @@ hypergate/                         GitHub: nekko-labs/hypergate (public, MIT)
   apps/
     daemon/   hypergated — HTTP management API + MCP gateway (stdio + HTTP/SSE) + supervisor host
     web/      Vite React app (standalone UI) → talks to the daemon
-    desktop/  Electron shell (later)
+    shell/    Rust: `hypergate` binary = tray agent + CLI + sandbox-exec launcher
   docker-compose.yml · tsconfig.base.json
 ```
 
@@ -88,7 +100,7 @@ Mirror of Part 1 §5. `[x]` = shipped per the prior plan · `[ ]` = open.
 - [x] **Analytics persistence on disk** — `Supervisor.snapshot()`/`hydrate()` serialize the aggregates + recent-event ring (Maps/Sets → arrays); an `onUsage` hook lets the daemon persist without coupling core to the filesystem. The daemon hydrates `~/.hypergate/analytics.json` on boot and writes it debounced (2s) per call + flush on shutdown, so usage and the "since" start-time survive a restart. Stdio mode stays read-only so a transient spawn never clobbers the file. · [spec](SPEC.md#36-usage-analytics-shipped) · Done: 2026-07-21
 - [x] **Remote runtime + MCP OAuth** — a third `RuntimeKind` (`remote`) connects to a hosted HTTP/SSE MCP endpoint instead of spawning a child. The supervisor builds a `StreamableHTTPClientTransport`/`SSEClientTransport` with an injected `authProviderFor` factory; `core/oauth.ts` adds a store-backed `HypergateOAuthProvider` (RFC 8414 discovery + RFC 7591 dynamic registration + OAuth 2.1 auth-code + PKCE, via the SDK's `auth()`), keeping core IO-free (the daemon supplies a file store under `~/.hypergate/oauth/`). New `authorizing` server state + `markAuthorizing()` so a token-less remote server prompts sign-in instead of erroring. Providers without dynamic registration (GitHub) take a static `clientId` (config or `HYPERGATE_CLIENTID_<ID>`). Unit-tested (`oauth.test.ts`, in-memory store). · [spec](SPEC.md#31-server-runtime--supervisor-shipped) · Done: 2026-07-23
 - [ ] **Crash backoff / auto-restart loop** — auto-restart a `ready` server whose process dies, with capped backoff. · [spec](SPEC.md#31-server-runtime--supervisor-shipped) · Added: 2026-06-29
-- [ ] **Secrets in the OS keychain** — keytar-free (Credential Manager / Keychain / libsecret via CLI), file fallback. · [spec](SPEC.md#31-server-runtime--supervisor-shipped) · Added: 2026-06-29
+- [ ] **Secrets in the OS keychain** — moved to Epic 8; the Rust shell owns it via the `keyring` crate (Credential Manager / Keychain / libsecret), file fallback. · [spec](SPEC.md#31-server-runtime--supervisor-shipped) · Added: 2026-06-29 · Moved: 2026-07-27
 - [ ] **Periodic health checks** — ping each ready server's client on an interval; flip to `errored` + surface in the UI when unresponsive. · Added: 2026-07-04
 
 ## Epic 2 — Gateway (v0.1.0 → v0.2.0)
@@ -128,8 +140,20 @@ Mirror of Part 1 §5. `[x]` = shipped per the prior plan · `[ ]` = open.
 ## Epic 6 — Distribution (later)
 - [x] **Windows tray launcher** — `scripts/hypergate-tray.ps1` (+ `.cmd`, `npm run tray`): a system-tray/taskbar icon (GDI+ gradient-cat, no .ico asset shipped) that keeps the daemon running and offers Open manager / Restart / Quit (double-click opens the UI). Interim desktop presence before the Electron shell. Verified: parses + draws, launches detached and stays alive (message loop up), starts a healthy token-auth daemon, Fly auto-starts from persisted config. · [spec](SPEC.md#34-ui-shipped) · Done: 2026-07-21
 - [ ] **npm publish `hypergate` / `hypergated`** — so `npx hypergate` starts the daemon (needs the user's npm login). · Added: 2026-07-04
-- [ ] **Electron shell · docker-compose · signed releases · GitHub Actions CI** (paused like Notes until launch). · [spec](SPEC.md#34-ui-shipped) · Added: 2026-06-29
+- ~~**Electron shell**~~ — superseded by the Rust shell in Epic 8 (see §1.1). · Superseded: 2026-07-27
+- [ ] **docker-compose · signed releases · GitHub Actions CI** (paused like Notes until launch). Signing: Azure Trusted Signing for Windows, Apple Developer notarization for macOS. · [spec](SPEC.md#34-ui-shipped) · Added: 2026-06-29
 
 ## Epic 7 — Hypergate rebrand + marketing site (v0.7.0)
 - [x] **Rename NekkoMCP → Hypergate** (whole product + codebase; hypergate.app purchased): packages `@nekko-mcp/*` → `@hypergate/*`, daemon `nekko-mcpd` → `hypergated`, env vars `NEKKO_MCP_*` → `HYPERGATE_*`, data dir `~/.nekko-mcp` → `~/.hypergate` (one-time boot migration adopts the old dir wholesale so servers/tokens/analytics/OAuth grants survive), tray `nekko-tray.*` → `hypergate-tray.*`, localStorage `nekko-theme` → `hypergate-theme`, `NekkoOAuthProvider` → `HypergateOAuthProvider`, GitHub repo `nekko-labs/nekko-mcp` → `nekko-labs/hypergate`. New warp-gate mark (gradient ring + glowing core) across favicon, tray icon, and a redesigned deep-space splash. Kept: Nekko Labs (the company), the Nekko Vault catalog entry, and open-paw identifiers (`detectNekkoMcp`, `mcp:nekko`) that live in the other repo. Verified: build + 37 tests + both smoke suites green, daemon boots, migration exercised for real, old gateway token rotated. · [spec](SPEC.md#1-vision--positioning) · Done: 2026-07-25
 - [x] **Marketing site (`apps/site`) + deploy**: static Vite + TypeScript one-pager with Lenis smooth scroll (anchor easing; velocity feeds the visuals), a WebGL liquid warp-gate hero (fbm domain-warp fragment shader, scroll-boosted, CSS fallback), a canvas starfield that streaks into warp lines on fast scroll, reveal-on-enter, screenshot parallax, and six feature sections each backed by a **real captured screenshot** of the running app (Playwright, dark theme, real servers + 26 genuine gateway calls behind the analytics shot). Deployed to Vercel (nekkolabs/hypergate); `hypergate.app` + `www` attached, registrar DNS still on parking, live alias hypergate-psi.vercel.app until the A records land. · [spec](SPEC.md#37-marketing-site-shipped) · Done: 2026-07-25
+
+## Epic 8 — Durable store + Rust desktop shell (v0.8.0)
+
+Sequenced deliberately: the store lands first because logging and usage metering both need it, then the shell, then the two native capabilities the shell unlocks. See §1.1 for the stack decision behind this epic.
+
+- [ ] **SQLite store (`apps/daemon/src/store.ts`)** — `node:sqlite` in WAL mode at `~/.hypergate/hypergate.db`. Append-only `usage_events` (durable, unbounded, retention by age) plus rolled-up `agg_*` tables so boot is O(distinct servers/tools/clients) instead of a replay. Structured `server_logs` with retention. Batched inserts off the gateway hot path. One-time import of `analytics.json`, which is then renamed aside. Replaces the whole-file rewrite that discarded everything past 2000 calls. · Added: 2026-07-27
+- [ ] **Rust tray shell (`apps/shell`)** — `tray-icon` + `muda` + `tao`: tray icon with a menu (Open manager / Start / Stop / Restart / Copy gateway URL / Quit), supervising the daemon as a child process and reaping it on exit. Cross-platform: Windows notification area, macOS `NSStatusItem` with a template icon and accessory activation policy (no Dock icon), Linux StatusNotifierItem. Menu-only interaction everywhere, because Linux SNI delivers no click events. Retires `scripts/hypergate-tray.ps1`. · Added: 2026-07-27
+- [ ] **Autostart on all three platforms** — Windows `HKCU\...\Run`, macOS `~/Library/LaunchAgents` plist, Linux XDG `~/.config/autostart`. Owned by the shell and exposed to the daemon so `/api/settings` reports the truth on every OS instead of `startupSupported: false`. · Added: 2026-07-27
+- [ ] **`hypergate` CLI** — clap subcommands (`start`, `stop`, `status`, `list`, `logs`, `open`, `gateway`, `tray`, `sandbox-exec`) talking to the daemon's existing HTTP API with the gateway token. One binary, no duplicated logic. · Added: 2026-07-27
+- [ ] **Secrets in the OS keychain** — `keyring` crate behind `hypergate secret get|set|delete`, so the daemon stops keeping the gateway token and OAuth grants as plaintext files. Falls back to the current files when no keychain exists (headless Linux). Moved here from Epic 1. · Added: 2026-07-27
+- [ ] **`sandbox-exec` launcher (real resource limits)** — the supervisor spawns `hypergate sandbox-exec --cpu N --mem N -- <cmd>` instead of the raw command. Windows: a Job Object with `JOB_OBJECT_LIMIT_JOB_MEMORY`, CPU rate control, and `KILL_ON_JOB_CLOSE` (which also fixes leaked grandchildren when an `npx` shim is killed). macOS/Linux: `setrlimit` + a dedicated process group. stdio is inherited so the daemon's pipes are untouched. Makes SPEC §1's advertised limits true instead of aspirational. · Added: 2026-07-27

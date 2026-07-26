@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @hypergate/shared && npm run build -w @hypergate/core && npm run build -w @hypergate/daemon && npm run build -w @hypergate/web",
-    "test": "npm run test -w @hypergate/core",
+    "test": "npm run test -w @hypergate/core && npm run test -w @hypergate/daemon",
     "dev": "node scripts/dev-all.mjs",
     "dev:daemon": "npm run dev -w @hypergate/daemon",
     "dev:web": "npm run dev -w @hypergate/web",

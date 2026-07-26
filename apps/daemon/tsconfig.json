@@ -1,5 +1,15 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "outDir": "dist", "rootDir": "src", "types": ["node"] },
-  "include": ["src"]
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"],
+    // Relative imports carry their real `.ts` extension so the daemon runs
+    // directly under `node --experimental-strip-types` (npm run dev, and the
+    // smoke scripts); tsc rewrites them to `.js` on emit.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }

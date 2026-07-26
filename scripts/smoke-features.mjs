@@ -3,10 +3,11 @@
 // Boots the daemon on a scratch port/data-dir, exercises each, then restarts
 // the daemon (same data-dir) to prove analytics survive a restart.
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { shutdown, removeDir } from './smoke-lib.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 7878;
@@ -19,7 +20,7 @@ let daemon;
 const fail = (m) => {
   console.error(`✗ ${m}`);
   if (daemon) daemon.kill();
-  rmSync(DIR, { recursive: true, force: true });
+  removeDir(DIR);
   process.exit(1);
 };
 
@@ -86,6 +87,34 @@ let analytics = await (await fetch(`${BASE}/api/analytics`)).json();
 if (!(analytics.totalCalls >= 1)) fail(`no calls recorded: ${JSON.stringify(analytics.totals)}`);
 ok(`analytics recorded a call (totalCalls=${analytics.totalCalls})`);
 
+// ── durable usage history (SQLite store) ────────────────────────────────────
+// The itemised feed behind "management of MCP usage". Unlike the old in-memory
+// ring this is durable and filterable, so assert both the row and the filters.
+const usage = await (await fetch(`${BASE}/api/usage/events?limit=50`)).json();
+if (!Array.isArray(usage) || usage.length < 1) fail(`no durable usage events: ${JSON.stringify(usage)}`);
+const echoCall = usage.find((e) => e.serverId === 'echo' && e.tool === 'echo');
+if (!echoCall) fail(`durable feed missing the echo call: ${JSON.stringify(usage.slice(0, 3))}`);
+for (const field of ['at', 'client', 'ms', 'bytesIn', 'bytesOut']) {
+  if (echoCall[field] === undefined) fail(`durable usage event missing ${field}`);
+}
+if (echoCall.ok !== true) fail(`durable usage event should have ok=true: ${JSON.stringify(echoCall)}`);
+ok(`durable usage history recorded the call (${usage.length} event(s), client="${echoCall.client}")`);
+
+const filtered = await (await fetch(`${BASE}/api/usage/events?server=echo&limit=50`)).json();
+const wrongServer = await (await fetch(`${BASE}/api/usage/events?server=nope&limit=50`)).json();
+if (filtered.length < 1) fail('server filter dropped matching events');
+if (wrongServer.length !== 0) fail(`server filter matched an unknown server: ${wrongServer.length}`);
+ok('durable usage history filters by server');
+
+if (!Array.isArray(analytics.series) || analytics.series.length !== 24) fail('analytics series is not 24 hourly buckets');
+if (analytics.series.at(-1).calls < 1) fail('current hour bucket did not count the call');
+ok('hourly series bucketed in SQL (current hour has the call)');
+
+// Logs now come from the store, with timestamps, and survive a restart.
+const logs = await (await fetch(`${BASE}/api/servers/echo/logs`)).json();
+if (!Array.isArray(logs.logs)) fail(`logs endpoint shape changed: ${JSON.stringify(logs).slice(0, 120)}`);
+ok(`logs endpoint returned ${logs.logs.length} line(s)${logs.entries ? ' (durable, timestamped)' : ' (in-memory fallback)'}`);
+
 // ── per-agent permissions ───────────────────────────────────────────────────
 const blocked = await (await fetch(`${BASE}/api/clients`, {
   method: 'POST', headers: { 'content-type': 'application/json' },
@@ -135,7 +164,13 @@ const after = await (await fetch(`${BASE}/api/analytics`)).json();
 if (!(after.totalCalls >= before)) fail(`analytics did not persist: before=${before} after=${after.totalCalls}`);
 ok(`analytics persisted across restart (totalCalls ${before} → ${after.totalCalls})`);
 
-daemon.kill();
-rmSync(DIR, { recursive: true, force: true });
+// The itemised history must survive too — this is the part the old 2000-event
+// in-memory ring could never guarantee. (The kill above is a hard terminate on
+// Windows, so this also exercises SQLite's WAL recovery.)
+const usageAfter = await (await fetch(`${BASE}/api/usage/events?limit=50`)).json();
+if (!Array.isArray(usageAfter) || usageAfter.length < 1) fail('durable usage history did not survive the restart');
+ok(`durable usage history survived the restart (${usageAfter.length} event(s))`);
+
+await shutdown(daemon, DIR);
 console.log('\nFeature smoke: all green');
 process.exit(0);

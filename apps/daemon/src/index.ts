@@ -10,6 +10,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import { Supervisor, createGateway, REGISTRY, searchRegistry, KNOWN_CLIS, HypergateOAuthProvider, type OAuthStore } from '@hypergate/core';
+import { openStore } from './store.ts';
 import type {
   ManagedServerConfig,
   GatewayInfo,
@@ -60,7 +61,15 @@ const SETTINGS_PATH = join(DATA_DIR, 'settings.json');
 const POPULARITY_PATH = join(DATA_DIR, 'popularity.json');
 const OAUTH_DIR = join(DATA_DIR, 'oauth');
 const PORT = Number(process.env.PORT ?? 7777);
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
+/**
+ * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
+ * It deliberately does NOT open the durable store: the rolled-up aggregates are
+ * written as absolute values, so a short-lived process starting from an empty
+ * in-memory state would stomp the resident daemon's counts with lower ones.
+ * (Its calls therefore go unrecorded, exactly as before this store existed.)
+ */
+const STDIO_MODE = process.argv.includes('--stdio');
 /** How long a fetched popularity snapshot stays fresh before we refetch (24h). */
 const POPULARITY_TTL = 24 * 60 * 60 * 1000;
 /** Where OAuth providers send the user back after the browser login. */
@@ -79,13 +88,17 @@ const saveConfig = (servers: ManagedServerConfig[]): void => {
   writeFileSync(CONFIG_PATH, JSON.stringify(servers, null, 2));
 };
 
-/** Analytics survive restarts: hydrate from disk on boot, persist (debounced) on each call. */
-const loadAnalytics = (): AnalyticsSnapshot | undefined => {
+/**
+ * The durable store (SQLite/WAL). Undefined in `--stdio` mode (see STDIO_MODE)
+ * and on a runtime without `node:sqlite`, in which case analytics fall back to
+ * the legacy JSON snapshot below and stay in-memory-only.
+ */
+const store = STDIO_MODE ? undefined : openStore(DATA_DIR);
+
+/** Legacy fallback: the pre-SQLite snapshot, used only when the store is unavailable. */
+const loadLegacyAnalytics = (): AnalyticsSnapshot | undefined => {
   try {
-    if (existsSync(ANALYTICS_PATH)) {
-      const raw = readFileSync(ANALYTICS_PATH, 'utf8');
-      if (raw.length < 16_000_000) return JSON.parse(raw) as AnalyticsSnapshot;
-    }
+    if (existsSync(ANALYTICS_PATH)) return JSON.parse(readFileSync(ANALYTICS_PATH, 'utf8')) as AnalyticsSnapshot;
   } catch {
     /* ignore a corrupt snapshot */
   }
@@ -401,11 +414,20 @@ const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
 const needsAuth = (cfg: ManagedServerConfig): boolean =>
   cfg.runtime === 'remote' && cfg.auth !== 'none' && !makeProvider(cfg).hasTokens();
 
-// Set to a debounced disk writer in HTTP mode; stays a no-op in stdio mode so a
-// transient `--stdio` spawn never clobbers the resident daemon's analytics file.
+// Set to a debounced store writer in HTTP mode; stays a no-op in stdio mode so a
+// transient `--stdio` spawn never clobbers the resident daemon's aggregates.
 let persistAnalytics: () => void = () => {};
 const supervisor = new Supervisor({
-  onUsage: () => persistAnalytics(),
+  onUsage: (e) => {
+    // Queue the raw call for durable history (O(1)); the SQLite write is batched
+    // into the debounced flush so the gateway's hot path never touches the disk.
+    store?.appendEvent(e);
+    persistAnalytics();
+  },
+  onLog: (serverId, line) => {
+    store?.appendLog(serverId, line);
+    persistAnalytics();
+  },
   // The supervisor connects remote servers with this provider (attaches + refreshes
   // the bearer token); the interactive login is driven by the daemon's OAuth routes.
   authProviderFor: (cfg) => (cfg.runtime === 'remote' && cfg.auth !== 'none' ? makeProvider(cfg) : undefined),
@@ -459,7 +481,7 @@ const serverForState = (state: string): ManagedServerConfig | undefined =>
   servers.find((s) => s.runtime === 'remote' && fileStore(s.id).load('state') === state);
 
 // ── stdio gateway mode (the single aggregated endpoint for harnesses) ──────
-if (process.argv.includes('--stdio')) {
+if (STDIO_MODE) {
   await startEnabled();
   const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller: 'stdio (local)' });
   await gateway.connect(new StdioServerTransport());
@@ -467,20 +489,36 @@ if (process.argv.includes('--stdio')) {
   process.stderr.write(`hypergated gateway (stdio) up — ${supervisor.ids().length} server(s)\n`);
 } else {
   // ── HTTP: management API + web UI + streamable-HTTP MCP gateway ──────────
-  // Restore analytics before serving so the first response already reflects history.
-  supervisor.hydrate(loadAnalytics());
-  const flushAnalytics = (): void => {
+  // Restore analytics before serving so the first response already reflects
+  // history. The tail matches the supervisor's in-memory event ring (EVENT_CAP);
+  // everything older stays queryable via /api/usage/events.
+  const EVENT_TAIL = 2000;
+  supervisor.hydrate(store ? store.loadSnapshot(EVENT_TAIL) : loadLegacyAnalytics());
+
+  /** Persist queued events/logs + the rolled-up aggregates. Cheap and idempotent. */
+  const flushStore = (): void => {
     try {
+      if (store) {
+        store.flush(supervisor.snapshot());
+        return;
+      }
       mkdirSync(DATA_DIR, { recursive: true });
       writeFileSync(ANALYTICS_PATH, JSON.stringify(supervisor.snapshot()));
     } catch {
       /* best-effort; analytics are non-critical */
     }
   };
-  persistAnalytics = debounce(flushAnalytics, 2000);
+  persistAnalytics = debounce(flushStore, 2000);
+
+  // Age off old rows on boot, then once a day for a long-running daemon.
+  store?.prune();
+  const pruneTimer = setInterval(() => store?.prune(), 24 * 60 * 60 * 1000);
+  pruneTimer.unref();
+
   for (const sig of ['SIGINT', 'SIGTERM', 'beforeExit'] as const) {
     process.once(sig, () => {
-      flushAnalytics();
+      flushStore();
+      store?.close();
       if (sig !== 'beforeExit') process.exit(0);
     });
   }
@@ -741,7 +779,34 @@ if (process.argv.includes('--stdio')) {
     }
 
     if (pathname === '/api/gateway') return json(res, 200, gatewayInfo());
-    if (pathname === '/api/analytics') return json(res, 200, supervisor.analytics());
+    if (pathname === '/api/analytics') {
+      const summary = supervisor.analytics();
+      if (!store) return json(res, 200, summary);
+      // The in-memory series can only see the last EVENT_TAIL calls; the store
+      // buckets in SQL, so the 24h chart stays correct however busy the gateway
+      // is. Flush first, or calls still sitting in the debounced write queue
+      // would be missing from the chart for up to two seconds.
+      flushStore();
+      return json(res, 200, { ...summary, series: store.hourlySeries(24) });
+    }
+
+    // ── durable usage history (the user's own audit trail; never leaves the box) ──
+    // Filterable itemised feed backing "management of MCP usage": which tool, by
+    // which client, when, how long, how much data, and whether it failed.
+    if (pathname === '/api/usage/events' && req.method === 'GET') {
+      if (!store) return json(res, 200, []);
+      flushStore(); // include calls still sitting in the write queue
+      return json(
+        res,
+        200,
+        store.events({
+          limit: Number(url.searchParams.get('limit')) || 100,
+          serverId: url.searchParams.get('server') ?? undefined,
+          client: url.searchParams.get('client') ?? undefined,
+          since: url.searchParams.get('since') ?? undefined,
+        }),
+      );
+    }
 
     // ── desktop/service settings (autostart + start-minimized) ───────────────
     if (pathname === '/api/settings' && req.method === 'GET') return json(res, 200, await settingsInfo());
@@ -843,8 +908,20 @@ if (process.argv.includes('--stdio')) {
       }
     }
 
+    // Server logs. Durable rows survive restarts, so they're preferred; the
+    // in-memory ring is the fallback when the store is unavailable. Flushing
+    // first means the queue can't hide log lines from the last couple of seconds.
     const logsM = /^\/api\/servers\/([^/]+)\/logs$/.exec(pathname);
-    if (logsM && req.method === 'GET') return json(res, 200, { logs: supervisor.logs(logsM[1]) });
+    if (logsM && req.method === 'GET') {
+      const id = logsM[1];
+      const limit = Math.min(10_000, Math.max(1, Number(url.searchParams.get('limit')) || 500));
+      if (store) {
+        flushStore();
+        const rows = store.logs(id, limit);
+        if (rows.length) return json(res, 200, { logs: rows.map((l) => l.line), entries: rows });
+      }
+      return json(res, 200, { logs: supervisor.logs(id) });
+    }
 
     const rmM = /^\/api\/servers\/([^/]+)$/.exec(pathname);
     if (rmM && req.method === 'DELETE') {

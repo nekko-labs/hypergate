@@ -79,13 +79,6 @@ const is401 = (e: unknown): boolean => {
   return msg.includes('401') || msg.includes('unauthorized');
 };
 
-const pushLog = (i: Instance, chunk: string): void => {
-  for (const line of chunk.split(/\r?\n/)) {
-    if (!line) continue;
-    i.logs.push(line);
-    if (i.logs.length > LOG_CAP) i.logs.shift();
-  }
-};
 
 /**
  * Supervises managed MCP servers: launches each through its RuntimeAdapter,
@@ -105,14 +98,41 @@ export class Supervisor {
   private byServer = new Map<string, ServerAgg>();
   private byClient = new Map<string, ClientAgg>();
   private totals = { calls: 0, errors: 0, bytesIn: 0, bytesOut: 0 };
-  /** Called after every recorded call so the host can persist analytics. */
-  private onUsage?: () => void;
+  /**
+   * Called after every recorded call so the host can persist analytics. Receives
+   * the event so the host can append it to durable storage; hosts that only need
+   * a "something changed" nudge can ignore the argument.
+   */
+  private onUsage?: (e: UsageEvent) => void;
+  /** Called for every server log line so the host can persist it beyond the in-memory ring. */
+  private onLog?: (serverId: string, line: string) => void;
   /** Supplies the OAuth provider for a remote server (injected by the daemon). */
   private authProviderFor?: AuthProviderFor;
 
-  constructor(opts: { onUsage?: () => void; authProviderFor?: AuthProviderFor } = {}) {
+  constructor(
+    opts: {
+      onUsage?: (e: UsageEvent) => void;
+      onLog?: (serverId: string, line: string) => void;
+      authProviderFor?: AuthProviderFor;
+    } = {},
+  ) {
     this.onUsage = opts.onUsage;
+    this.onLog = opts.onLog;
     this.authProviderFor = opts.authProviderFor;
+  }
+
+  /**
+   * Buffer a log line in the instance's ring and hand it to the host for durable
+   * storage. The ring stays for fast reads; the host's copy is what survives a
+   * restart.
+   */
+  private pushLog(i: Instance, chunk: string): void {
+    for (const line of chunk.split(/\r?\n/)) {
+      if (!line) continue;
+      i.logs.push(line);
+      if (i.logs.length > LOG_CAP) i.logs.shift();
+      this.onLog?.(i.config.id, line);
+    }
   }
 
   list(): ServerStatus[] {
@@ -178,7 +198,7 @@ export class Supervisor {
     c.lastUsed = e.at;
     if (!e.ok) c.errors += 1;
 
-    this.onUsage?.();
+    this.onUsage?.(e);
   }
 
   /** Serialize analytics for persistence (Maps/Sets → arrays). */
@@ -320,7 +340,7 @@ export class Supervisor {
       const needsAuth = e instanceof UnauthorizedError || (config.runtime === 'remote' && is401(e));
       inst.state = needsAuth ? 'authorizing' : 'errored';
       inst.error = e instanceof Error ? e.message : String(e);
-      pushLog(inst, `[supervisor] ${needsAuth ? 'needs authorization' : 'start failed'}: ${inst.error}`);
+      this.pushLog(inst, `[supervisor] ${needsAuth ? 'needs authorization' : 'start failed'}: ${inst.error}`);
     }
     return toStatus(inst);
   }
@@ -335,7 +355,7 @@ export class Supervisor {
       cwd: spec.cwd,
       stderr: 'pipe',
     });
-    transport.stderr?.on('data', (d: Buffer) => pushLog(inst, d.toString()));
+    transport.stderr?.on('data', (d: Buffer) => this.pushLog(inst, d.toString()));
     return transport;
   }
 
@@ -344,7 +364,7 @@ export class Supervisor {
     if (!config.url) throw new Error(`remote runtime needs a url for server "${config.id}"`);
     const url = new URL(config.url);
     const authProvider = config.auth === 'none' ? undefined : this.authProviderFor?.(config);
-    pushLog(inst, `[supervisor] connecting remote ${url.origin}${authProvider ? ' (oauth)' : ''}`);
+    this.pushLog(inst, `[supervisor] connecting remote ${url.origin}${authProvider ? ' (oauth)' : ''}`);
     return config.transport === 'sse'
       ? new SSEClientTransport(url, { authProvider })
       : new StreamableHTTPClientTransport(url, { authProvider });
