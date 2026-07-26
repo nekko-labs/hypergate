@@ -67,8 +67,27 @@ export interface ManagedServerConfig {
   clientSecret?: string;
   /** Optional OAuth scope to request (space-delimited), when the provider needs it. */
   scope?: string;
+  /** Resource ceilings enforced by the OS (process runtime). */
+  limits?: ResourceLimits;
   /** Whether the supervisor should run it. */
   enabled: boolean;
+}
+
+/**
+ * OS-enforced resource ceilings for a process-runtime server.
+ *
+ * Applied by the `hypergate sandbox-exec` launcher, not by Node: these need
+ * Windows Job Objects and POSIX `setrlimit`, which a Node parent cannot ask for.
+ * When the launcher is unavailable the server still starts, unenforced, and the
+ * daemon says so in its logs rather than pretending the limits are in force.
+ */
+export interface ResourceLimits {
+  /** Memory ceiling in MB. Windows: Job Object `JobMemoryLimit`. POSIX: `RLIMIT_AS`. */
+  memMb?: number;
+  /** CPU ceiling as a percentage of the machine. Windows only (POSIX needs cgroups). */
+  cpuPct?: number;
+  /** Max open file descriptors. POSIX only (Windows has no per-process fd table). */
+  nofile?: number;
 }
 
 /** What a RuntimeAdapter produces: the concrete stdio process to launch. */

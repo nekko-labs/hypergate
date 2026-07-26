@@ -108,17 +108,21 @@ export class Supervisor {
   private onLog?: (serverId: string, line: string) => void;
   /** Supplies the OAuth provider for a remote server (injected by the daemon). */
   private authProviderFor?: AuthProviderFor;
+  /** Path to the `hypergate` shell binary, used to enforce per-server resource limits. */
+  private launcher?: string;
 
   constructor(
     opts: {
       onUsage?: (e: UsageEvent) => void;
       onLog?: (serverId: string, line: string) => void;
       authProviderFor?: AuthProviderFor;
+      launcher?: string;
     } = {},
   ) {
     this.onUsage = opts.onUsage;
     this.onLog = opts.onLog;
     this.authProviderFor = opts.authProviderFor;
+    this.launcher = opts.launcher;
   }
 
   /**
@@ -347,7 +351,19 @@ export class Supervisor {
 
   /** Local stdio child (process/docker) — the original path. */
   private stdioTransport(config: ManagedServerConfig, inst: Instance): StdioClientTransport {
-    const spec = runtimeFor(config.runtime).spawnSpec(config);
+    const spec = runtimeFor(config.runtime, { launcher: this.launcher }).spawnSpec(config);
+    // Say plainly whether the requested limits are actually in force. A config
+    // that asks for a sandbox we cannot apply must be visible, never assumed.
+    const wanted = Object.entries(config.limits ?? {}).filter(([, v]) => v);
+    if (wanted.length > 0) {
+      const asked = wanted.map(([k, v]) => `${k}=${v}`).join(' ');
+      this.pushLog(
+        inst,
+        this.launcher
+          ? `[supervisor] resource limits enforced via sandbox-exec (${asked})`
+          : `[supervisor] WARNING: limits requested (${asked}) but the hypergate launcher was not found — starting UNSANDBOXED`,
+      );
+    }
     const transport = new StdioClientTransport({
       command: spec.command,
       args: spec.args,

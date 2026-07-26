@@ -1,10 +1,12 @@
 {
   "name": "@hypergate/daemon",
-  "version": "0.2.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
-  "bin": { "hypergated": "dist/index.js" },
+  "bin": {
+    "hypergated": "dist/index.js"
+  },
   "scripts": {
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "dev:bun": "bun run --watch src/index.ts",
