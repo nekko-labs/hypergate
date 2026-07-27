@@ -93,7 +93,12 @@ fn build(child: Option<std::process::Child>) -> Result<Tray, String> {
         .build()
         .map_err(|e| format!("could not create the tray icon: {e}"))?;
 
-    Ok(Tray { _icon: tray, status, autostart: start_at_login, child })
+    Ok(Tray {
+        _icon: tray,
+        status,
+        autostart: start_at_login,
+        child,
+    })
 }
 
 /// One line of live daemon state for the menu header.
@@ -161,10 +166,12 @@ pub fn run() -> Result<(), String> {
     // Refresh the header line off-thread; the HTTP calls must never block the UI.
     let status_proxy = event_loop.create_proxy();
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
-    std::thread::spawn(move || loop {
-        let _ = status_proxy.send_event(Wake::Status(status_line()));
-        if stop_rx.recv_timeout(Duration::from_secs(4)).is_ok() {
-            return; // shutting down
+    std::thread::spawn(move || {
+        loop {
+            let _ = status_proxy.send_event(Wake::Status(status_line()));
+            if stop_rx.recv_timeout(Duration::from_secs(4)).is_ok() {
+                return; // shutting down
+            }
         }
     });
 
@@ -220,7 +227,11 @@ pub fn run() -> Result<(), String> {
                             // then re-read the OS so a failure cannot leave the
                             // checkbox lying about reality.
                             let want = t.autostart.is_checked();
-                            let result = if want { autostart::enable() } else { autostart::disable() };
+                            let result = if want {
+                                autostart::enable()
+                            } else {
+                                autostart::disable()
+                            };
                             if let Err(e) = result {
                                 eprintln!("[hypergate] could not change the login item: {e}");
                             }
@@ -252,9 +263,17 @@ fn act_on_all(start: bool) {
     std::thread::spawn(move || match api::servers() {
         Ok(servers) => {
             for s in servers {
-                let r = if start { api::start_server(&s.id) } else { api::stop_server(&s.id) };
+                let r = if start {
+                    api::start_server(&s.id)
+                } else {
+                    api::stop_server(&s.id)
+                };
                 if let Err(e) = r {
-                    eprintln!("[hypergate] {} {} failed: {e}", if start { "start" } else { "stop" }, s.id);
+                    eprintln!(
+                        "[hypergate] {} {} failed: {e}",
+                        if start { "start" } else { "stop" },
+                        s.id
+                    );
                 }
             }
         }

@@ -6,6 +6,20 @@
 
 > Open source · MIT · [nekko-labs](https://github.com/nekko-labs) · [hypergate.app](https://hypergate.app)
 
+## Install
+
+```bash
+npm install -g hypergated
+hypergate start
+hypergate open
+```
+
+That's the whole setup: no clone, no build, no toolchain. You get two commands, `hypergate` (the CLI and tray agent, a prebuilt native binary for your platform) and `hypergated` (the daemon on its own, for headless boxes, WSL and containers). `npx hypergated` runs it without installing anything.
+
+Node 20+ is required; Node 22.5+ is recommended, because durable usage history and logs use the built-in `node:sqlite` and older runtimes fall back to in-memory analytics. The package name is `hypergated` because `hypergate` on npm belongs to an unrelated project; the command you type is still `hypergate`.
+
+Prefer a plain binary? Every release attaches standalone `hypergate` builds for Windows, macOS and Linux (x64 and arm64) to its [GitHub release](https://github.com/nekko-labs/hypergate/releases).
+
 ## Why
 Kotrain and Claude Code are MCP *clients*. Hypergate is the piece they need: a secure local *server runtime/manager*, a supervisor plus an aggregating gateway. Add servers from a catalog (or custom), pick how they're isolated, start them, and paste one URL/command into your agent.
 
@@ -61,6 +75,17 @@ npm run shell:test    # unit + integration tests for the tray, CLI and sandbox l
 npm run smoke:shell   # daemon ↔ shell bridge: keychain, autostart, sandbox-exec, CLI
 ```
 
+### Packaging
+
+```bash
+npm run build:npm     # assemble dist-npm/hypergated + this host's shell package
+npm run smoke:install # pack it, install into a clean project, drive the installed CLI
+```
+
+`scripts/build-npm.mjs` bundles the daemon into one file (esbuild, with core, shared and the MCP SDK inlined), copies the built web UI beside it, and writes the `hypergated` package plus a `hypergate-shell-<os>-<arch>` package holding the native binary. The main package lists all six platform builds as **optional** dependencies guarded by npm's `os`/`cpu`, so a machine pulls exactly one, and an unsupported platform still gets a working daemon instead of a failed install.
+
+Releases are cut by tag: `git tag v0.9.0 && git push --tags` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which cross-builds all six shells, publishes the platform packages and then the main package to npm with provenance, and attaches standalone binaries to the GitHub release.
+
 ### Run it as a desktop app (Windows, macOS, Linux)
 
 ```bash
@@ -75,18 +100,45 @@ The daemon stays independently runnable, so headless Linux, WSL and containers n
 
 ### The CLI
 
-The same binary is the CLI, talking to the daemon over its HTTP API:
+The same binary is the CLI, talking to the daemon over its HTTP API. Everything the UI does, you can do here.
 
 ```bash
+# the daemon
 hypergate start          # start the daemon in the background
 hypergate status         # daemon, servers, usage, keychain and autostart state
-hypergate list           # managed servers and their state
-hypergate logs <id>      # a server's logs
-hypergate gateway        # the endpoint + token to paste into a harness
+hypergate stop           # stop a daemon this shell started
 hypergate open           # the manager UI in your browser
+
+# finding and adding servers
+hypergate catalog                    # the curated catalog (★ recommended, ✓ official)
+hypergate search postgres            # search the official MCP registry
+hypergate add kotrain                # add a catalog entry (one step)
+hypergate add fly --secret FLY_API_TOKEN=…   # or supply what it requires
+hypergate add mine --command npx --arg -y --arg some-mcp-server   # a custom one
+hypergate rm mine
+
+# running them
+hypergate list                       # managed servers and their state
+hypergate server start|stop|restart <id>
+hypergate logs <id>                  # a server's logs
+
+# using the gateway, exactly as an agent would
+hypergate tools                      # every tool the gateway exposes
+hypergate tools --server kotrain     # just one server's
+hypergate call kotrain__open_paw_status
+hypergate call echo__echo '{"text":"nyaa"}'
+hypergate call some__tool --arg count=3 --arg path=/tmp/x
+hypergate gateway                    # the endpoint + token to paste into a harness
+
+# desktop
+hypergate tray           # tray icon in the notification area / menu bar
 hypergate autostart on   # login item: HKCU Run key / LaunchAgent / XDG autostart
 hypergate secret check   # is an OS keychain available here?
 ```
+
+`tools` and `call` go over `/mcp` with the bearer token, the same path a connected agent takes, so they verify the real gateway rather than an internal shortcut. A tool that reports an error exits non-zero.
+
+`add` merges a catalog entry with your overrides: `--runtime docker`, `--image`, `--url`, `--env K=V`, `--secret K=V` (injected at launch, never logged), `--cwd`, `--no-start`. A key the entry declares in `requires` is taken from your environment when you don't pass it, and adding a one-click OAuth server opens the provider's browser login.
 
 The manager's **Settings** tab exposes the same service options:
 

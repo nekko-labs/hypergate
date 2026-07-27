@@ -153,5 +153,11 @@ export async function searchRegistry(
   const res = await fetchImpl(url.toString(), { signal, headers: { accept: 'application/json' } });
   if (!res.ok) throw new Error(`registry ${res.status}`);
   const data = (await res.json()) as RegistryResponse;
-  return (data.servers ?? []).map((s) => mapRegistryServer(s.server ?? {}));
+  const mapped = (data.servers ?? []).map((s) => mapRegistryServer(s.server ?? {}));
+  // The registry returns one row per *version*, so a server that has shipped
+  // five releases appears five times under the same id. Keep the first (the
+  // registry orders newest first): a duplicated id is noise in the UI and
+  // outright ambiguous for `hypergate add <id>`.
+  const seen = new Set<string>();
+  return mapped.filter((e) => !seen.has(e.id) && seen.add(e.id));
 }

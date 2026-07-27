@@ -50,7 +50,9 @@ pub fn get(key: &str) -> Result<Option<String>, String> {
 
 pub fn set(key: &str, value: &str) -> Result<(), String> {
     let entry = keyring::Entry::new(&service(), key).map_err(|e| format!("keychain unavailable: {e}"))?;
-    entry.set_password(value).map_err(|e| format!("keychain write failed: {e}"))
+    entry
+        .set_password(value)
+        .map_err(|e| format!("keychain write failed: {e}"))
 }
 
 /// Delete a secret. A missing entry is success, so this is idempotent.
@@ -82,10 +84,10 @@ pub fn available() -> bool {
 /// Returns `None` when neither exists, which simply means the daemon has never
 /// run (it mints the token on first boot).
 pub fn gateway_token() -> Option<String> {
-    if let Ok(Some(t)) = get(TOKEN_KEY) {
-        if !t.trim().is_empty() {
-            return Some(t.trim().to_string());
-        }
+    if let Ok(Some(t)) = get(TOKEN_KEY)
+        && !t.trim().is_empty()
+    {
+        return Some(t.trim().to_string());
     }
     if let Ok(raw) = fs::read_to_string(paths::token_file()) {
         let t = raw.trim();
@@ -118,12 +120,12 @@ pub fn adopt_gateway_token() -> Adopted {
     if !available() {
         return Adopted::NoKeychain;
     }
-    if let Ok(Some(t)) = get(TOKEN_KEY) {
-        if !t.trim().is_empty() {
-            // The keychain wins; drop any stale plaintext copy left behind.
-            let _ = fs::remove_file(paths::token_file());
-            return Adopted::AlreadyStored;
-        }
+    if let Ok(Some(t)) = get(TOKEN_KEY)
+        && !t.trim().is_empty()
+    {
+        // The keychain wins; drop any stale plaintext copy left behind.
+        let _ = fs::remove_file(paths::token_file());
+        return Adopted::AlreadyStored;
     }
     let file = paths::token_file();
     if let Ok(raw) = fs::read_to_string(&file) {

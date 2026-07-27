@@ -1,0 +1,115 @@
+name: Release
+
+# Cut a release by tagging: `git tag v0.8.0 && git push --tags`.
+# The tag must match the version in package.json, which the first job checks.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write # npm provenance
+
+jobs:
+  shell:
+    name: shell ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
+          - { name: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
+          - { name: darwin-arm64, runner: macos-latest, target: aarch64-apple-darwin }
+          - { name: darwin-x64, runner: macos-latest, target: x86_64-apple-darwin }
+          - { name: linux-x64, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+      - run: cargo build --release --target ${{ matrix.target }} --manifest-path apps/shell/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shell-${{ matrix.name }}
+          path: |
+            apps/shell/target/${{ matrix.target }}/release/hypergate
+            apps/shell/target/${{ matrix.target }}/release/hypergate.exe
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "tag $tag does not match package.json version $version" >&2
+            exit 1
+          fi
+
+      - run: npm run build
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble the npm packages
+        run: |
+          set -euo pipefail
+          for name in win32-x64 win32-arm64 darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            binary=$(find "artifacts/shell-$name" -type f -name 'hypergate' -o -type f -name 'hypergate.exe' | head -1)
+            [ -n "$binary" ] || { echo "no binary for $name" >&2; exit 1; }
+            chmod +x "$binary"
+            node scripts/build-npm.mjs --shell-only --target "$name" --binary "$binary"
+          done
+          node scripts/build-npm.mjs --skip-build --no-shell
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Platform packages first: the main package lists them as optional
+          # dependencies at an exact version, and publishing it first would
+          # briefly point users at versions that don't exist yet.
+          for dir in dist-npm/hypergate-shell-*/; do
+            npm publish "$dir" --access public --provenance
+          done
+          npm publish dist-npm/hypergated --access public --provenance
+
+      - name: Attach the binaries to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          for name in win32-x64 win32-arm64 darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            binary=$(find "artifacts/shell-$name" -type f | head -1)
+            case "$name" in
+              win32-*) cp "$binary" "release-assets/hypergate-$name.exe" ;;
+              *) cp "$binary" "release-assets/hypergate-$name" ;;
+            esac
+          done
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Install: \`npm install -g hypergated\`. Standalone CLI binaries are attached below." \
+            || gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber

@@ -80,17 +80,28 @@ fn applies_a_cpu_cap_on_windows() {
 #[test]
 fn warns_but_continues_when_a_limit_is_unsupported_here() {
     // The flag each platform cannot honour: a warning, and the command still runs.
-    let flag = if cfg!(windows) { ["--nofile", "64"] } else { ["--cpu", "50"] };
+    let flag = if cfg!(windows) {
+        ["--nofile", "64"]
+    } else {
+        ["--cpu", "50"]
+    };
     let (code, stdout, stderr) = sandbox_exec(&flag, "echo still-ran");
     assert_eq!(code, 0);
     assert_eq!(stdout, "still-ran");
-    assert!(stderr.contains("[sandbox] warning:"), "expected a warning, got: {stderr}");
+    assert!(
+        stderr.contains("[sandbox] warning:"),
+        "expected a warning, got: {stderr}"
+    );
 }
 
 #[test]
 fn strict_mode_refuses_rather_than_pretending() {
     // A sandbox you think you have is worse than none, so --strict must fail.
-    let flag = if cfg!(windows) { ["--nofile", "64"] } else { ["--cpu", "50"] };
+    let flag = if cfg!(windows) {
+        ["--nofile", "64"]
+    } else {
+        ["--cpu", "50"]
+    };
     let out = Command::new(BIN)
         .arg("sandbox-exec")
         .args(flag)
@@ -101,7 +112,10 @@ fn strict_mode_refuses_rather_than_pretending() {
         .expect("could not run the hypergate binary");
     assert!(!out.status.success(), "strict mode should fail");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("cannot honour the requested sandbox"), "stderr was: {stderr}");
+    assert!(
+        stderr.contains("cannot honour the requested sandbox"),
+        "stderr was: {stderr}"
+    );
     assert!(
         !String::from_utf8_lossy(&out.stdout).contains("should-not-run"),
         "the command must not run when the sandbox cannot be applied"
@@ -121,7 +135,10 @@ fn reports_a_missing_program_clearly() {
 
 #[test]
 fn requires_a_command_after_the_separator() {
-    let out = Command::new(BIN).args(["sandbox-exec"]).output().expect("could not run the hypergate binary");
+    let out = Command::new(BIN)
+        .args(["sandbox-exec"])
+        .output()
+        .expect("could not run the hypergate binary");
     assert!(!out.status.success(), "a bare sandbox-exec should be rejected");
 }
 
@@ -129,11 +146,50 @@ fn requires_a_command_after_the_separator() {
 
 #[test]
 fn help_lists_every_subcommand() {
-    let out = Command::new(BIN).arg("--help").output().expect("could not run the hypergate binary");
+    let out = Command::new(BIN)
+        .arg("--help")
+        .output()
+        .expect("could not run the hypergate binary");
     assert!(out.status.success());
     let help = String::from_utf8_lossy(&out.stdout);
-    for cmd in ["tray", "start", "stop", "restart", "status", "list", "logs", "open", "gateway", "autostart", "secret", "sandbox-exec"] {
+    for cmd in [
+        "tray",
+        "start",
+        "stop",
+        "restart",
+        "status",
+        "list",
+        "logs",
+        "open",
+        "gateway",
+        "autostart",
+        "secret",
+        "sandbox-exec",
+        "catalog",
+        "search",
+        "add",
+        "rm",
+        "server",
+        "tools",
+        "call",
+    ] {
         assert!(help.contains(cmd), "`{cmd}` missing from --help:\n{help}");
+    }
+}
+
+/// The commands that reach the daemon must fail with a readable message, not a
+/// panic or a raw transport error, when nothing is listening.
+#[test]
+fn server_commands_fail_cleanly_with_no_daemon() {
+    for args in [vec!["catalog"], vec!["tools"], vec!["list"], vec!["rm", "nope"]] {
+        let out = Command::new(BIN)
+            .args(&args)
+            .env("HYPERGATE_PORT", "7999")
+            .output()
+            .expect("could not run the hypergate binary");
+        assert!(!out.status.success(), "`{args:?}` should fail with no daemon");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.starts_with("hypergate: "), "`{args:?}` stderr was: {err}");
     }
 }
 

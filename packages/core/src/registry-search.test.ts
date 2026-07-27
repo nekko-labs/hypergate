@@ -125,6 +125,26 @@ describe('searchRegistry', () => {
     expect(results[0].command).toBe('npx');
   });
 
+  it('keeps one row per server when the registry returns several versions', async () => {
+    const version = (v: string) => ({
+      server: {
+        name: 'io.github.acme/weather',
+        title: 'Weather',
+        version: v,
+        packages: [{ registryType: 'npm', identifier: '@acme/weather-mcp', version: v, transport: { type: 'stdio' } }],
+      },
+    });
+    const fakeFetch = (async () => ({
+      ok: true,
+      // Newest first, which is how the registry orders them.
+      json: async () => ({ servers: [version('3.0.0'), version('2.0.0'), version('1.0.0')], metadata: { count: 3 } }),
+    })) as unknown as typeof fetch;
+
+    const results = await searchRegistry('weather', { fetchImpl: fakeFetch });
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe('io-github-acme-weather');
+  });
+
   it('throws on a non-ok response', async () => {
     const fakeFetch = (async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch;
     await expect(searchRegistry('x', { fetchImpl: fakeFetch })).rejects.toThrow(/503/);

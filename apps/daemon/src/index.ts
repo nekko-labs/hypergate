@@ -65,8 +65,11 @@ const CLIENTS_PATH = join(DATA_DIR, 'clients.json');
 const SETTINGS_PATH = join(DATA_DIR, 'settings.json');
 const POPULARITY_PATH = join(DATA_DIR, 'popularity.json');
 const OAUTH_DIR = join(DATA_DIR, 'oauth');
-const PORT = Number(process.env.PORT ?? 7777);
-const VERSION = '0.8.0';
+// `HYPERGATE_PORT` first, because that's what the shell and CLI read: a user who
+// sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
+// otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
+const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
+const VERSION = '0.9.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -687,8 +690,13 @@ if (STDIO_MODE) {
   const normServers = (v: unknown): '*' | string[] =>
     v === '*' ? '*' : Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
-  // Built web UI (apps/web/dist) — same relative path from src/ and dist/.
-  const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../web/dist');
+  // Built web UI. In the repo that's apps/web/dist (the same relative path from
+  // src/ and dist/); in the published npm package the daemon is a single bundled
+  // file with the UI beside it, so `HYPERGATE_UI_DIR` points at it directly.
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const UI_DIR = resolve(
+    process.env.HYPERGATE_UI_DIR || resolve(HERE, '../../web/dist'),
+  );
   const MIME: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript',
