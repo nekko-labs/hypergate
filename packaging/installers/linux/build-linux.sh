@@ -89,7 +89,10 @@ Description: Local-first runtime and gateway for MCP servers
 CONTROL
 
 DEB="$OUTDIR/hypergate_${VERSION}_${DEB_ARCH}.deb"
-dpkg-deb --root-owner-group --build "$DEBROOT" "$DEB" >/dev/null
+# -Zxz, not the modern default of zstd: a zstd-compressed .deb needs dpkg 1.21+,
+# so it fails to install on Ubuntu 20.04 and Debian 11. xz is understood
+# everywhere and costs nothing here.
+dpkg-deb -Zxz --root-owner-group --build "$DEBROOT" "$DEB" >/dev/null
 echo "Built $DEB"
 
 # ── .rpm ─────────────────────────────────────────────────────────────────────
