@@ -29,6 +29,33 @@ mod id {
     pub const QUIT: &str = "quit";
 }
 
+/// Close the console window Windows created for us, when it is ours alone.
+///
+/// `hypergate` is one binary doing both CLI and tray work, so it must be a
+/// console subsystem app. Launched from Explorer (a Start Menu shortcut, say)
+/// that means Windows opens a console window and leaves it sitting behind the
+/// tray icon for as long as the agent runs, which looks broken.
+///
+/// `GetConsoleProcessList` distinguishes the two cases: a console created just
+/// for us has exactly one process attached, while a console we were launched
+/// *into* from a terminal has at least two (the shell and us). Only the former
+/// gets closed, so running `hypergate tray` from a terminal still prints the
+/// daemon's output the way it always has.
+#[cfg(windows)]
+fn hide_own_console() {
+    use windows::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
+
+    unsafe {
+        let mut pids = [0u32; 2];
+        if GetConsoleProcessList(&mut pids) == 1 {
+            let _ = FreeConsole();
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn hide_own_console() {}
+
 /// Woken into the tao loop so menu clicks are handled immediately rather than
 /// on a polling tick. "Fast and fluid" means no perceptible menu latency.
 enum Wake {
@@ -114,6 +141,8 @@ fn status_line() -> String {
 
 /// Run the tray agent. Blocks until the user quits.
 pub fn run() -> Result<(), String> {
+    hide_own_console();
+
     // Only one tray at a time, or the user gets duplicate icons that fight over
     // the same daemon. The lock is a bound loopback socket, which the OS releases
     // automatically however this process dies (no stale lock file to clean up).

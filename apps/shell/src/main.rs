@@ -19,6 +19,7 @@ mod icon;
 mod paths;
 mod sandbox;
 mod secrets;
+mod shortcut;
 mod tray;
 
 use std::io::Read;
@@ -141,6 +142,11 @@ enum Command {
         #[arg(long)]
         token_only: bool,
     },
+    /// Create or remove the desktop and Start Menu launchers.
+    Shortcut {
+        #[command(subcommand)]
+        action: ShortcutAction,
+    },
     /// Manage the login item that starts the tray agent.
     Autostart {
         #[command(subcommand)]
@@ -180,6 +186,20 @@ enum ServerAction {
     Stop { id: String },
     /// Restart a managed server.
     Restart { id: String },
+}
+
+#[derive(Subcommand)]
+enum ShortcutAction {
+    /// Add the launchers (Start Menu, .app bundle, or XDG desktop entry).
+    Install {
+        /// Also put an icon on the desktop (Windows only).
+        #[arg(long)]
+        desktop: bool,
+    },
+    /// Remove them again.
+    Uninstall,
+    /// Show which launchers exist.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -432,6 +452,41 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
             }
             Ok(ExitCode::SUCCESS)
         }
+
+        Command::Shortcut { action } => match action {
+            ShortcutAction::Install { desktop } => {
+                let made = shortcut::install(desktop)?;
+                for path in &made {
+                    println!("Created {}", path.display());
+                }
+                println!(
+                    "
+Click it to turn Hypergate on. `hypergate autostart on` starts it at login instead."
+                );
+                Ok(ExitCode::SUCCESS)
+            }
+            ShortcutAction::Uninstall => {
+                let removed = shortcut::uninstall()?;
+                if removed.is_empty() {
+                    println!("No launchers to remove");
+                }
+                for path in &removed {
+                    println!("Removed {}", path.display());
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+            ShortcutAction::Status => {
+                for entry in shortcut::status()? {
+                    println!(
+                        "{:<12} {}  {}",
+                        entry.label,
+                        if entry.exists() { "present" } else { "absent " },
+                        entry.path.display()
+                    );
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+        },
 
         Command::Autostart { action } => match action {
             AutostartAction::On => {
