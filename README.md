@@ -10,6 +10,7 @@
 
 ```bash
 npm install -g hypergated
+hypergate shortcut install --desktop   # a Start Menu entry and a desktop icon
 hypergate start
 hypergate open
 ```
@@ -131,10 +132,14 @@ hypergate call some__tool --arg count=3 --arg path=/tmp/x
 hypergate gateway                    # the endpoint + token to paste into a harness
 
 # desktop
-hypergate tray           # tray icon in the notification area / menu bar
-hypergate autostart on   # login item: HKCU Run key / LaunchAgent / XDG autostart
-hypergate secret check   # is an OS keychain available here?
+hypergate tray                       # tray icon in the notification area / menu bar
+hypergate shortcut install           # Start Menu / Launchpad / app-menu entry
+hypergate shortcut install --desktop # ...and a desktop icon too (Windows)
+hypergate autostart on               # login item: HKCU Run key / LaunchAgent / XDG autostart
+hypergate secret check               # is an OS keychain available here?
 ```
+
+**Clicking an icon to turn Hypergate on.** `hypergate shortcut install` creates a real launcher that runs the tray agent: a `.lnk` in the Start Menu (and optionally on the desktop) on Windows, a `Hypergate.app` in `~/Applications` on macOS, an XDG desktop entry plus a themed icon on Linux. All per-user, so nothing needs elevation, and `hypergate shortcut uninstall` takes them away again. The Windows shortcut carries a real multi-resolution `.ico` generated from the same code that draws the tray icon, and launching it opens no console window.
 
 `tools` and `call` go over `/mcp` with the bearer token, the same path a connected agent takes, so they verify the real gateway rather than an internal shortcut. A tool that reports an error exits non-zero.
 
