@@ -1,0 +1,86 @@
+name: Build artifacts
+
+# Every downloadable Hypergate build, for all six platform/architecture pairs:
+#
+#   shell-<platform>      the bare `hypergate` binary the npm packages wrap
+#   installer-<platform>  the native installer, for machines with no Node
+#
+# Called by the release workflow, and runnable on its own so an installer can be
+# built and tested without cutting a release.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
+          - { name: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
+          - { name: darwin-arm64, runner: macos-latest, target: aarch64-apple-darwin }
+          - { name: darwin-x64, runner: macos-13, target: x86_64-apple-darwin }
+          - { name: linux-x64, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux build and packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev rpm
+
+      - name: Ensure NSIS is available
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if ! command -v makensis >/dev/null 2>&1; then
+            choco install nsis -y --no-progress
+            echo 'C:\Program Files (x86)\NSIS' >> "$GITHUB_PATH"
+          fi
+
+      - run: npm ci
+      - run: npm run build
+      - run: cargo build --release --target ${{ matrix.target }} --manifest-path apps/shell/Cargo.toml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shell-${{ matrix.name }}
+          path: |
+            apps/shell/target/${{ matrix.target }}/release/hypergate
+            apps/shell/target/${{ matrix.target }}/release/hypergate.exe
+          if-no-files-found: error
+
+      # `--skip-build` reuses the workspace and cargo output above. The shell
+      # path is explicit because a target triple puts the binary somewhere other
+      # than target/release.
+      - name: Build the installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe=""
+          [ "$RUNNER_OS" = "Windows" ] && exe=".exe"
+          node scripts/build-standalone.mjs --skip-build \
+            --shell "apps/shell/target/${{ matrix.target }}/release/hypergate$exe"
+          node scripts/build-installers.mjs --skip-payload
+
+      # The installer is only worth shipping if the daemon inside it runs.
+      - name: Check the standalone daemon runs
+        run: npm run smoke:standalone
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.name }}
+          path: dist-installers/*
+          if-no-files-found: error

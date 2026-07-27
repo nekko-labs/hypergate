@@ -1,7 +1,7 @@
 name: Release
 
-# Cut a release by tagging: `git tag v0.8.0 && git push --tags`.
-# The tag must match the version in package.json, which the first job checks.
+# Cut a release by tagging: `git tag v0.9.0 && git push --tags`.
+# The tag must match the version in package.json, which the publish job checks.
 on:
   push:
     tags: ['v*']
@@ -12,40 +12,14 @@ permissions:
   id-token: write # npm provenance
 
 jobs:
-  shell:
-    name: shell ${{ matrix.name }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
-          - { name: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
-          - { name: darwin-arm64, runner: macos-latest, target: aarch64-apple-darwin }
-          - { name: darwin-x64, runner: macos-latest, target: x86_64-apple-darwin }
-          - { name: linux-x64, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu }
-          - { name: linux-arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
-      - run: cargo build --release --target ${{ matrix.target }} --manifest-path apps/shell/Cargo.toml
-      - uses: actions/upload-artifact@v4
-        with:
-          name: shell-${{ matrix.name }}
-          path: |
-            apps/shell/target/${{ matrix.target }}/release/hypergate
-            apps/shell/target/${{ matrix.target }}/release/hypergate.exe
-          if-no-files-found: error
+  # Every binary and installer, for all six platform/architecture pairs. Shared
+  # with the on-demand build so a release and a test build are the same thing.
+  build:
+    uses: ./.github/workflows/build-artifacts.yml
 
   publish:
     name: publish
-    needs: shell
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           for name in win32-x64 win32-arm64 darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
-            binary=$(find "artifacts/shell-$name" -type f -name 'hypergate' -o -type f -name 'hypergate.exe' | head -1)
+            binary=$(find "artifacts/shell-$name" -type f \( -name 'hypergate' -o -name 'hypergate.exe' \) | head -1)
             [ -n "$binary" ] || { echo "no binary for $name" >&2; exit 1; }
             chmod +x "$binary"
             node scripts/build-npm.mjs --shell-only --target "$name" --binary "$binary"
@@ -95,13 +69,17 @@ jobs:
           done
           npm publish dist-npm/hypergated --access public --provenance
 
-      - name: Attach the binaries to the GitHub release
+      - name: Attach the installers and binaries to the GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
+          # Installers keep the names their build scripts chose; those already
+          # carry the version, platform and architecture.
+          find artifacts -path '*/installer-*/*' -type f -exec cp {} release-assets/ \;
+          # The bare binaries, for anyone scripting an install themselves.
           for name in win32-x64 win32-arm64 darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
             binary=$(find "artifacts/shell-$name" -type f | head -1)
             case "$name" in
@@ -109,7 +87,8 @@ jobs:
               *) cp "$binary" "release-assets/hypergate-$name" ;;
             esac
           done
+          ls -la release-assets
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --title "$GITHUB_REF_NAME" \
-            --notes "Install: \`npm install -g hypergated\`. Standalone CLI binaries are attached below." \
+            --notes "Install with an installer below (no Node needed), or \`npm install -g hypergated\`. Bare \`hypergate\` CLI binaries are attached too." \
             || gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber

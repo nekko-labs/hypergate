@@ -55,6 +55,23 @@ jobs:
       - run: cargo clippy --manifest-path apps/shell/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path apps/shell/Cargo.toml
 
+  standalone:
+    name: standalone daemon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Daemon only: this guards the Node SEA build, which breaks on anything
+      # the CommonJS bundle cannot express (a top-level await, say). No cargo
+      # build needed for that, so it stays cheap.
+      - run: node scripts/build-standalone.mjs --skip-build --daemon-only
+      - run: npm run smoke:standalone
+
   packaging:
     name: packaged install
     runs-on: ubuntu-latest
