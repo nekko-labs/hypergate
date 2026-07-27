@@ -6,9 +6,10 @@
 //! and not a service. Nothing here needs elevation.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
-/// Registry value name (Windows) / label (macOS) / file stem (Linux).
+/// Registry value name (Windows) / `Name=` in the Linux desktop entry. macOS
+/// identifies its login item by `LABEL` instead.
+#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 const NAME: &str = "Hypergate";
 #[cfg(target_os = "windows")]
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
@@ -44,6 +45,7 @@ pub fn is_supported() -> bool {
 #[cfg(target_os = "windows")]
 mod platform {
     use super::*;
+    use std::process::{Command, Stdio};
 
     /// `reg.exe` with explicit argv (never a shell string), so a path with
     /// spaces or quotes cannot turn into command injection.
@@ -84,6 +86,7 @@ mod platform {
 #[cfg(target_os = "macos")]
 mod platform {
     use super::*;
+    use std::process::{Command, Stdio};
 
     fn plist_path() -> PathBuf {
         dirs::home_dir()
