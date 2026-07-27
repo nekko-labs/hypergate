@@ -130,18 +130,13 @@ pub fn tray_icon() -> Result<Icon, String> {
 
 /// Sizes a Windows `.ico` should carry: 16 for the Start Menu list, 32 for the
 /// desktop, 48 for large icons, 256 for Explorer's extra-large view.
-#[cfg(any(windows, test))]
 const ICO_SIZES: [u32; 4] = [16, 32, 48, 256];
 
 /// The mark as a Windows `.ico`, for shortcut and window icons.
 ///
-/// Built on Windows, and under `cfg(test)` everywhere, so the format is still
-/// exercised by the suite on the other two platforms.
-///
 /// Uncompressed 32-bit BMP payloads rather than PNG ones: BMP needs no deflate
 /// (so no dependency and nothing to get wrong), every Windows version reads it,
 /// and a few hundred KB on disk is irrelevant for a file written once.
-#[cfg(any(windows, test))]
 pub fn ico_bytes() -> Vec<u8> {
     const HEADER: usize = 6;
     const ENTRY: usize = 16;
@@ -209,7 +204,6 @@ pub fn ico_bytes() -> Vec<u8> {
 /// `scalable/apps` first, and one vector file covers every panel size a desktop
 /// environment might ask for. Kept in code so the geometry and the brand colours
 /// stay beside the raster renderer above rather than drifting from it.
-#[cfg(any(all(unix, not(target_os = "macos")), test))]
 pub fn svg() -> String {
     let hex = |c: [f32; 3]| format!("#{:02x}{:02x}{:02x}", c[0] as u8, c[1] as u8, c[2] as u8);
     // Ring radius and stroke width restated from `sample`'s 32px design grid:

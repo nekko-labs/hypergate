@@ -142,6 +142,11 @@ enum Command {
         #[arg(long)]
         token_only: bool,
     },
+    /// Write the Hypergate mark to a file, for packaging.
+    Icon {
+        /// Where to write it. `.ico` or `.svg`, chosen by the extension.
+        out: String,
+    },
     /// Create or remove the desktop and Start Menu launchers.
     Shortcut {
         #[command(subcommand)]
@@ -450,6 +455,29 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
                 println!("stdio   {}", g.stdio_command);
                 println!("UI      {}", if g.ui_url.is_empty() { api::ui_url() } else { g.ui_url });
             }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Icon { out } => {
+            // Installers need the mark as a file at build time, and it only
+            // exists as code. Extension picks the format so a packaging script
+            // reads as what it means.
+            let path = std::path::PathBuf::from(&out);
+            let bytes = match path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+            {
+                Some("ico") => icon::ico_bytes(),
+                Some("svg") => icon::svg().into_bytes(),
+                _ => return Err(format!("don't know how to write `{out}` (expected .ico or .svg)")),
+            };
+            if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+            }
+            std::fs::write(&path, bytes).map_err(|e| format!("could not write {out}: {e}"))?;
+            println!("Wrote {out}");
             Ok(ExitCode::SUCCESS)
         }
 

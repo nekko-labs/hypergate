@@ -539,12 +539,18 @@ const serverForState = (state: string): ManagedServerConfig | undefined =>
   servers.find((s) => s.runtime === 'remote' && secretStore(s.id).load('state') === state);
 
 // ── stdio gateway mode (the single aggregated endpoint for harnesses) ──────
+//
+// Boot is sequenced with promises rather than top-level `await` throughout this
+// file. Not style: a CommonJS module cannot express top-level await, and the
+// standalone build (Node SEA, see scripts/build-standalone.mjs) requires its
+// entry point to be CommonJS. The ordering guarantees are identical.
 if (STDIO_MODE) {
-  await startEnabled();
-  const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller: 'stdio (local)' });
-  await gateway.connect(new StdioServerTransport());
-  // stdout is the MCP channel now; logs must go to stderr only.
-  process.stderr.write(`hypergated gateway (stdio) up — ${supervisor.ids().length} server(s)\n`);
+  void startEnabled().then(async () => {
+    const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller: 'stdio (local)' });
+    await gateway.connect(new StdioServerTransport());
+    // stdout is the MCP channel now; logs must go to stderr only.
+    process.stderr.write(`hypergated gateway (stdio) up — ${supervisor.ids().length} server(s)\n`);
+  });
 } else {
   // ── HTTP: management API + web UI + streamable-HTTP MCP gateway ──────────
   // Restore analytics before serving so the first response already reflects
@@ -585,7 +591,10 @@ if (STDIO_MODE) {
   let clients = loadClients();
   const persistClients = debounce(() => saveClients(clients), 1500);
 
-  await startEnabled();
+  // Started now, awaited just before we listen: managed servers come up while
+  // the rest of the server is being wired, and nothing is served until they are
+  // up, which is the ordering the top-level `await` used to give.
+  const booted = startEnabled();
   const TOKEN = process.env.HYPERGATE_TOKEN ?? loadToken();
   const json = (res: ServerResponse, status: number, body: unknown): void => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -690,13 +699,20 @@ if (STDIO_MODE) {
   const normServers = (v: unknown): '*' | string[] =>
     v === '*' ? '*' : Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
-  // Built web UI. In the repo that's apps/web/dist (the same relative path from
-  // src/ and dist/); in the published npm package the daemon is a single bundled
-  // file with the UI beside it, so `HYPERGATE_UI_DIR` points at it directly.
+  // Built web UI. Three layouts to find it in, tried in order:
+  //   1. `HYPERGATE_UI_DIR`, which the npm package's wrapper sets explicitly.
+  //   2. `web/` beside the running executable — the installed layout, where the
+  //      daemon is a single compiled binary and `import.meta.url` points inside
+  //      it rather than at anything on disk.
+  //   3. `apps/web/dist` relative to this module, which is the repo.
   const HERE = dirname(fileURLToPath(import.meta.url));
-  const UI_DIR = resolve(
-    process.env.HYPERGATE_UI_DIR || resolve(HERE, '../../web/dist'),
-  );
+  const REPO_UI = resolve(HERE, '../../web/dist');
+  const UI_CANDIDATES = [
+    process.env.HYPERGATE_UI_DIR,
+    resolve(dirname(process.execPath), 'web'),
+    REPO_UI,
+  ].filter((p): p is string => Boolean(p));
+  const UI_DIR = resolve(UI_CANDIDATES.find((p) => existsSync(join(p, 'index.html'))) ?? REPO_UI);
   const MIME: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript',
@@ -1047,5 +1063,9 @@ if (STDIO_MODE) {
     // Anything else is the web UI.
     return serveUi(res, pathname);
   });
-  server.listen(PORT, '127.0.0.1', () => process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`));
+  void booted.then(() =>
+    server.listen(PORT, '127.0.0.1', () =>
+      process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`),
+    ),
+  );
 }

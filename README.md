@@ -8,6 +8,10 @@
 
 ## Install
 
+**An installer, if you'd rather not think about it.** Grab the one for your machine from the [latest release](https://github.com/nekko-labs/hypergate/releases): a `-setup.exe` for Windows, a `.pkg` for macOS, a `.deb`/`.rpm`/tarball for Linux, each for x64 and arm64. **Nothing else is required, not even Node**: the daemon ships as a single compiled executable. You get a Start Menu / Launchpad / app-menu entry to click, the `hypergate` command on your PATH, and an entry in Add/Remove Programs. Everything installs per-user, so no admin prompt.
+
+**Or npm, if you already have Node:**
+
 ```bash
 npm install -g hypergated
 hypergate shortcut install --desktop   # a Start Menu entry and a desktop icon
@@ -15,11 +19,11 @@ hypergate start
 hypergate open
 ```
 
-That's the whole setup: no clone, no build, no toolchain. You get two commands, `hypergate` (the CLI and tray agent, a prebuilt native binary for your platform) and `hypergated` (the daemon on its own, for headless boxes, WSL and containers). `npx hypergated` runs it without installing anything.
+Either way you get two commands: `hypergate` (the CLI and tray agent, a prebuilt native binary for your platform) and `hypergated` (the daemon on its own, for headless boxes, WSL and containers). `npx hypergated` runs it without installing anything.
 
-Node 20+ is required; Node 22.5+ is recommended, because durable usage history and logs use the built-in `node:sqlite` and older runtimes fall back to in-memory analytics. The package name is `hypergated` because `hypergate` on npm belongs to an unrelated project; the command you type is still `hypergate`.
+For the npm route, Node 20+ is required and 22.5+ is recommended, because durable usage history and logs use the built-in `node:sqlite` and older runtimes fall back to in-memory analytics. The installers bundle a runtime that always has it. The package name is `hypergated` because `hypergate` on npm belongs to an unrelated project; the command you type is still `hypergate`.
 
-Prefer a plain binary? Every release attaches standalone `hypergate` builds for Windows, macOS and Linux (x64 and arm64) to its [GitHub release](https://github.com/nekko-labs/hypergate/releases).
+Every release also attaches the bare `hypergate` binaries, for scripting your own install.
 
 ## Why
 Kotrain and Claude Code are MCP *clients*. Hypergate is the piece they need: a secure local *server runtime/manager*, a supervisor plus an aggregating gateway. Add servers from a catalog (or custom), pick how they're isolated, start them, and paste one URL/command into your agent.
@@ -84,6 +88,22 @@ npm run smoke:install # pack it, install into a clean project, drive the install
 ```
 
 `scripts/build-npm.mjs` bundles the daemon into one file (esbuild, with core, shared and the MCP SDK inlined), copies the built web UI beside it, and writes the `hypergated` package plus a `hypergate-shell-<os>-<arch>` package holding the native binary. The main package lists all six platform builds as **optional** dependencies guarded by npm's `os`/`cpu`, so a machine pulls exactly one, and an unsupported platform still gets a working daemon instead of a failed install.
+
+### Installers
+
+```bash
+npm run build:standalone   # dist-standalone/: the install tree, no Node needed
+npm run smoke:standalone   # boot that daemon, check the store, call a tool
+npm run build:installers   # dist-installers/: this platform's installer
+```
+
+`build:standalone` compiles the daemon into a single executable with **Node's SEA** support: the esbuild bundle is injected into a copy of the Node binary, and the web UI is placed beside it (the daemon resolves its UI relative to `process.execPath` in that layout). `bun build --compile` would be less work and would cross-compile, but Bun has no `node:sqlite`, so a Bun build silently loses durable usage history and server logs. That is worth the extra machinery.
+
+`build:installers` then wraps that tree for the host platform: NSIS on Windows, `pkgbuild`/`productbuild` on macOS, `dpkg-deb` plus `rpmbuild` on Linux. Each is built on its own OS, never cross-built, so every artifact is made by the toolchain that will run it. The definitions live in [`packaging/installers/`](packaging/installers/).
+
+The installers deliberately reuse Hypergate's own code for the parts that need judgement: `hypergate shortcut install` creates the launcher (so a redirected OneDrive desktop is handled), `hypergate autostart on` sets the login item, and `hypergate icon` emits the mark. Uninstalling leaves `~/.hypergate` alone, since an uninstall should not throw away server configs, usage history and OAuth grants.
+
+[`.github/workflows/build-artifacts.yml`](.github/workflows/build-artifacts.yml) builds all six platforms and can be run on demand, without cutting a release, when you want an installer to test.
 
 Releases are cut by tag: `git tag v0.9.0 && git push --tags` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which cross-builds all six shells, publishes the platform packages and then the main package to npm with provenance, and attaches standalone binaries to the GitHub release.
 
