@@ -158,7 +158,11 @@ mod tests {
     fn template_variant_is_black_with_shape_in_alpha() {
         let buf = rgba(true);
         let i = (((16 * SIZE) + 16) * 4) as usize;
-        assert_eq!((buf[i], buf[i + 1], buf[i + 2]), (0, 0, 0), "template RGB must be black");
+        assert_eq!(
+            (buf[i], buf[i + 1], buf[i + 2]),
+            (0, 0, 0),
+            "template RGB must be black"
+        );
         assert!(buf[i + 3] > 200, "template alpha must carry the shape");
     }
 

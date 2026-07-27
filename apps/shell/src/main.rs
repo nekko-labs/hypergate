@@ -4,6 +4,7 @@
 //!
 //!   • `hypergate tray`         the per-user logon agent (tray icon + menu)
 //!   • `hypergate start|stop|…` a CLI over the daemon's existing HTTP API
+//!   • `hypergate add|call|…`   managing servers and driving the gateway
 //!   • `hypergate sandbox-exec` the resource-limit launcher the supervisor uses
 //!   • `hypergate secret`       OS keychain access, including for the daemon
 //!
@@ -12,6 +13,7 @@
 
 mod api;
 mod autostart;
+mod commands;
 mod daemon;
 mod icon;
 mod paths;
@@ -56,6 +58,81 @@ enum Command {
         /// Server id, as shown by `hypergate list`.
         id: String,
     },
+    /// Browse the curated catalog of servers you can add in one step.
+    Catalog {
+        /// Only show entries matching this text.
+        filter: Option<String>,
+    },
+    /// Search the official MCP registry for servers to add.
+    Search {
+        /// What to search for.
+        query: String,
+    },
+    /// Add a managed server, from the catalog or from your own command.
+    Add {
+        /// A catalog id (see `hypergate catalog`), or the id to give a custom server.
+        target: String,
+        /// Override the server id.
+        #[arg(long)]
+        id: Option<String>,
+        /// Display name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Launch command, for a server you're defining yourself.
+        #[arg(long)]
+        command: Option<String>,
+        /// An argument for the launch command. Repeat for each one, in order.
+        #[arg(long = "arg")]
+        args: Vec<String>,
+        /// Non-secret environment variable, `KEY=VALUE`. Repeatable.
+        #[arg(long = "env")]
+        env: Vec<String>,
+        /// Secret injected at launch only, `KEY=VALUE`. Repeatable, never logged.
+        #[arg(long = "secret")]
+        secrets: Vec<String>,
+        /// Isolation: process (default), docker, or remote.
+        #[arg(long)]
+        runtime: Option<String>,
+        /// Container image, for the docker runtime.
+        #[arg(long)]
+        image: Option<String>,
+        /// Endpoint, for the remote runtime.
+        #[arg(long)]
+        url: Option<String>,
+        /// Working directory for the launched process.
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Add it without starting it.
+        #[arg(long = "no-start")]
+        no_start: bool,
+    },
+    /// Remove a managed server.
+    #[command(alias = "remove")]
+    Rm {
+        /// Server id, as shown by `hypergate list`.
+        id: String,
+    },
+    /// Start, stop or restart one managed server.
+    Server {
+        #[command(subcommand)]
+        action: ServerAction,
+    },
+    /// List the tools the gateway exposes to connected agents.
+    Tools {
+        /// Only show tools from this server.
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Call a tool through the gateway, exactly as an agent would.
+    Call {
+        /// Namespaced tool name, e.g. `kotrain__open_paw_status`.
+        tool: String,
+        /// Arguments as a JSON object.
+        args: Option<String>,
+        /// Single argument as `key=value`. Repeatable; merged over the JSON.
+        #[arg(long = "arg")]
+        pairs: Vec<String>,
+    },
     /// Open the manager UI in the default browser.
     Open,
     /// Print the gateway endpoint and token for pasting into an agent harness.
@@ -93,6 +170,16 @@ enum Command {
         #[arg(last = true, required = true)]
         argv: Vec<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum ServerAction {
+    /// Start a managed server.
+    Start { id: String },
+    /// Stop a managed server.
+    Stop { id: String },
+    /// Restart a managed server.
+    Restart { id: String },
 }
 
 #[derive(Subcommand)]
@@ -185,7 +272,11 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
                 }
                 println!(
                     "Keychain  {}",
-                    if secrets::available() { "available" } else { "unavailable (file fallback)" }
+                    if secrets::available() {
+                        "available"
+                    } else {
+                        "unavailable (file fallback)"
+                    }
                 );
                 println!(
                     "Autostart {}",
@@ -215,8 +306,11 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
             let id_w = servers.iter().map(|s| s.id.len()).max().unwrap_or(2).max(2);
             let name_w = servers.iter().map(|s| s.name.len()).max().unwrap_or(4).max(4);
             println!(
-                "{:<id_w$}  {:<name_w$}  {:<11}  {:<8}  {}",
-                "ID", "NAME", "STATE", "RUNTIME", "TOOLS",
+                "{:<id_w$}  {:<name_w$}  {:<11}  {:<8}  TOOLS",
+                "ID",
+                "NAME",
+                "STATE",
+                "RUNTIME",
                 id_w = id_w,
                 name_w = name_w
             );
@@ -245,6 +339,80 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
                 println!("{line}");
             }
             Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Catalog { filter } => {
+            commands::catalog(filter.as_deref())?;
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Search { query } => {
+            commands::search(&query)?;
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Add {
+            target,
+            id,
+            name,
+            command,
+            args,
+            env,
+            secrets,
+            runtime,
+            image,
+            url,
+            cwd,
+            no_start,
+        } => {
+            commands::add(
+                &target,
+                &commands::AddOptions {
+                    id,
+                    name,
+                    command,
+                    args,
+                    env,
+                    secrets,
+                    runtime,
+                    image,
+                    url,
+                    cwd,
+                    start: !no_start,
+                },
+            )?;
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Rm { id } => {
+            commands::remove(&id)?;
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Server { action } => {
+            let (id, verb) = match &action {
+                ServerAction::Start { id } => (id.clone(), "started"),
+                ServerAction::Stop { id } => (id.clone(), "stopped"),
+                ServerAction::Restart { id } => (id.clone(), "restarted"),
+            };
+            match action {
+                ServerAction::Start { id } => api::start_server(&id)?,
+                ServerAction::Stop { id } => api::stop_server(&id)?,
+                ServerAction::Restart { id } => api::restart_server(&id)?,
+            }
+            println!("{id} {verb}");
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Tools { server } => {
+            commands::tools(server.as_deref())?;
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Call { tool, args, pairs } => {
+            let ok = commands::call(&tool, args.as_deref(), &pairs)?;
+            // A tool that reported an error must not exit 0, or a script can't tell.
+            Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(1) })
         }
 
         Command::Open => {
@@ -312,9 +480,24 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
             }
         },
 
-        Command::SandboxExec { mem, cpu, nofile, strict, argv } => {
+        Command::SandboxExec {
+            mem,
+            cpu,
+            nofile,
+            strict,
+            argv,
+        } => {
             let (program, args) = argv.split_first().ok_or("sandbox-exec needs a command after `--`")?;
-            let code = sandbox::exec(program, args, sandbox::Limits { mem_mb: mem, cpu_pct: cpu, nofile, strict })?;
+            let code = sandbox::exec(
+                program,
+                args,
+                sandbox::Limits {
+                    mem_mb: mem,
+                    cpu_pct: cpu,
+                    nofile,
+                    strict,
+                },
+            )?;
             // Propagate the child's exit code, so the supervisor sees the truth.
             Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
         }

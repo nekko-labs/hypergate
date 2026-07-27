@@ -81,9 +81,7 @@ pub fn exec(program: &str, args: &[String], limits: Limits) -> Result<i32, Strin
         }
     }
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("could not start {program}: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| format!("could not start {program}: {e}"))?;
     let status = child.wait().map_err(|e| format!("waiting for {program} failed: {e}"))?;
     Ok(status.code().unwrap_or(if status.success() { 0 } else { 1 }))
 }
@@ -94,11 +92,10 @@ mod windows_job {
     use super::Limits;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectCpuRateControlInformation,
-        JobObjectExtendedLimitInformation, SetInformationJobObject,
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
+        JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_CPU_RATE_CONTROL_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_CPU_RATE_CONTROL_ENABLE, JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP,
-        JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JobObjectCpuRateControlInformation, JobObjectExtendedLimitInformation, SetInformationJobObject,
     };
     use windows::Win32::System::Threading::GetCurrentProcess;
 
@@ -147,8 +144,10 @@ mod windows_job {
 
             if let Some(pct) = limits.cpu_pct {
                 let pct = pct.clamp(1, 100) as u32;
-                let mut cpu = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION::default();
-                cpu.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+                let mut cpu = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION {
+                    ControlFlags: JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP,
+                    ..Default::default()
+                };
                 // CpuRate is in hundredths of a percent (100% == 10000).
                 cpu.Anonymous.CpuRate = pct * 100;
                 if let Err(e) = SetInformationJobObject(
@@ -183,11 +182,17 @@ mod unix_limits {
 
             if let Some(mb) = limits.mem_mb {
                 let bytes = mb.saturating_mul(1024 * 1024) as libc::rlim_t;
-                let rl = libc::rlimit { rlim_cur: bytes, rlim_max: bytes };
+                let rl = libc::rlimit {
+                    rlim_cur: bytes,
+                    rlim_max: bytes,
+                };
                 libc::setrlimit(libc::RLIMIT_AS, &rl);
             }
             if let Some(n) = limits.nofile {
-                let rl = libc::rlimit { rlim_cur: n as libc::rlim_t, rlim_max: n as libc::rlim_t };
+                let rl = libc::rlimit {
+                    rlim_cur: n as libc::rlim_t,
+                    rlim_max: n as libc::rlim_t,
+                };
                 libc::setrlimit(libc::RLIMIT_NOFILE, &rl);
             }
         }
@@ -202,17 +207,33 @@ mod tests {
     fn reports_platform_gaps_rather_than_silently_ignoring_them() {
         // Whichever platform the tests run on, the limit the *other* one owns
         // must be reported as unsupported instead of quietly dropped.
-        let notes = unsupported(&Limits { nofile: Some(64), cpu_pct: Some(50), ..Default::default() });
-        assert_eq!(notes.len(), 1, "exactly one of --nofile/--cpu is unsupported per platform");
+        let notes = unsupported(&Limits {
+            nofile: Some(64),
+            cpu_pct: Some(50),
+            ..Default::default()
+        });
+        assert_eq!(
+            notes.len(),
+            1,
+            "exactly one of --nofile/--cpu is unsupported per platform"
+        );
     }
 
     #[test]
     fn strict_mode_refuses_a_limit_it_cannot_apply() {
         // This returns before any job/rlimit setup, so it is safe in-process.
         let unsupported_here: Limits = if cfg!(windows) {
-            Limits { nofile: Some(64), strict: true, ..Default::default() }
+            Limits {
+                nofile: Some(64),
+                strict: true,
+                ..Default::default()
+            }
         } else {
-            Limits { cpu_pct: Some(50), strict: true, ..Default::default() }
+            Limits {
+                cpu_pct: Some(50),
+                strict: true,
+                ..Default::default()
+            }
         };
         let err = exec("echo", &[], unsupported_here).unwrap_err();
         assert!(err.contains("cannot honour the requested sandbox"), "got: {err}");

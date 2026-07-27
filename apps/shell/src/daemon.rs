@@ -95,6 +95,7 @@ pub fn spawn_detached() -> Result<u32, String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        detach_our_std_handles();
         // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
         cmd.creation_flags(0x0000_0008 | 0x0000_0200 | 0x0800_0000);
     }
@@ -113,6 +114,36 @@ pub fn spawn_detached() -> Result<u32, String> {
     let pid = child.id();
     write_pid(pid);
     Ok(pid)
+}
+
+/// Stop our own stdin/stdout/stderr from being inherited by the daemon.
+///
+/// Windows `CreateProcess` inherits *every* inheritable handle, not just the
+/// ones named in `STARTUPINFO`, so a detached daemon would hold open the pipes
+/// of whatever launched `hypergate start` even though its own stdio is NUL. A
+/// caller that captures output (a script, CI, `execFileSync`) then waits for an
+/// EOF that only arrives when the daemon exits, which is never, that being the
+/// point of a daemon. Clearing the inherit flag costs us nothing: we keep using
+/// these handles ourselves, we just stop handing them down.
+#[cfg(windows)]
+fn detach_our_std_handles() {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS, SetHandleInformation};
+
+    let handles = [
+        std::io::stdin().as_raw_handle(),
+        std::io::stdout().as_raw_handle(),
+        std::io::stderr().as_raw_handle(),
+    ];
+    for raw in handles {
+        if raw.is_null() {
+            continue;
+        }
+        // Best effort: a redirected-to-NUL or already-closed handle is fine.
+        unsafe {
+            let _ = SetHandleInformation(HANDLE(raw), HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0));
+        }
+    }
 }
 
 /// Poll `/health` until the daemon answers or we give up.

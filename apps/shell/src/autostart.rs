@@ -5,7 +5,7 @@
 //! home dir and keychain, which is the whole reason Hypergate is a logon agent
 //! and not a service. Nothing here needs elevation.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Registry value name (Windows) / label (macOS) / file stem (Linux).
@@ -55,11 +55,14 @@ mod platform {
             .map_err(|e| format!("reg.exe failed: {e}"))
     }
 
-    pub fn enable(exe: &PathBuf) -> Result<(), String> {
+    pub fn enable(exe: &Path) -> Result<(), String> {
         let value = format!("\"{}\" tray", exe.display());
         let out = reg(&["ADD", RUN_KEY, "/v", NAME, "/t", "REG_SZ", "/d", &value, "/f"])?;
         if !out.status.success() {
-            return Err(format!("could not write the Run key: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            return Err(format!(
+                "could not write the Run key: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
         }
         Ok(())
     }
@@ -95,7 +98,7 @@ mod platform {
         s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
     }
 
-    pub fn enable(exe: &PathBuf) -> Result<(), String> {
+    pub fn enable(exe: &Path) -> Result<(), String> {
         let path = plist_path();
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("could not create LaunchAgents: {e}"))?;
@@ -161,7 +164,7 @@ mod platform {
             .join("hypergate.desktop")
     }
 
-    pub fn enable(exe: &PathBuf) -> Result<(), String> {
+    pub fn enable(exe: &Path) -> Result<(), String> {
         let path = desktop_path();
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("could not create the autostart dir: {e}"))?;
