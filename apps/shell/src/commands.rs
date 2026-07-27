@@ -289,16 +289,48 @@ pub fn search(query: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Search terms to try when looking an id up in the official registry.
+///
+/// Registry ids are slugified reverse-DNS names (`io-github-dave-london-pare-npm`)
+/// but the registry's own search only matches a single term, so feeding it the
+/// whole id finds nothing and `hypergate add <id>` would reject an id that
+/// `hypergate search` had just printed. Try the id itself, then its most
+/// distinctive segments: longest first, skipping the namespace boilerplate that
+/// would match half the registry.
+pub fn search_terms(id: &str) -> Vec<String> {
+    const NOISE: [&str; 12] = [
+        "io", "com", "net", "org", "ai", "dev", "app", "github", "gitlab", "mcp", "server", "tools",
+    ];
+    let mut terms = vec![id.to_string()];
+    let mut segments: Vec<&str> = id.split('-').filter(|s| s.len() >= 3 && !NOISE.contains(s)).collect();
+    // Longest first: the distinctive part of a name is rarely its shortest word.
+    segments.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    for s in segments {
+        if !terms.iter().any(|t| t == s) {
+            terms.push(s.to_string());
+        }
+    }
+    // Bounded: each term is a network round trip through the daemon.
+    terms.truncate(4);
+    terms
+}
+
 /// Find `id` in the curated catalog, falling back to an exact-id hit in the
 /// official registry so anything `hypergate search` prints is addable by id.
 fn find_entry(id: &str) -> Result<Option<RegistryEntry>, String> {
     if let Some(hit) = api::registry()?.into_iter().find(|e| e.id == id) {
         return Ok(Some(hit));
     }
-    Ok(api::search_registry(id)
-        .unwrap_or_default()
-        .into_iter()
-        .find(|e| e.id == id))
+    for term in search_terms(id) {
+        if let Some(hit) = api::search_registry(&term)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|e| e.id == id)
+        {
+            return Ok(Some(hit));
+        }
+    }
+    Ok(None)
 }
 
 pub fn add(target: &str, opts: &AddOptions) -> Result<(), String> {
@@ -607,6 +639,27 @@ mod tests {
 
         let unknown = render_tool_result(&json!({ "weird": true }));
         assert!(unknown.contains("weird"));
+    }
+
+    #[test]
+    fn derives_usable_search_terms_from_a_registry_id() {
+        // The registry matches one term at a time, so the whole id finds
+        // nothing and the distinctive segments have to be tried too.
+        let terms = search_terms("io-github-dave-london-pare-npm");
+        assert_eq!(terms[0], "io-github-dave-london-pare-npm");
+        assert!(terms.contains(&"london".to_string()));
+        assert!(terms.contains(&"pare".to_string()));
+        // Namespace boilerplate would match half the registry.
+        assert!(!terms.iter().any(|t| t == "io" || t == "github"));
+        assert!(terms.len() <= 4, "each term is a round trip: {terms:?}");
+
+        // Longest segment first.
+        let terms = search_terms("io-github-nekzus-npm-sentinel-mcp");
+        assert_eq!(terms[1], "sentinel");
+        assert!(!terms.iter().any(|t| t == "mcp"));
+
+        // A plain id is just itself.
+        assert_eq!(search_terms("kotrain"), vec!["kotrain"]);
     }
 
     #[test]
