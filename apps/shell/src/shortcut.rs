@@ -11,7 +11,7 @@
 //! another account can see, matching the per-user logon agent the tray already
 //! is.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// A launcher we manage: what to call it, and where it lives.
 pub struct Entry {
@@ -57,6 +57,7 @@ mod platform {
     use super::*;
     use std::ffi::{OsStr, c_void};
     use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
 
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,

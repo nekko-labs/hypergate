@@ -130,6 +130,7 @@ pub fn tray_icon() -> Result<Icon, String> {
 
 /// Sizes a Windows `.ico` should carry: 16 for the Start Menu list, 32 for the
 /// desktop, 48 for large icons, 256 for Explorer's extra-large view.
+#[cfg(any(windows, test))]
 const ICO_SIZES: [u32; 4] = [16, 32, 48, 256];
 
 /// The mark as a Windows `.ico`, for shortcut and window icons.
