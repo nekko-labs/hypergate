@@ -69,7 +69,7 @@ const log = (msg) => console.log(`  ${msg}`);
 
 // ── the main package ─────────────────────────────────────────────────────────
 
-function buildMain() {
+async function buildMain() {
   const dir = join(OUT, PKG);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(dir, 'bin'), { recursive: true });
@@ -79,22 +79,26 @@ function buildMain() {
   // @hypergate/core + @hypergate/shared + the MCP SDK) keeps this to a single
   // published package with no install-time dependency tree. The whole point
   // is that a user types one command and has a working gateway.
-  const esbuild = join(ROOT, 'node_modules', 'esbuild', 'bin', 'esbuild');
-  if (!existsSync(esbuild)) throw new Error('esbuild is not installed, so run `npm install` first');
-  runNode(esbuild, [
-    join(ROOT, 'apps/daemon/src/index.ts'),
-    '--bundle',
-    '--platform=node',
-    '--format=esm',
-    '--target=node20',
-    '--legal-comments=none',
-    // Some transitive CommonJS deps (cross-spawn, under the MCP SDK's stdio
-    // client) call `require` at runtime. In an ESM bundle esbuild replaces that
-    // with a helper that throws unless a real `require` is in scope, so put one
-    // there. Without this the daemon dies on its first stdio server launch.
-    '--banner:js=import { createRequire as __hypergateRequire } from "node:module"; const require = __hypergateRequire(import.meta.url);',
-    `--outfile=${join(dir, 'lib', 'hypergated.mjs')}`,
-  ]);
+  //
+  // The JS API, not the CLI: on Unix `node_modules/esbuild/bin/esbuild` is the
+  // native executable itself, so running it through node is a syntax error.
+  const esbuild = await import('esbuild');
+  await esbuild.build({
+    entryPoints: [join(ROOT, 'apps/daemon/src/index.ts')],
+    outfile: join(dir, 'lib', 'hypergated.mjs'),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node20',
+    legalComments: 'none',
+    banner: {
+      // Some transitive CommonJS deps (cross-spawn, under the MCP SDK's stdio
+      // client) call `require` at runtime. In an ESM bundle esbuild replaces
+      // that with a helper that throws unless a real `require` is in scope, so
+      // put one there. Without this the daemon dies on its first stdio launch.
+      js: 'import { createRequire as __hypergateRequire } from "node:module"; const require = __hypergateRequire(import.meta.url);',
+    },
+  });
 
   const web = join(ROOT, 'apps/web/dist');
   if (!existsSync(join(web, 'index.html'))) throw new Error('apps/web/dist is missing, so run `npm run build` first');
@@ -207,7 +211,7 @@ if (!flag('skip-build') && !flag('shell-only')) {
 }
 
 console.log('› assembling packages');
-if (!flag('shell-only')) built.push(buildMain());
+if (!flag('shell-only')) built.push(await buildMain());
 
 if (!flag('no-shell')) {
   const targetArg = option('target');
