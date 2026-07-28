@@ -420,6 +420,10 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 
 /* footer */
 .footer { margin-top: 52px; padding-top: 16px; border-top: 1px solid var(--line); display: flex; gap: 14px; align-items: center; color: var(--ink-3); font-size: 12.5px; }
+.footer .heart { color: #e2555f; vertical-align: -1px; margin: 0 1px; }
+/* The mark carries the link on its own: quiet at rest, inked and lifted on hover. */
+.foot-gh { display: inline-flex; align-items: center; color: var(--ink-3); transition: color .15s ease, transform .15s ease; }
+.foot-gh:hover { color: var(--ink); text-decoration: none; transform: translateY(-1px); }
 
 @media (max-width: 640px) {
   .pagehead h1 { font-size: 19px; }
