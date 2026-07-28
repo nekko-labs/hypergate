@@ -10,13 +10,77 @@
   <meta property="og:title" content="Hypergate — every MCP server, one gate" />
   <meta property="og:description" content="A local-first runtime and manager for MCP servers. Run them securely, watch every call, connect any agent through a single gateway." />
   <meta property="og:image" content="https://hypergate.app/og.png" />
+  <meta property="og:image:width" content="2560" />
+  <meta property="og:image:height" content="1200" />
+  <meta property="og:image:alt" content="Hypergate: run MCP servers securely, one gateway for every agent" />
   <meta property="og:url" content="https://hypergate.app/" />
   <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Hypergate" />
+  <meta property="og:locale" content="en_US" />
   <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Hypergate — every MCP server, one gate" />
+  <meta name="twitter:description" content="A local-first runtime and manager for MCP servers. Run them securely, watch every call, connect any agent through a single gateway." />
+  <meta name="twitter:image" content="https://hypergate.app/og.png" />
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/src/styles.css" />
+  <!-- Structured data: so search and answer engines describe Hypergate accurately -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://nekkolabs.com/#organization",
+        "name": "Nekko Labs",
+        "url": "https://nekkolabs.com/"
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://hypergate.app/#website",
+        "url": "https://hypergate.app/",
+        "name": "Hypergate",
+        "description": "Local-first runtime and manager for MCP servers: sandboxed, supervised, and aggregated behind one gateway endpoint any agent can use.",
+        "inLanguage": "en",
+        "publisher": { "@id": "https://nekkolabs.com/#organization" }
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://hypergate.app/#app",
+        "name": "Hypergate",
+        "url": "https://hypergate.app/",
+        "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "MCP server runtime and gateway",
+        "operatingSystem": "Windows, macOS, Linux",
+        "image": "https://hypergate.app/og.png",
+        "description": "Hypergate runs your MCP servers on your machine: sandboxed, supervised, and aggregated behind one gateway endpoint any agent harness can use. Add servers from a curated catalog, pick how each is isolated (process sandbox, Docker, or remote), and paste one URL into your agent.",
+        "license": "https://opensource.org/licenses/MIT",
+        "isAccessibleForFree": true,
+        "softwareRequirements": "No dependencies for the installers; Node 20+ (22.5+ recommended) for the npm install",
+        "downloadUrl": "https://github.com/nekko-labs/hypergate/releases",
+        "codeRepository": "https://github.com/nekko-labs/hypergate",
+        "featureList": [
+          "Aggregating MCP gateway: every server's tools behind one endpoint, over streamable HTTP or stdio",
+          "Per-server isolation: process sandbox (default), Docker container, or remote hosted endpoint",
+          "Curated catalog of first-party MCP servers with verified launch configs and trust chips",
+          "One-click OAuth for remote first-party servers, no tokens to paste",
+          "Search over the official MCP registry",
+          "Durable usage history, logs, and an audit trail of every tool call",
+          "Tool inspector showing descriptions and typed parameters from the live schema",
+          "Command-line tools radar that detects the CLIs your servers depend on"
+        ],
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "publisher": { "@id": "https://nekkolabs.com/#organization" }
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <canvas id="stars" aria-hidden="true"></canvas>
