@@ -387,6 +387,29 @@ export class Supervisor {
   }
 
   /**
+   * Seat a configured server in the roster without starting it.
+   *
+   * The daemon calls this for servers whose config says `enabled: false`, so a
+   * server you stopped is still *there* after a restart. Without it the instance
+   * map only ever held servers that had been started, and since `list()` is what
+   * `/api/servers` serves, a stopped server vanished from the UI on the next boot
+   * while still sitting in `servers.json` (only a hand-edit brought it back).
+   *
+   * Nothing is spawned or connected, and an already-seated server is left alone,
+   * so this is safe to call on every boot.
+   */
+  register(config: ManagedServerConfig): ServerStatus {
+    const existing = this.instances.get(config.id);
+    if (existing) {
+      existing.config = config;
+      return toStatus(existing);
+    }
+    const inst: Instance = { config, state: 'stopped', tools: [], restarts: 0, logs: [] };
+    this.instances.set(config.id, inst);
+    return toStatus(inst);
+  }
+
+  /**
    * Put a remote server into `authorizing` without attempting a connection —
    * used when it has no usable OAuth token yet, so the UI can prompt sign-in
    * and the server still shows up in `list()`. No network call happens here.

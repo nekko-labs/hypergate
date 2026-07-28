@@ -93,7 +93,7 @@ const OAUTH_DIR = join(DATA_DIR, 'oauth');
 // sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
-const VERSION = '0.11.0';
+const VERSION = '0.11.1';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -560,7 +560,13 @@ let servers = loadConfig();
 
 const startEnabled = async (): Promise<void> => {
   for (const s of servers) {
-    if (!s.enabled) continue;
+    // A server the user stopped stays in the roster, just not running: `list()`
+    // is what /api/servers serves, so skipping it entirely made a stopped server
+    // disappear from the UI on the next boot while still living in servers.json.
+    if (!s.enabled) {
+      supervisor.register(s);
+      continue;
+    }
     // Don't attempt a token-less remote connect — just surface it as authorizing.
     if (needsAuth(s)) supervisor.markAuthorizing(s);
     else await supervisor.start(s);
