@@ -14,6 +14,8 @@ import type {
   AgentConnectInfo,
   ConnectResult,
   ShutdownResponse,
+  UpdateInfo,
+  ApplyUpdateResponse,
 } from '@hypergate/shared';
 
 // Dev proxies /api → daemon; in a packaged build set VITE_DAEMON_URL.
@@ -72,4 +74,11 @@ export const api = {
   // exits after the response is flushed, so a 200 here means it's going down.
   shutdown: (token: string) =>
     j<ShutdownResponse>('/api/shutdown', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }),
+  // Updates. `update()` is the cached answer and never touches the network;
+  // `checkUpdate()` asks the daemon to look (it caches for a day, so calling it
+  // when the manager opens costs nothing), and `force` skips that cache.
+  update: () => j<UpdateInfo>('/api/update'),
+  checkUpdate: (force = false) => j<UpdateInfo>(`/api/update/check${force ? '?force=1' : ''}`, { method: 'POST' }),
+  applyUpdate: (token: string) =>
+    j<ApplyUpdateResponse>('/api/update/apply', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }),
 };

@@ -72,6 +72,10 @@ enum Wake {
     /// Show the manager window (from the menu, or from a second `hypergate app`
     /// launch handing off through the single-instance socket).
     OpenWindow,
+    /// Quit, asked for over the single-instance socket. Used by `hypergate
+    /// update --apply`, which has to get the tray out of the way before the
+    /// files it is running from can be replaced.
+    Quit,
 }
 
 /// Everything the running tray owns.
@@ -208,17 +212,26 @@ pub fn run(with_window: bool) -> Result<(), String> {
         let _ = menu_proxy.send_event(Wake::Menu(e));
     }));
 
-    // The single-instance lock doubles as a handoff channel: a second launch
-    // connects and asks us to show the manager window instead of duplicating
-    // the tray. Loopback-only, and the only verb is "surface the local UI",
-    // which any local process could already do by opening the URL itself.
+    // The single-instance lock doubles as a handoff channel. Two verbs, both
+    // loopback-only and both things a local process could already do for itself:
+    // `open` surfaces the manager UI, and `quit` shuts the agent down, which is
+    // how `hypergate update --apply` clears the way before replacing our files.
     let open_proxy = event_loop.create_proxy();
     std::thread::spawn(move || {
         for stream in lock.incoming().flatten() {
             let mut line = String::new();
             let mut reader = BufReader::new(stream);
-            if reader.read_line(&mut line).is_ok() && line.trim() == "open" {
-                let _ = open_proxy.send_event(Wake::OpenWindow);
+            if reader.read_line(&mut line).is_err() {
+                continue;
+            }
+            match line.trim() {
+                "open" => {
+                    let _ = open_proxy.send_event(Wake::OpenWindow);
+                }
+                "quit" => {
+                    let _ = open_proxy.send_event(Wake::Quit);
+                }
+                _ => {}
             }
         }
     });
@@ -267,6 +280,10 @@ pub fn run(with_window: bool) -> Result<(), String> {
 
             Event::UserEvent(Wake::OpenWindow) => {
                 open_manager(&mut window, target);
+            }
+
+            Event::UserEvent(Wake::Quit) => {
+                quit(&mut tray, &stop_tx, control_flow);
             }
 
             // Closing the manager never quits: Hypergate is a resident agent,
@@ -320,23 +337,28 @@ pub fn run(with_window: bool) -> Result<(), String> {
                             t.autostart.set_checked(autostart::is_enabled());
                         }
                     }
-                    id::QUIT => {
-                        let _ = stop_tx.send(());
-                        if let Some(t) = &mut tray {
-                            // Only reap the daemon if this tray started it.
-                            if let Some(child) = &mut t.child {
-                                let _ = child.kill();
-                                let _ = child.wait();
-                            }
-                        }
-                        *control_flow = ControlFlow::Exit;
-                    }
+                    id::QUIT => quit(&mut tray, &stop_tx, control_flow),
                     _ => {}
                 }
             }
             _ => {}
         }
     });
+}
+
+/// Shut the agent down: stop the status poller, reap the daemon if this tray
+/// started it, and leave the event loop. Reached from the Quit menu item and
+/// from a `quit` on the single-instance socket, which must behave identically.
+fn quit(tray: &mut Option<Tray>, stop_tx: &mpsc::Sender<()>, control_flow: &mut ControlFlow) {
+    let _ = stop_tx.send(());
+    if let Some(t) = tray {
+        // Only reap the daemon if this tray started it.
+        if let Some(child) = &mut t.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+    *control_flow = ControlFlow::Exit;
 }
 
 /// Start or stop every managed server. Runs off-thread: a dozen servers means a

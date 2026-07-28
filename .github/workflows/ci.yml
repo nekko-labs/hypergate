@@ -93,3 +93,7 @@ jobs:
       # tarballs into a clean prefix, and drive the installed CLI.
       - run: npm run build:npm
       - run: npm run smoke:install
+      # Updating needs the same packaged output (channel detection reads the
+      # node_modules layout), so it rides along here rather than paying for a
+      # second cargo build.
+      - run: npm run smoke:update

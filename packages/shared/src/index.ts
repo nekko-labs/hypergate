@@ -505,6 +505,60 @@ export interface UpdateSettingsRequest {
 }
 
 /**
+ * Updates.
+ *
+ * How this install got here decides what an update can do to it, so the channel
+ * is detected rather than assumed. `npm` is a global npm install (the published
+ * `hypergated` package plus its platform shell binary); `installer` is one of the
+ * native packages (.exe / .pkg / .deb / .rpm / tarball); `repo` is a checkout
+ * being run in place; `unknown` is anything we cannot place, where we tell the
+ * user what we found instead of guessing at a command.
+ */
+export type InstallChannel = 'npm' | 'installer' | 'repo' | 'unknown';
+
+/** What an update would take on this install (from `updatePlan`). */
+export interface UpdatePlan {
+  /** Can Hypergate apply the update itself, in one click? */
+  canApply: boolean;
+  /** The equivalent command, always shown so the button is never a black box. */
+  command?: string;
+  /** Why it can't be applied for you, when it can't. */
+  note?: string;
+}
+
+/**
+ * `GET /api/update` (cached, never fetches) and `POST /api/update/check` (fetches).
+ *
+ * `latest` is absent until a check has found a published release: with nothing
+ * published yet that is the honest answer, not an error.
+ */
+export interface UpdateInfo extends UpdatePlan {
+  /** The running daemon's version. */
+  current: string;
+  /** Newest published version, when a check has found one. */
+  latest?: string;
+  /** True only when `latest` is a genuinely newer version than `current`. */
+  updateAvailable: boolean;
+  /** When the last successful check happened (ISO), if ever. */
+  checkedAt?: string;
+  /** Where `latest` came from. */
+  source?: 'npm' | 'github';
+  /** Release notes for `latest`, when known. */
+  releaseUrl?: string;
+  channel: InstallChannel;
+  /** Set when the last check could not reach a feed, so the UI can say why. */
+  error?: string;
+}
+
+/** `POST /api/update/apply`: the update was handed to the shell, which restarts Hypergate. */
+export interface ApplyUpdateResponse {
+  ok: boolean;
+  /** The command the updater will run, echoed back for the UI's progress copy. */
+  command?: string;
+  error?: string;
+}
+
+/**
  * Answer to `POST /api/shutdown`: the daemon accepted the request and will exit
  * once this response is on the wire. `servers` is how many managed servers it
  * stops on the way out, so the UI can say what actually went down.

@@ -26,6 +26,14 @@ import {
   shellsFor,
   HypergateOAuthProvider,
   setServerAllowed,
+  detectInstallChannel,
+  isNewerVersion,
+  latestFromGithub,
+  latestFromNpm,
+  releaseUrlFor,
+  updatePlan,
+  GITHUB_FEED_URL,
+  NPM_FEED_URL,
   type OAuthStore,
 } from '@hypergate/core';
 import { openStore } from './store.ts';
@@ -50,6 +58,9 @@ import type {
   ConnectResult,
   SetAgentServerRequest,
   ShutdownResponse,
+  UpdateInfo,
+  ApplyUpdateResponse,
+  InstallChannel,
 } from '@hypergate/shared';
 
 /**
@@ -88,12 +99,13 @@ const ANALYTICS_PATH = join(DATA_DIR, 'analytics.json');
 const CLIENTS_PATH = join(DATA_DIR, 'clients.json');
 const SETTINGS_PATH = join(DATA_DIR, 'settings.json');
 const POPULARITY_PATH = join(DATA_DIR, 'popularity.json');
+const UPDATE_PATH = join(DATA_DIR, 'update.json');
 const OAUTH_DIR = join(DATA_DIR, 'oauth');
 // `HYPERGATE_PORT` first, because that's what the shell and CLI read: a user who
 // sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
-const VERSION = '0.11.1';
+const VERSION = '0.12.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -279,6 +291,104 @@ const computePopularity = async (): Promise<PopularityMap> => {
     clearTimeout(timer);
   }
   return scores;
+};
+
+// ── updates (lazy, cached; never fetched on boot) ───────────────────────────
+// "Is there a newer Hypergate, and can we install it for you." The check is an
+// outbound call, so it follows the popularity rule exactly: only when the UI asks
+// (i.e. when someone opens the manager, or presses Check for updates), cached to
+// disk for a day, soft-failing to whatever we last knew. `GET /api/update` never
+// touches the network at all.
+//
+// Feeds, in order: the npm registry (the package `npm install -g` would fetch),
+// then the GitHub release. Either URL can be pointed elsewhere for a test or an
+// internal mirror.
+const UPDATE_TTL = 24 * 60 * 60 * 1000;
+const NPM_URL = process.env.HYPERGATE_UPDATE_NPM_URL ?? NPM_FEED_URL;
+const GITHUB_URL = process.env.HYPERGATE_UPDATE_GITHUB_URL ?? GITHUB_FEED_URL;
+
+interface UpdateCache {
+  checkedAt: string;
+  latest?: string;
+  source?: 'npm' | 'github';
+  releaseUrl?: string;
+  error?: string;
+}
+const loadUpdateCache = (): UpdateCache | undefined => {
+  try {
+    if (existsSync(UPDATE_PATH)) return JSON.parse(readFileSync(UPDATE_PATH, 'utf8')) as UpdateCache;
+  } catch {
+    /* ignore a corrupt cache */
+  }
+  return undefined;
+};
+const saveUpdateCache = (c: UpdateCache): void => {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(UPDATE_PATH, JSON.stringify(c));
+  } catch {
+    /* best-effort; an update check is not critical */
+  }
+};
+
+/**
+ * How this copy was installed, which decides whether we may replace it.
+ * `process.execPath` matters as much as the module path: in the compiled
+ * standalone daemon there is no module path on disk at all.
+ */
+const installChannel = (): InstallChannel =>
+  detectInstallChannel({
+    daemonPath: fileURLToPath(import.meta.url),
+    execPath: process.execPath,
+    platform: process.platform,
+  });
+
+const fetchJson = async (url: string, signal: AbortSignal): Promise<unknown | undefined> => {
+  const res = await fetch(url, { signal, headers: { 'User-Agent': 'hypergate', Accept: 'application/json' } });
+  if (!res.ok) return undefined;
+  return (await res.json()) as unknown;
+};
+
+/** Ask the feeds what the newest published version is. Never throws. */
+const fetchLatest = async (): Promise<UpdateCache> => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const fromNpm = latestFromNpm(await fetchJson(NPM_URL, ctrl.signal).catch(() => undefined));
+    if (fromNpm) return { checkedAt: new Date().toISOString(), latest: fromNpm, source: 'npm', releaseUrl: releaseUrlFor(fromNpm) };
+    const fromGithub = latestFromGithub(await fetchJson(GITHUB_URL, ctrl.signal).catch(() => undefined));
+    if (fromGithub)
+      return { checkedAt: new Date().toISOString(), latest: fromGithub, source: 'github', releaseUrl: releaseUrlFor(fromGithub) };
+    // Neither feed has a release. Today that is simply the truth (nothing is
+    // published yet), so it is recorded as a successful check with no version
+    // rather than an error the UI has to apologise for.
+    return { checkedAt: new Date().toISOString() };
+  } catch (e) {
+    return { checkedAt: new Date().toISOString(), error: e instanceof Error ? e.message : 'could not reach the update feed' };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** The `/api/update` payload: what we know, plus what updating would take here. */
+const updateInfo = (cache = loadUpdateCache()): UpdateInfo => {
+  const channel = installChannel();
+  const latest = cache?.latest;
+  const available = isNewerVersion(latest, VERSION);
+  // The plan names the version it would install, so it only mentions one when
+  // that version is actually an upgrade.
+  const plan = updatePlan(channel, available ? latest : undefined, process.platform);
+  return {
+    current: VERSION,
+    latest,
+    updateAvailable: available,
+    checkedAt: cache?.checkedAt,
+    source: cache?.source,
+    releaseUrl: cache?.releaseUrl,
+    channel,
+    error: cache?.error,
+    ...plan,
+  };
 };
 
 // ── CLI detection (local, shell-free; powers the CLIs section) ──────────────
@@ -1012,6 +1122,40 @@ if (STDIO_MODE) {
       } catch (e) {
         return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
       }
+    }
+
+    // ── updates ──────────────────────────────────────────────────────────────
+    // GET is free and offline: it reports the cached answer plus what an update
+    // would take on this install. The check is the only part that reaches out,
+    // and only when asked (the UI asks once when it loads; the cache is a day).
+    if (pathname === '/api/update' && req.method === 'GET') return json(res, 200, updateInfo());
+    if (pathname === '/api/update/check' && req.method === 'POST') {
+      const cached = loadUpdateCache();
+      const force = url.searchParams.get('force') === '1';
+      const fresh = cached && !cached.error && Date.now() - new Date(cached.checkedAt).getTime() < UPDATE_TTL;
+      if (fresh && !force) return json(res, 200, updateInfo(cached));
+      const result = await fetchLatest();
+      // Keep a version we already knew if this attempt failed to find one.
+      if (result.error && cached?.latest) result.latest = cached.latest;
+      saveUpdateCache(result);
+      return json(res, 200, updateInfo(result));
+    }
+    // Apply it: same guards as /api/shutdown, since this stops the daemon (and
+    // the tray) so their files can be replaced. The work belongs to the shell,
+    // which outlives both and puts them back afterwards.
+    if (pathname === '/api/update/apply' && req.method === 'POST') {
+      if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const info = updateInfo();
+      if (!info.updateAvailable) return json(res, 409, { ok: false, error: 'no update available' } as ApplyUpdateResponse);
+      if (!info.canApply)
+        return json(res, 400, { ok: false, error: info.note ?? 'this install cannot be updated in place' } as ApplyUpdateResponse);
+      if (!shell.startUpdate())
+        return json(res, 500, {
+          ok: false,
+          error: 'the hypergate shell binary is not available to run the update',
+        } as ApplyUpdateResponse);
+      return json(res, 200, { ok: true, command: info.command } as ApplyUpdateResponse);
     }
 
     // ── stop the daemon (the manager UI's Stop button) ───────────────────────

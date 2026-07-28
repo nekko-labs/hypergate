@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join, delimiter, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -97,3 +97,30 @@ export const autostartEnabled = (): boolean => run(['autostart', 'status'])?.tri
 /** Add or remove the login item. Returns whether the change was applied. */
 export const setAutostart = (on: boolean): boolean =>
   run(['autostart', on ? 'on' : 'off']) !== undefined;
+
+// ── updates ─────────────────────────────────────────────────────────────────
+
+/**
+ * Hand an update to the shell and return immediately.
+ *
+ * This cannot be a `run()` call: the updater's whole job is to stop this daemon
+ * (and the tray) so the files they run from can be replaced, so waiting for it
+ * would mean waiting for our own death. It is spawned detached, with its stdio
+ * discarded, and it logs to ~/.hypergate/update.log for anyone who needs to see
+ * what happened.
+ */
+export const startUpdate = (): boolean => {
+  const bin = shellBin();
+  if (!bin) return false;
+  try {
+    const child = spawn(bin, ['update', '--apply'], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+};

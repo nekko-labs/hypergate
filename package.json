@@ -1,7 +1,7 @@
 {
   "name": "hypergate",
   "private": true,
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Local-first runtime & manager for MCP servers — run servers securely (process sandbox or Docker), supervise them, and expose one gateway endpoint for any agent harness. A ToolHive rival you own.",
   "license": "MIT",
   "type": "module",
@@ -29,7 +29,8 @@
     "shell:build": "cargo build --release --manifest-path apps/shell/Cargo.toml",
     "shell:test": "cargo test --manifest-path apps/shell/Cargo.toml",
     "tray": "cargo run --release --manifest-path apps/shell/Cargo.toml -- tray",
-    "typecheck": "tsc -b --noEmit || true"
+    "typecheck": "tsc -b --noEmit || true",
+    "smoke:update": "node scripts/smoke-update.mjs"
   },
   "engines": {
     "node": ">=20"

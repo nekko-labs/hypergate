@@ -103,6 +103,26 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .nav button.active { background: var(--paper); color: var(--ink); box-shadow: var(--shadow); }
 .nav .n-badge { font-size: 10.5px; font-weight: 700; color: var(--accent); }
 
+/* version + update state. The update chip sits immediately right of the version,
+   because that is where you look to answer "am I current?"; "latest" says so
+   quietly when you are. The check button is chrome, so it only appears on hover
+   (or keyboard focus), and on touch, where hover doesn't exist, it always is. */
+.verbox { display: inline-flex; align-items: center; gap: 7px; }
+.verbox .chip-update {
+  cursor: pointer; font-family: inherit; font-weight: 600;
+  color: #fff; background: var(--grad); border-color: transparent;
+}
+.verbox .chip-update:hover { filter: brightness(1.08); }
+.verbox .vb-latest { font-size: 11.5px; letter-spacing: .2px; }
+.verbox .vb-check {
+  opacity: 0; pointer-events: none; transition: opacity .12s;
+  white-space: nowrap; padding: 2px 8px; font-size: 11.5px;
+}
+.verbox:hover .vb-check, .verbox:focus-within .vb-check { opacity: 1; pointer-events: auto; }
+@media (hover: none) {
+  .verbox .vb-check { opacity: 1; pointer-events: auto; }
+}
+
 /* theme switch */
 .themeswitch { display: inline-flex; gap: 1px; background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px; }
 .themeswitch button {
@@ -182,6 +202,13 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .btn-warn:hover { color: var(--warning); border-color: var(--warning); background: color-mix(in srgb, var(--warning) 20%, var(--card-2)); }
 .btn-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 32%, transparent); background: color-mix(in srgb, var(--danger) 12%, var(--card-2)); }
 .btn-danger:hover { color: var(--danger); border-color: var(--danger); background: color-mix(in srgb, var(--danger) 20%, var(--card-2)); }
+
+/* Icon-only action (restart / remove). Vertical padding is inherited from `.btn`,
+   so the glyph box (16px) lands it at the same height as its lettered
+   neighbours; only the horizontal padding collapses to keep it near-square. */
+.btn-icon { display: inline-flex; align-items: center; justify-content: center; padding-left: 0; padding-right: 0; width: 30px; }
+.btn.sm.btn-icon { width: 26px; }
+.btn-icon svg { display: block; }
 
 /* ── pills & chips ──────────────────────────────────────────────────────── */
 .pill { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; }
@@ -332,6 +359,12 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .toggle.on .knob { transform: translateX(17px); background: #fff; }
 .toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
 .toggle:disabled { opacity: .5; cursor: default; }
+/* Inline in a list-row action bar, next to `.btn.sm` — smaller, and green when
+   on, because green already means "up" everywhere else in this UI. */
+.toggle.sm { width: 34px; height: 19px; }
+.toggle.sm .knob { width: 14px; height: 14px; }
+.toggle.sm.on .knob { transform: translateX(15px); }
+.toggle-go.on { background: var(--success); }
 
 /* ── empty state ────────────────────────────────────────────────────────── */
 .empty { text-align: center; padding: 40px 22px; color: var(--ink-3); }
