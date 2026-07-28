@@ -9,7 +9,24 @@ import { promisify } from 'node:util';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
-import { Supervisor, createGateway, REGISTRY, searchRegistry, KNOWN_CLIS, HypergateOAuthProvider, type OAuthStore } from '@hypergate/core';
+import {
+  Supervisor,
+  createGateway,
+  REGISTRY,
+  searchRegistry,
+  KNOWN_CLIS,
+  CONNECT_TARGETS,
+  ENTRY_NAME,
+  agentConnectTarget,
+  configPathFor,
+  connectArgv,
+  connectTarget,
+  defaultShellFor,
+  formatCommand,
+  shellsFor,
+  HypergateOAuthProvider,
+  type OAuthStore,
+} from '@hypergate/core';
 import { openStore } from './store.ts';
 import * as shell from './shell.ts';
 import type {
@@ -26,6 +43,10 @@ import type {
   PopularityMap,
   CliStatus,
   CliCheckResult,
+  ConnectTargetStatus,
+  ConnectTargetsInfo,
+  AgentConnectInfo,
+  ConnectResult,
 } from '@hypergate/shared';
 
 /**
@@ -322,6 +343,48 @@ const detectClisCached = async (): Promise<CliStatus[]> => {
   const result = await detectClis();
   cliMemo = { at: Date.now(), result };
   return result;
+};
+
+// ── connecting agent harnesses (the "Connected agents" one-click) ───────────
+// Same PATH scan as above, over the clients we know how to wire up. For a `cli`
+// client we can run its own `mcp add` for the user; the argv comes from the
+// table in @hypergate/core, never from the request, and is spawned shell-free.
+const connectTargetStatus = async (): Promise<ConnectTargetStatus[]> =>
+  Promise.all(
+    CONNECT_TARGETS.map(async (t): Promise<ConnectTargetStatus> => {
+      const configPath = configPathFor(t.id, process.platform);
+      if (t.method !== 'cli' || !t.command) return { ...t, found: true, configPath };
+      const path = resolveOnPath(t.command);
+      if (!path) return { ...t, found: false, configPath };
+      return { ...t, found: true, configPath, version: await probeVersion(path, ['--version']) };
+    }),
+  );
+let connectMemo: { at: number; result: ConnectTargetStatus[] } | undefined;
+const connectTargetsCached = async (): Promise<ConnectTargetStatus[]> => {
+  if (connectMemo && Date.now() - connectMemo.at < 10_000) return connectMemo.result;
+  const result = await connectTargetStatus();
+  connectMemo = { at: Date.now(), result };
+  return result;
+};
+/**
+ * Run a client's CLI. Bounded, shell-free, output captured for the UI so a
+ * failure shows the client's own message instead of a bare "didn't work".
+ * `.cmd`/`.bat` shims go through cmd.exe — Node refuses to spawn them directly.
+ */
+const runClientCli = async (file: string, args: string[]): Promise<{ ok: boolean; output: string }> => {
+  const opts = { timeout: 30_000, windowsHide: true, maxBuffer: 1_000_000 } as const;
+  const low = file.toLowerCase();
+  const viaCmd = WIN && (low.endsWith('.cmd') || low.endsWith('.bat'));
+  try {
+    const { stdout, stderr } = viaCmd
+      ? await pexecFile(process.env.ComSpec ?? 'cmd.exe', ['/c', file, ...args], opts)
+      : await pexecFile(file, args, opts);
+    return { ok: true, output: `${stdout}\n${stderr}`.trim() };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    const out = `${err.stdout ?? ''}\n${err.stderr ?? ''}`.trim();
+    return { ok: false, output: out || err.message || 'the command failed' };
+  }
 };
 
 const defaultSettings = (): DaemonSettings => ({ runOnStartup: false, startMinimized: true });
@@ -686,10 +749,29 @@ if (STDIO_MODE) {
     return {
       ...a,
       url,
-      connectCommand: `claude mcp add -t http hypergate-${a.id} ${url} -H "Authorization: Bearer ${a.token}"`,
+      connectCommand: formatCommand(
+        'claude',
+        connectArgv('claude-code', { url, token: a.token })!.add,
+        defaultShellFor(process.platform),
+      ),
       clientSnippet: {
-        mcpServers: { [`hypergate-${a.id}`]: { type: 'http', url, headers: { Authorization: `Bearer ${a.token}` } } },
+        mcpServers: { [ENTRY_NAME]: { type: 'http', url, headers: { Authorization: `Bearer ${a.token}` } } },
       },
+    };
+  };
+
+  /** Everything the UI needs to connect one agent to any client we know about. */
+  const agentConnectInfo = async (a: AgentClient): Promise<AgentConnectInfo> => {
+    const url = `http://localhost:${PORT}/mcp`;
+    const ctx = { url, token: a.token };
+    return {
+      agentId: a.id,
+      entryName: ENTRY_NAME,
+      url,
+      platform: process.platform,
+      defaultShell: defaultShellFor(process.platform),
+      shells: shellsFor(process.platform),
+      targets: (await connectTargetsCached()).map((t) => agentConnectTarget(t, ctx)),
     };
   };
 
@@ -926,6 +1008,62 @@ if (STDIO_MODE) {
         return json(res, 400, { error: 'invalid_json' });
       }
     }
+    // Which harnesses this machine has, before any agent exists (the empty-state
+    // quick-connect asks for this).
+    if (pathname === '/api/connect/targets' && req.method === 'GET') {
+      const info: ConnectTargetsInfo = {
+        platform: process.platform,
+        defaultShell: defaultShellFor(process.platform),
+        shells: shellsFor(process.platform),
+        targets: await connectTargetsCached(),
+      };
+      return json(res, 200, info);
+    }
+
+    // ── connecting an agent to a harness ─────────────────────────────────────
+    const connectM = /^\/api\/clients\/([^/]+)\/connect$/.exec(pathname);
+    if (connectM) {
+      const agent = clients.find((c) => c.id === connectM[1]);
+      if (!agent) return json(res, 404, { error: 'not_found' });
+      // GET: the commands + snippets for every client, scoped to this agent.
+      if (req.method === 'GET') return json(res, 200, await agentConnectInfo(agent));
+      if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
+      // POST: run the client's own `mcp add` for the user. The target id only
+      // selects a row in the built-in table — the argv is ours, and is spawned
+      // without a shell, so nothing from the request reaches a command line.
+      try {
+        const b = JSON.parse(await readBody(req)) as { target?: string };
+        const target = connectTarget(b.target ?? '');
+        if (!target || target.method !== 'cli' || !target.command)
+          return json(res, 400, { error: 'unknown or non-runnable target' });
+        const argv = connectArgv(target.id, { url: `http://localhost:${PORT}/mcp`, token: agent.token });
+        if (!argv) return json(res, 400, { error: 'unknown target' });
+        const file = resolveOnPath(target.command);
+        const command = formatCommand(target.command, argv.add, defaultShellFor(process.platform));
+        if (!file) {
+          const miss: ConnectResult = {
+            ok: false, target: target.id, command, output: '',
+            error: `${target.command} isn't on this machine's PATH.`,
+          };
+          return json(res, 200, miss);
+        }
+        // Clear a previous `hypergate` entry first so re-connecting (after a
+        // token change, say) succeeds instead of erroring on a duplicate name.
+        if (argv.reset) await runClientCli(file, argv.reset);
+        const run = await runClientCli(file, argv.add);
+        const result: ConnectResult = {
+          ok: run.ok,
+          target: target.id,
+          command,
+          output: run.output.slice(0, 4000),
+          error: run.ok ? undefined : `${target.name} rejected the command.`,
+        };
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
+      }
+    }
+
     const clientM = /^\/api\/clients\/([^/]+)$/.exec(pathname);
     if (clientM && req.method === 'PATCH') {
       const agent = clients.find((c) => c.id === clientM[1]);

@@ -13,6 +13,11 @@ import type {
   PopularityMap,
   CliStatus,
   CliCheckResult,
+  ConnectShell,
+  ConnectTargetStatus,
+  ConnectTargetsInfo,
+  AgentConnectInfo,
+  ConnectResult,
 } from '@hypergate/shared';
 import { api } from './api';
 
@@ -89,6 +94,7 @@ export function App() {
   const [offline, setOffline] = useState(false);
   const [adding, setAdding] = useState<RegistryEntry | 'custom' | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
+  const [version, setVersion] = useState('');
 
   const refreshAgents = useCallback(() => {
     void api.clients().then(setAgents).catch(() => {});
@@ -110,6 +116,8 @@ export function App() {
     void refresh();
     void api.registry().then(setRegistry).catch(() => {});
     void api.gateway().then(setGateway).catch(() => {});
+    // The daemon knows its version; a hardcoded chip goes stale every release.
+    void api.health().then((h) => setVersion(h.version)).catch(() => {});
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
   }, [refresh]);
@@ -148,7 +156,7 @@ export function App() {
         <div className="topbar-in">
           <div className="logo-tile"><img src="/favicon.svg" alt="" width="22" height="22" /></div>
           <span className="wordmark">Hypergate</span>
-          <span className="chip">v0.7</span>
+          {version && <span className="chip">v{version}</span>}
           <nav className="nav">
             <button className={view === 'servers' ? 'active' : ''} onClick={() => setView('servers')}>Servers</button>
             <button className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}>
@@ -259,18 +267,16 @@ function ThemeSwitch() {
   );
 }
 
+/**
+ * The gateway endpoint itself: URL + the master token, and a pointer to the one
+ * place that connects agents. The snippet tabs that used to live here are gone —
+ * they handed out the full-access master token and duplicated what Connected
+ * agents does better (a scoped, revocable token per client, installed for you).
+ */
 function GatewayBar({ gateway }: { gateway: GatewayInfo }) {
   const [copied, copy] = useCopy();
   const [showToken, setShowToken] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'claude' | 'json' | 'stdio' | 'openpaw'>('claude');
   const token = gateway.token ?? '';
-  const snippets: Record<string, string> = {
-    claude: `claude mcp add -t http hypergate ${gateway.url} -H "Authorization: Bearer ${token}"`,
-    json: JSON.stringify(gateway.clientSnippet, null, 2),
-    stdio: JSON.stringify(gateway.stdioSnippet ?? { mcpServers: { 'hypergate': { command: 'hypergated', args: ['--stdio'] } } }, null, 2),
-    openpaw: 'Open Paw auto-detects Hypergate.\nSettings → MCP servers → "Connect Hypergate gateway" — one click, done.',
-  };
   return (
     <div className="gwbar">
       <div className="gwbar-row">
@@ -278,27 +284,17 @@ function GatewayBar({ gateway }: { gateway: GatewayInfo }) {
         <span className="url">{gateway.url}</span>
         <button className="btn sm" onClick={() => copy('url', gateway.url)}>{copied === 'url' ? 'Copied!' : 'Copy'}</button>
         <div className="spacer" style={{ flex: 1 }} />
-        <span className="tok">token {showToken ? token.slice(0, 12) + '…' : '••••••'}</span>
+        <span className="tok">master token {showToken ? token.slice(0, 12) + '…' : '••••••'}</span>
         <button className="btn sm btn-ghost" onClick={() => setShowToken(!showToken)}>{showToken ? 'Hide' : 'Show'}</button>
         <button className="btn sm" onClick={() => copy('token', token)}>{copied === 'token' ? 'Copied!' : 'Copy'}</button>
-        <button className={`btn sm ${open ? '' : 'btn-accent'}`} onClick={() => setOpen(!open)}>Connect an agent {open ? '▴' : '▾'}</button>
       </div>
-      {open && (
-        <div className="connect-panel">
-          <div className="tabs">
-            <button className={`tab ${tab === 'claude' ? 'active' : ''}`} onClick={() => setTab('claude')}>Claude Code</button>
-            <button className={`tab ${tab === 'json' ? 'active' : ''}`} onClick={() => setTab('json')}>.mcp.json</button>
-            <button className={`tab ${tab === 'stdio' ? 'active' : ''}`} onClick={() => setTab('stdio')}>stdio</button>
-            <button className={`tab ${tab === 'openpaw' ? 'active' : ''}`} onClick={() => setTab('openpaw')}>Open Paw</button>
-          </div>
-          <pre className="snippet">{snippets[tab]}</pre>
-          {tab !== 'openpaw' && (
-            <div className="row" style={{ marginTop: 8, justifyContent: 'flex-end' }}>
-              <button className="btn sm" onClick={() => copy('snippet', snippets[tab])}>{copied === 'snippet' ? 'Copied!' : 'Copy snippet'}</button>
-            </div>
-          )}
-        </div>
-      )}
+      <div className="gwbar-note">
+        <span className="small muted">
+          The master token reaches every server. To connect a client, give it its own scoped token in{' '}
+          <b>Connected agents</b> — Hypergate can set it up in the client for you.
+        </span>
+        <a className="btn sm btn-accent" href="#agents">Connect an agent ↓</a>
+      </div>
     </div>
   );
 }
@@ -839,12 +835,40 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
   );
 }
 
-/** "Connected agents": scoped gateway tokens, each with its per-server permissions listed underneath. */
+/**
+ * "Connected agents" — the one place an agent gets connected. Each row is a
+ * scoped gateway token with its per-server permissions, and its own Connect
+ * panel: one click to have Hypergate run the client's `mcp add` for you, or the
+ * exact command quoted for your shell if you'd rather run it yourself.
+ */
 function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInfo[]; servers: ServerStatus[]; onChange: () => void }) {
   const [editing, setEditing] = useState<AgentClientInfo | 'new' | null>(null);
+  /** Agent whose Connect panel is open, which client tab it opened on, and whether to install straight away. */
+  const [connect, setConnect] = useState<{ id: string; target?: string; run?: boolean } | null>(null);
+  const [targets, setTargets] = useState<ConnectTargetsInfo | null>(null);
+  const [quick, setQuick] = useState<{ target: string; error?: string } | null>(null);
+
+  useEffect(() => { void api.connectTargets().then(setTargets).catch(() => {}); }, []);
+
+  // Quick connect: create the scoped agent and wire the client up in one go.
+  // Re-clicking reuses the agent of the same name instead of stacking duplicates.
+  const quickConnect = useCallback(async (t: ConnectTargetStatus) => {
+    setQuick({ target: t.id });
+    const agent = agents.find((a) => a.name === t.name) ?? (await api.addClient(t.name, '*').catch(() => null));
+    if (!agent) {
+      setQuick({ target: t.id, error: 'Could not create the agent — check the daemon logs.' });
+      return;
+    }
+    onChange();
+    // A detected CLI is genuinely one click: create, install, show the outcome.
+    setConnect({ id: agent.id, target: t.id, run: t.method === 'cli' && t.found });
+    setQuick(null);
+  }, [agents, onChange]);
+
+  const detected = (targets?.targets ?? []).filter((t) => t.method === 'cli' && t.found);
   return (
     <>
-      <div className="section-title" style={{ marginTop: 22 }}>
+      <div className="section-title" id="agents" style={{ marginTop: 22 }}>
         Connected agents
         <span className="rt">
           <button className={`btn sm ${editing === 'new' ? '' : 'btn-accent'}`} onClick={() => setEditing(editing === 'new' ? null : 'new')}>
@@ -853,12 +877,45 @@ function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInf
         </span>
       </div>
       {agents.length === 0 && editing !== 'new' ? (
-        <div className="panel"><div className="list-row small muted">
-          No scoped agents yet. Add one to hand a specific client a token that only reaches the servers you allow — the master gateway token above always has full access.
+        <div className="panel"><div className="empty">
+          <div className="cat">🔌</div>
+          <b>No agents connected yet.</b>
+          <div className="small" style={{ marginTop: 4, maxWidth: 460, marginInline: 'auto' }}>
+            Every agent gets its own token, scoped to the servers you allow and revocable on its own.
+            Pick a client and Hypergate sets it up{detected.length > 0 ? ' — one click, no config to edit' : ''}.
+          </div>
+          <div className="qc-grid">
+            {(targets?.targets ?? []).map((t) => (
+              <button key={t.id} className={`qc ${t.method === 'cli' && t.found ? 'qc-found' : ''}`} onClick={() => void quickConnect(t)}>
+                <span className="qc-name">{t.name}</span>
+                <span className="qc-state small">
+                  {t.method !== 'cli'
+                    ? 'config snippet'
+                    : t.found
+                      ? `detected${t.version ? ` · v${t.version}` : ''}`
+                      : 'not installed'}
+                </span>
+              </button>
+            ))}
+          </div>
+          {quick?.error && <div className="small" style={{ color: 'var(--danger)', marginTop: 10 }}>{quick.error}</div>}
+          <div className="small muted" style={{ marginTop: 12 }}>
+            Want to pick which servers it may reach? <button className="link-btn" onClick={() => setEditing('new')}>Add a scoped agent</button>
+          </div>
         </div></div>
       ) : (
         <div className="panel"><div className="list">
-          {agents.map((a) => <AgentRow key={a.id} agent={a} servers={servers} onEdit={() => setEditing(a)} onChange={onChange} />)}
+          {agents.map((a) => (
+            <AgentRow
+              key={a.id}
+              agent={a}
+              servers={servers}
+              connect={connect?.id === a.id ? connect : null}
+              onConnect={() => setConnect(connect?.id === a.id ? null : { id: a.id })}
+              onEdit={() => setEditing(a)}
+              onChange={onChange}
+            />
+          ))}
         </div></div>
       )}
       {editing && (
@@ -866,14 +923,28 @@ function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInf
           agent={editing === 'new' ? null : editing}
           servers={servers}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); onChange(); }}
+          onSaved={(saved, created) => {
+            setEditing(null);
+            onChange();
+            // A brand-new agent isn't connected to anything yet — go straight to how.
+            if (created) setConnect({ id: saved.id });
+          }}
         />
       )}
     </>
   );
 }
 
-function AgentRow({ agent, servers, onEdit, onChange }: { agent: AgentClientInfo; servers: ServerStatus[]; onEdit: () => void; onChange: () => void }) {
+function AgentRow({
+  agent, servers, connect, onConnect, onEdit, onChange,
+}: {
+  agent: AgentClientInfo;
+  servers: ServerStatus[];
+  connect: { id: string; target?: string; run?: boolean } | null;
+  onConnect: () => void;
+  onEdit: () => void;
+  onChange: () => void;
+}) {
   const [copied, copy] = useCopy();
   const [show, setShow] = useState(false);
   const nameFor = (id: string) => servers.find((s) => s.id === id)?.name ?? id;
@@ -888,10 +959,10 @@ function AgentRow({ agent, servers, onEdit, onChange }: { agent: AgentClientInfo
           <span className="tok mono">{show ? agent.token.slice(0, 16) + '…' : '••••••'}</span>
           <button className="btn sm btn-ghost" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button>
           <button className="btn sm" onClick={() => copy(`tok-${agent.id}`, agent.token)}>{copied === `tok-${agent.id}` ? 'Copied!' : 'Copy token'}</button>
-          <button className="btn sm" onClick={() => copy(`cmd-${agent.id}`, agent.connectCommand)}>{copied === `cmd-${agent.id}` ? 'Copied!' : 'Copy connect'}</button>
         </div>
         <div className="row">
           <span className="small muted">{agent.lastUsed ? `used ${fmtRel(agent.lastUsed)}` : 'never used'}</span>
+          <button className={`btn sm ${connect ? '' : 'btn-accent'}`} onClick={onConnect}>Connect {connect ? '▴' : '▾'}</button>
           <button className="btn sm" onClick={onEdit}>Edit</button>
           <button className="btn sm btn-danger" onClick={() => { void api.removeClient(agent.id).then(onChange); }}>Remove</button>
         </div>
@@ -906,11 +977,137 @@ function AgentRow({ agent, servers, onEdit, onChange }: { agent: AgentClientInfo
           ids.map((id) => <span key={id} className="chip">{nameFor(id)}</span>)
         )}
       </div>
+      {connect && <AgentConnect agent={agent} initialTarget={connect.target} autoRun={connect.run} />}
     </div>
   );
 }
 
-function AgentEditor({ agent, servers, onClose, onSaved }: { agent: AgentClientInfo | null; servers: ServerStatus[]; onClose: () => void; onSaved: () => void }) {
+const SHELL_LABEL: Record<ConnectShell, string> = { powershell: 'PowerShell', cmd: 'cmd.exe', bash: 'bash / zsh' };
+
+/**
+ * The connect panel for one agent: a tab per client, then either the one-click
+ * install (we run the client's own `mcp add`) or the snippet to paste. The exact
+ * command is always on screen — quoted for the shell you're actually in — so the
+ * button is a shortcut, not a black box.
+ */
+function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInfo; initialTarget?: string; autoRun?: boolean }) {
+  const [info, setInfo] = useState<AgentConnectInfo | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [tab, setTab] = useState<string | undefined>(initialTarget);
+  const [shell, setShell] = useState<ConnectShell | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ConnectResult | null>(null);
+  const [copied, copy] = useCopy();
+  /** Guards the quick-connect auto-install so a re-render can't fire it twice. */
+  const ran = useRef(false);
+
+  const run = useCallback(async (targetId: string) => {
+    setBusy(true);
+    setResult(null);
+    const r = await api.connect(agent.id, targetId).catch(() => null);
+    setResult(r ?? { ok: false, target: targetId, command: '', output: '', error: 'The daemon could not run the command.' });
+    setBusy(false);
+  }, [agent.id]);
+
+  useEffect(() => {
+    setFailed(false);
+    void api
+      .connectInfo(agent.id)
+      .then((i) => {
+        setInfo(i);
+        setShell((s) => s ?? i.defaultShell);
+        setTab((t) => t ?? i.targets.find((x) => x.method === 'cli' && x.found)?.id ?? i.targets[0]?.id);
+        if (autoRun && initialTarget && !ran.current) {
+          ran.current = true;
+          void run(initialTarget);
+        }
+      })
+      .catch(() => setFailed(true));
+  }, [agent.id, autoRun, initialTarget, run]);
+
+  if (failed) return <div className="connect-panel small" style={{ color: 'var(--danger)' }}>Could not load connect options — is the daemon still running?</div>;
+  if (!info || !shell) return <div className="connect-panel small muted">Loading connect options…</div>;
+
+  const t = info.targets.find((x) => x.id === tab);
+  return (
+    <div className="connect-panel">
+      <div className="tabs">
+        {info.targets.map((x) => (
+          <button key={x.id} className={`tab ${x.id === tab ? 'active' : ''}`} onClick={() => { setTab(x.id); setResult(null); }}>
+            {x.name}
+            {x.method === 'cli' && x.found && <span className="tab-dot" title="Installed on this machine" />}
+          </button>
+        ))}
+      </div>
+
+      {t && (
+        <div className="conn-body">
+          {t.hint && <div className="small muted">{t.hint}</div>}
+
+          {t.method === 'cli' ? (
+            <>
+              <div className="row wrap-gap" style={{ marginTop: 10 }}>
+                <button className="btn btn-primary" disabled={!t.found || busy} onClick={() => void run(t.id)}>
+                  {busy ? 'Connecting…' : `⚡ Connect ${t.name}`}
+                </button>
+                {t.found ? (
+                  <span className="small muted">
+                    Runs the command below and registers it as <code>{info.entryName}</code>, replacing any earlier entry of that name.
+                  </span>
+                ) : (
+                  <span className="small" style={{ color: 'var(--warning)' }}>
+                    <code>{t.command}</code> isn't on your PATH{t.install ? <> — install with <code>{t.install}</code></> : null}.
+                  </span>
+                )}
+              </div>
+              <div className="shellbar">
+                <span className="small muted">or run it yourself in</span>
+                <div className="seg">
+                  {info.shells.map((s) => (
+                    <button key={s} className={shell === s ? 'active' : ''} onClick={() => setShell(s)}>{SHELL_LABEL[s]}</button>
+                  ))}
+                </div>
+                <div className="spacer" style={{ flex: 1 }} />
+                <button className="btn sm" onClick={() => copy('cmd', t.commands?.[shell] ?? '')}>{copied === 'cmd' ? 'Copied!' : 'Copy command'}</button>
+              </div>
+              <pre className="snippet">{t.commands?.[shell]}</pre>
+            </>
+          ) : (
+            <>
+              {t.configPath && (
+                <div className="row wrap-gap" style={{ marginTop: 10 }}>
+                  <span className="small muted">Paste into</span>
+                  <code className="path">{t.configPath}</code>
+                  <div className="spacer" style={{ flex: 1 }} />
+                  <button className="btn sm" onClick={() => copy('snip', t.snippet ?? '')}>{copied === 'snip' ? 'Copied!' : 'Copy snippet'}</button>
+                </div>
+              )}
+              <pre className="snippet">{t.snippet}</pre>
+            </>
+          )}
+
+          {result && (
+            <div className={`conn-result ${result.ok ? 'ok' : 'err'}`}>
+              <b>{result.ok ? `✓ Connected — ${info.entryName} is registered.` : result.error ?? 'That did not work.'}</b>
+              {result.ok && <span className="small"> Restart the client if it was already running.</span>}
+              {result.output && <pre className="snippet">{result.output}</pre>}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentEditor({
+  agent, servers, onClose, onSaved,
+}: {
+  agent: AgentClientInfo | null;
+  servers: ServerStatus[];
+  onClose: () => void;
+  /** `created` is true for a brand-new agent, which still needs connecting. */
+  onSaved: (saved: AgentClientInfo, created: boolean) => void;
+}) {
   const [name, setName] = useState(agent?.name ?? '');
   const [all, setAll] = useState(agent ? agent.servers === '*' : true);
   const [sel, setSel] = useState<Set<string>>(new Set(agent && agent.servers !== '*' ? agent.servers : []));
@@ -931,9 +1128,10 @@ function AgentEditor({ agent, servers, onClose, onSaved }: { agent: AgentClientI
     setBusy(true);
     const scoped: '*' | string[] = all ? '*' : [...sel];
     try {
-      if (agent) await api.updateClient(agent.id, { name: name.trim(), servers: scoped });
-      else await api.addClient(name.trim(), scoped);
-      onSaved();
+      const saved = agent
+        ? await api.updateClient(agent.id, { name: name.trim(), servers: scoped })
+        : await api.addClient(name.trim(), scoped);
+      onSaved(saved, !agent);
     } catch {
       setErr('Could not save the agent, check the daemon logs.');
     }

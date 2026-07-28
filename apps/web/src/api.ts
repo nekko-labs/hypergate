@@ -10,6 +10,9 @@ import type {
   PopularityMap,
   CliStatus,
   CliCheckResult,
+  ConnectTargetsInfo,
+  AgentConnectInfo,
+  ConnectResult,
 } from '@hypergate/shared';
 
 // Dev proxies /api → daemon; in a packaged build set VITE_DAEMON_URL.
@@ -21,6 +24,7 @@ const j = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 export const api = {
+  health: () => j<{ ok: boolean; version: string; servers: number }>('/health'),
   servers: () => j<ServerStatus[]>('/api/servers'),
   registry: () => j<RegistryEntry[]>('/api/registry'),
   gateway: () => j<GatewayInfo>('/api/gateway'),
@@ -44,6 +48,12 @@ export const api = {
   updateClient: (id: string, patch: { name?: string; servers?: '*' | string[] }) =>
     j<AgentClientInfo>(`/api/clients/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
   removeClient: (id: string) => j<{ ok: boolean }>(`/api/clients/${id}`, { method: 'DELETE' }),
+  // Connecting an agent to a harness: which clients this machine has, the
+  // commands/snippets for one agent, and the one-click install itself.
+  connectTargets: () => j<ConnectTargetsInfo>('/api/connect/targets'),
+  connectInfo: (id: string) => j<AgentConnectInfo>(`/api/clients/${id}/connect`),
+  connect: (id: string, target: string) =>
+    j<ConnectResult>(`/api/clients/${id}/connect`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target }) }),
   settings: () => j<SettingsInfo>('/api/settings'),
   updateSettings: (patch: UpdateSettingsRequest) =>
     j<SettingsInfo>('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
