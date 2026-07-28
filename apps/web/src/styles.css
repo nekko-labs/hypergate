@@ -260,6 +260,20 @@ pre.logs { max-height: 220px; }
 .perm-check { display: flex; align-items: center; gap: 9px; padding: 5px 2px; cursor: pointer; font-size: 13px; color: var(--ink); font-weight: 400; }
 .perm-check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
 
+/* Per-agent server permissions, clickable in place: the chip is both the state
+   (allowed / blocked) and the control that flips it. */
+.chip-toggle { cursor: pointer; font-family: inherit; font-weight: 500; transition: color .12s, border-color .12s, background .12s; }
+.chip-toggle.on { color: var(--success); border-color: color-mix(in srgb, var(--success) 30%, transparent); background: color-mix(in srgb, var(--success) 12%, var(--card-2)); }
+.chip-toggle.on:hover { border-color: var(--success); }
+.chip-toggle.off { color: var(--ink-3); border-color: var(--line); background: var(--paper); text-decoration: line-through; text-decoration-thickness: 1px; }
+.chip-toggle.off:hover { color: var(--ink-2); border-color: var(--ink-3); }
+.chip-toggle:disabled { opacity: .5; cursor: default; }
+
+/* The same permission from the server's side: one switch per connected agent. */
+.perm-panel { margin-top: 11px; border: 1px solid var(--line); border-radius: 11px; padding: 11px 13px; background: var(--paper-2); display: flex; flex-direction: column; gap: 4px; }
+.perm-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 0; border-top: 1px solid var(--line); }
+.perm-toggle-row:first-of-type { border-top: none; }
+
 /* Quick connect: the empty state's one-click grid of clients on this machine. */
 .qc-grid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 16px auto 0; max-width: 560px; }
 .qc {

@@ -13,6 +13,7 @@ import type {
   ConnectTargetsInfo,
   AgentConnectInfo,
   ConnectResult,
+  ShutdownResponse,
 } from '@hypergate/shared';
 
 // Dev proxies /api → daemon; in a packaged build set VITE_DAEMON_URL.
@@ -48,6 +49,15 @@ export const api = {
   updateClient: (id: string, patch: { name?: string; servers?: '*' | string[] }) =>
     j<AgentClientInfo>(`/api/clients/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
   removeClient: (id: string) => j<{ ok: boolean }>(`/api/clients/${id}`, { method: 'DELETE' }),
+  // Flip one server on/off for one agent. The daemon owns the arithmetic: it
+  // knows every configured server, so it can expand an "all servers" agent into
+  // the explicit list it implies before removing one.
+  setAgentServer: (agentId: string, serverId: string, allowed: boolean) =>
+    j<AgentClientInfo>(`/api/clients/${agentId}/servers/${encodeURIComponent(serverId)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ allowed }),
+    }),
   // Connecting an agent to a harness: which clients this machine has, the
   // commands/snippets for one agent, and the one-click install itself.
   connectTargets: () => j<ConnectTargetsInfo>('/api/connect/targets'),
@@ -57,4 +67,9 @@ export const api = {
   settings: () => j<SettingsInfo>('/api/settings'),
   updateSettings: (patch: UpdateSettingsRequest) =>
     j<SettingsInfo>('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
+  // Stop the daemon. Needs the master gateway token (an agent's scoped token
+  // may call tools, not take the runtime down); the daemon answers first and
+  // exits after the response is flushed, so a 200 here means it's going down.
+  shutdown: (token: string) =>
+    j<ShutdownResponse>('/api/shutdown', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }),
 };

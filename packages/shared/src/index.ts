@@ -367,6 +367,19 @@ export interface UpdateAgentRequest {
   servers?: '*' | string[];
 }
 
+/**
+ * Request body to enable or disable one server for one agent
+ * (`POST /api/clients/:id/servers/:serverId`).
+ *
+ * A single-server flip rather than a whole allow-list write: the daemon knows
+ * every configured server, so it can turn a `'*'` scope into the explicit list
+ * it implies before removing one, something a UI holding a stale server list
+ * cannot do safely.
+ */
+export interface SetAgentServerRequest {
+  allowed: boolean;
+}
+
 /** An agent plus a ready-to-paste connect snippet (returned by the clients API). */
 export interface AgentClientInfo extends AgentClient {
   /** The gateway URL this agent connects to. */
@@ -489,6 +502,17 @@ export interface SettingsInfo extends DaemonSettings {
 export interface UpdateSettingsRequest {
   runOnStartup?: boolean;
   startMinimized?: boolean;
+}
+
+/**
+ * Answer to `POST /api/shutdown`: the daemon accepted the request and will exit
+ * once this response is on the wire. `servers` is how many managed servers it
+ * stops on the way out, so the UI can say what actually went down.
+ */
+export interface ShutdownResponse {
+  ok: boolean;
+  /** Managed servers the daemon is stopping before it exits. */
+  servers: number;
 }
 
 /** Daemon management API (HTTP, localhost) — request/response contracts. */

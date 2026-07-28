@@ -178,7 +178,10 @@ export function App() {
         {offline && (
           <div className="banner">
             <b>Can't reach the daemon.</b>{' '}
-            <span className="muted">Start it with <code>npm run daemon</code> (or <code>npm run dev</code>) — this page reconnects automatically.</span>
+            <span className="muted">
+              Start it from the tray menu (<b>Restart daemon</b>) or with <code>hypergate start</code>. In the repo,{' '}
+              <code>npm run daemon</code>. This page reconnects automatically.
+            </span>
           </div>
         )}
 
@@ -216,7 +219,7 @@ export function App() {
               </div></div>
             ) : servers && servers.length > 0 ? (
               <div className="panel"><div className="list">
-                {servers.map((s) => <ServerRow key={s.id} s={s} onChange={refresh} />)}
+                {servers.map((s) => <ServerRow key={s.id} s={s} agents={agents} onChange={refresh} />)}
               </div></div>
             ) : null}
 
@@ -237,7 +240,7 @@ export function App() {
         ) : view === 'analytics' ? (
           <AnalyticsView stats={stats} />
         ) : (
-          <SettingsView />
+          <SettingsView gateway={gateway} version={version} />
         )}
 
         <div className="footer">
@@ -307,9 +310,11 @@ const STATE_PILL: Record<string, string> = {
   authorizing: 'pill-authorizing',
 };
 
-function ServerRow({ s, onChange }: { s: ServerStatus; onChange: () => void }) {
+function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClientInfo[]; onChange: () => void }) {
   const [logs, setLogs] = useState<string[] | null>(null);
   const [showTools, setShowTools] = useState(false);
+  const [showAgents, setShowAgents] = useState(false);
+  const allowedBy = agents.filter((a) => a.servers === '*' || a.servers.includes(s.id)).length;
   const busy = s.state === 'starting';
   const isRemote = s.runtime === 'remote';
   const authorizing = s.state === 'authorizing';
@@ -353,6 +358,15 @@ function ServerRow({ s, onChange }: { s: ServerStatus; onChange: () => void }) {
           )}
           {!authorizing && <button className="btn sm btn-warn" onClick={() => void act('restart')}>Restart</button>}
           {isRemote && !authorizing && <button className="btn sm btn-warn" onClick={() => void disconnect()} title="Sign out and drop stored tokens">Disconnect</button>}
+          {agents.length > 0 && (
+            <button
+              className={`btn sm ${showAgents ? '' : allowedBy === 0 ? 'btn-warn' : ''}`}
+              onClick={() => setShowAgents(!showAgents)}
+              title="Which connected agents may use this server"
+            >
+              Agents {allowedBy}/{agents.length} {showAgents ? '▴' : '▾'}
+            </button>
+          )}
           <button className="btn sm" onClick={() => void toggleLogs()}>Logs</button>
           <button className="btn sm btn-danger" onClick={() => { void api.remove(s.id).then(onChange); }}>Remove</button>
         </div>
@@ -363,10 +377,80 @@ function ServerRow({ s, onChange }: { s: ServerStatus; onChange: () => void }) {
         </p>
       )}
       {s.error && !authorizing && <p className="small" style={{ color: 'var(--danger)', margin: '8px 0 0' }}>{s.error}</p>}
+      {showAgents && <ServerAgents server={s} agents={agents} onChange={onChange} />}
       {showTools && s.tools.length > 0 && (
         <ToolList serverId={s.id} tools={s.toolDetails ?? s.tools.map((name) => ({ name }))} />
       )}
       {logs && <pre className="logs">{logs.join('\n') || '(no output yet)'}</pre>}
+    </div>
+  );
+}
+
+/**
+ * "Agents" panel on a server row: which connected agents may reach *this* server
+ * through the gateway, one switch each. The same permission the agent rows edit,
+ * read from the server's side, which is how you think about it when you've just
+ * added a server and want only one agent to see it.
+ *
+ * An agent scoped to all servers shows on but says so: turning this server off
+ * for it pins it to the servers that exist today (the daemon expands `'*'` into
+ * that list), and quietly changing what "all servers" means later would be the
+ * worse surprise.
+ */
+function ServerAgents({ server, agents, onChange }: { server: ServerStatus; agents: AgentClientInfo[]; onChange: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const flip = async (agent: AgentClientInfo, allowed: boolean) => {
+    setBusy(agent.id);
+    setErr(null);
+    try {
+      await api.setAgentServer(agent.id, server.id, allowed);
+    } catch {
+      setErr(`Could not change ${agent.name}'s access to ${server.name}.`);
+    }
+    setBusy(null);
+    onChange();
+  };
+  const anyWildcard = agents.some((a) => a.servers === '*');
+  return (
+    <div className="perm-panel">
+      <div className="small muted">
+        Which connected agents may use <b>{server.name}</b> through the gateway. Off means its tools are hidden from
+        that agent, and a call to them is refused.
+      </div>
+      {agents.map((a) => {
+        const on = a.servers === '*' || a.servers.includes(server.id);
+        return (
+          <div key={a.id} className="perm-toggle-row">
+            <div className="row" style={{ gap: 8, minWidth: 0 }}>
+              <span className="agent-dot" />
+              <span className="setting-label">{a.name}</span>
+              {a.servers === '*' ? (
+                <span className="chip chip-accent">all servers</span>
+              ) : (
+                <span className="chip">{a.servers.length} server{a.servers.length === 1 ? '' : 's'}</span>
+              )}
+            </div>
+            <button
+              role="switch"
+              aria-checked={on}
+              aria-label={`${a.name} may use ${server.name}`}
+              className={`toggle ${on ? 'on' : ''}`}
+              disabled={busy === a.id}
+              onClick={() => void flip(a, !on)}
+            >
+              <span className="knob" />
+            </button>
+          </div>
+        );
+      })}
+      {anyWildcard && (
+        <div className="small muted">
+          Turning this off for an <b>all servers</b> agent pins that agent to the servers configured right now, so it
+          won't automatically pick up ones you add later.
+        </div>
+      )}
+      {err && <div className="small" style={{ color: 'var(--danger)' }}>{err}</div>}
     </div>
   );
 }
@@ -452,8 +536,8 @@ function ToggleRow({
   );
 }
 
-/** Service/desktop options: run at login, start minimized. Talks to /api/settings. */
-function SettingsView() {
+/** Service/desktop options: run at login, start minimized, stop the daemon. */
+function SettingsView({ gateway, version }: { gateway: GatewayInfo | null; version: string }) {
   const [s, setS] = useState<SettingsInfo | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -514,7 +598,84 @@ function SettingsView() {
         Startup launches the tray app, which keeps the daemon running in the background. Right-click the tray icon for
         Open manager / Restart / Quit.
       </p>
+
+      <div className="section-title" style={{ marginTop: 24 }}>
+        This daemon
+        {version && <span className="rt"><span className="chip">v{version}</span></span>}
+      </div>
+      <div className="panel"><div className="list">
+        <StopDaemon gateway={gateway} />
+      </div></div>
     </>
+  );
+}
+
+/**
+ * Stop the daemon from the UI: the one control here that ends the session it is
+ * shown in, so it asks twice and then says what happened rather than leaving the
+ * page to discover it went offline.
+ *
+ * The request carries the master gateway token (an agent's scoped token may call
+ * tools, not take the runtime down) and the daemon answers before it exits, so a
+ * result means the shutdown really was accepted.
+ */
+function StopDaemon({ gateway }: { gateway: GatewayInfo | null }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [stopped, setStopped] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const stop = async () => {
+    if (!gateway?.token) {
+      setErr('No gateway token available. Reload the page and try again.');
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.shutdown(gateway.token);
+      setStopped(r.servers);
+      setConfirming(false);
+    } catch {
+      setErr('The daemon refused the request. Reload the page (the token may have changed) or stop it where it was started.');
+    }
+    setBusy(false);
+  };
+
+  if (stopped !== null) {
+    return (
+      <div className="list-row">
+        <div className="setting-label">Daemon stopped</div>
+        <div className="small muted" style={{ marginTop: 4 }}>
+          {stopped === 0 ? 'No managed servers were running.' : `${stopped} managed server${stopped === 1 ? '' : 's'} stopped with it.`}{' '}
+          Start it again from the tray menu (<b>Restart daemon</b>), by reopening the Hypergate app, or with{' '}
+          <code>hypergate start</code>. This page reconnects on its own.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="list-row setting-row">
+      <div className="setting-text">
+        <div className="setting-label">Stop the daemon</div>
+        <div className="small muted">
+          Shuts down the gateway and every managed MCP server on this machine. Connected agents lose their tools until
+          it starts again; nothing is deleted, and enabled servers come back with it.
+        </div>
+        {err && <div className="small" style={{ color: 'var(--danger)', marginTop: 6 }}>{err}</div>}
+      </div>
+      {confirming ? (
+        <div className="row" style={{ flex: 'none' }}>
+          <button className="btn sm btn-ghost" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
+          <button className="btn btn-danger" onClick={() => void stop()} disabled={busy}>
+            {busy ? 'Stopping…' : 'Yes, stop it'}
+          </button>
+        </div>
+      ) : (
+        <button className="btn btn-danger" style={{ flex: 'none' }} onClick={() => setConfirming(true)}>Stop daemon</button>
+      )}
+    </div>
   );
 }
 
@@ -947,9 +1108,23 @@ function AgentRow({
 }) {
   const [copied, copy] = useCopy();
   const [show, setShow] = useState(false);
-  const nameFor = (id: string) => servers.find((s) => s.id === id)?.name ?? id;
+  const [busy, setBusy] = useState<string | null>(null);
   const all = agent.servers === '*';
   const ids = agent.servers === '*' ? [] : agent.servers;
+  /** Ids the agent still lists but that no longer exist, shown so they can be cleared. */
+  const orphaned = ids.filter((id) => !servers.some((s) => s.id === id));
+  const [permErr, setPermErr] = useState<string | null>(null);
+  const flip = async (serverId: string, allowed: boolean) => {
+    setBusy(serverId);
+    setPermErr(null);
+    try {
+      await api.setAgentServer(agent.id, serverId, allowed);
+    } catch {
+      setPermErr('Could not change that permission. Check the daemon logs.');
+    }
+    setBusy(null);
+    onChange();
+  };
   return (
     <div className="list-row">
       <div className="list-head between">
@@ -967,15 +1142,47 @@ function AgentRow({
           <button className="btn sm btn-danger" onClick={() => { void api.removeClient(agent.id).then(onChange); }}>Remove</button>
         </div>
       </div>
+      {/* Permissions are editable right here: one click per server, no dialog.
+          The chips are the state and the control at once, so "what may this
+          agent reach" and "change it" are the same place. */}
       <div className="perm-row">
         <span className="small muted">can use</span>
-        {all ? (
-          <span className="chip chip-accent">all servers</span>
-        ) : ids.length === 0 ? (
-          <span className="chip" style={{ color: 'var(--danger)' }}>no servers (blocked)</span>
+        {all && <span className="chip chip-accent" title="Including any server added later">all servers</span>}
+        {servers.length === 0 ? (
+          <span className="small muted">no servers configured yet</span>
         ) : (
-          ids.map((id) => <span key={id} className="chip">{nameFor(id)}</span>)
+          servers.map((s) => {
+            const on = all || ids.includes(s.id);
+            return (
+              <button
+                key={s.id}
+                className={`chip chip-toggle ${on ? 'on' : 'off'}`}
+                aria-pressed={on}
+                disabled={busy === s.id}
+                title={on ? `Click to block ${s.name} for ${agent.name}` : `Click to allow ${s.name} for ${agent.name}`}
+                onClick={() => void flip(s.id, !on)}
+              >
+                {on ? '✓' : '✕'} {s.name}
+              </button>
+            );
+          })
         )}
+        {orphaned.map((id) => (
+          <button
+            key={id}
+            className="chip chip-toggle on"
+            aria-pressed
+            disabled={busy === id}
+            title="This server is no longer configured. Click to drop it from the list"
+            onClick={() => void flip(id, false)}
+          >
+            ✓ {id} <span className="muted">(gone)</span>
+          </button>
+        ))}
+        {!all && ids.length === 0 && (
+          <span className="chip" style={{ color: 'var(--danger)' }}>blocked, no servers</span>
+        )}
+        {permErr && <span className="small" style={{ color: 'var(--danger)' }}>{permErr}</span>}
       </div>
       {connect && <AgentConnect agent={agent} initialTarget={connect.target} autoRun={connect.run} />}
     </div>
