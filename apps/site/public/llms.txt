@@ -1,0 +1,43 @@
+# Hypergate
+
+> Local-first runtime and manager for MCP (Model Context Protocol) servers. Hypergate runs your MCP servers on your own machine, sandboxed and supervised, and aggregates all of their tools behind **one gateway endpoint** any agent harness can use (Claude Code, Cursor, Codex, Kotrain). Open source, MIT, by Nekko Labs.
+
+Hypergate is not a connector directory: it is a proper server runtime. Add servers from a curated catalog or a custom command, choose how each one is isolated, start them, and paste a single URL (or stdio command) into your agent. Every tool call is recorded locally, so you get an audit trail and usage analytics for free, and secrets are injected rather than logged.
+
+## Key facts
+
+- **What it is**: a supervisor plus an aggregating MCP gateway that runs on localhost. Agent harnesses are MCP *clients*; Hypergate is the *server* side they need.
+- **One endpoint for every agent**: the gateway merges every ready server's tools (namespaced `server__tool`) into one MCP server, exposed over streamable HTTP at `/mcp` with bearer-token auth, and over stdio via `hypergated --stdio`.
+- **Isolation is a choice per server**: **Process sandbox** (the default, no dependencies: scrubbed and allow-listed env, injected secrets only, restricted CWD and limits, no shell), **Docker** (container per server, dropped caps, no-new-privileges), or **Remote** (an authenticated HTTP client to a provider's hosted MCP endpoint, nothing runs locally).
+- **Catalog**: curated first-party servers with verified launch configs (Kotrain, Context7, Supabase, Linear, Figma, GitHub, Atlassian, AWS, Azure, GCP, Cloudflare, Fly.io, and more), Official/Community trust chips, one-click OAuth for remote first-party servers, plus search over the official MCP registry at `registry.modelcontextprotocol.io`.
+- **Observability**: durable usage history and logs (SQLite), a tool inspector showing each tool's description and typed parameters parsed from the live schema, and a command-line-tools radar that detects which CLIs your servers depend on (node/npx, uv/uvx, docker, flyctl, cloud CLIs) with version, path, and an install hint when missing.
+- **Local-first and private**: everything runs on your machine under `~/.hypergate`. No account, no cloud dependency.
+- **Licence**: MIT, open source.
+
+## Install
+
+- **Installers** (nothing else required, not even Node): `-setup.exe` for Windows, `.pkg` for macOS, `.deb`/`.rpm`/tarball for Linux, x64 and arm64, from the [latest release](https://github.com/nekko-labs/hypergate/releases). Per-user install, no admin prompt.
+- **npm** (Node 20+, 22.5+ recommended for durable analytics): `npm install -g hypergated`, then `hypergate start` and `hypergate open`. `npx hypergated` runs it without installing.
+- **Two commands**: `hypergate` (CLI and tray agent) and `hypergated` (the daemon alone, for headless boxes, WSL, and containers). The npm package is named `hypergated` because `hypergate` on npm belongs to an unrelated project; the command you type is still `hypergate`.
+
+## Pages
+
+- [Home](https://hypergate.app/): what Hypergate is, the gateway, the isolation tradeoffs, analytics, and the quick start.
+
+## Docs and source
+
+- [GitHub repository](https://github.com/nekko-labs/hypergate): source, issues, releases.
+- [README](https://github.com/nekko-labs/hypergate/blob/main/README.md): install, isolation table, catalog, architecture, packaging, and development.
+- [SPEC](https://github.com/nekko-labs/hypergate/blob/main/SPEC.md): what Hypergate is and why, in product terms.
+- [TASKS](https://github.com/nekko-labs/hypergate/blob/main/TASKS.md): the technical plan and the build log.
+- [Release signing](https://github.com/nekko-labs/hypergate/blob/main/docs/signing.md): how release artifacts are signed and verified.
+- [Releases](https://github.com/nekko-labs/hypergate/releases): installers and standalone binaries for all six platform targets.
+
+## Architecture (brief)
+
+- `packages/shared`: types and the daemon API contract.
+- `packages/core`: the RuntimeAdapter (Process | Docker | Remote), the Supervisor, the aggregating Gateway, and the registry client.
+- `apps/daemon`: `hypergated`, one localhost port serving the web UI, the management API, and the streamable-HTTP MCP gateway at `/mcp`.
+- `apps/web`: the management UI, served by the daemon.
+- `apps/shell`: the Rust tray agent and CLI.
+- `apps/site`: this marketing page.
