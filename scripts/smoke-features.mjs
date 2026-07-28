@@ -217,6 +217,24 @@ const usageAfter = await (await fetch(`${BASE}/api/usage/events?limit=50`)).json
 if (!Array.isArray(usageAfter) || usageAfter.length < 1) fail('durable usage history did not survive the restart');
 ok(`durable usage history survived the restart (${usageAfter.length} event(s))`);
 
+// ── a stopped server survives a restart ─────────────────────────────────────
+// Stopping a server persists `enabled: false`; it must still be in the roster
+// after a boot (it used to vanish from /api/servers and so from the UI), and it
+// must still be startable.
+await (await fetch(`${BASE}/api/servers/echo/stop`, { method: 'POST' })).json();
+await new Promise((r) => setTimeout(r, 300));
+daemon.kill();
+await new Promise((r) => setTimeout(r, 600));
+daemon = await boot();
+const roster = await (await fetch(`${BASE}/api/servers`)).json();
+const seated = roster.find((s) => s.id === 'echo');
+if (!seated) fail(`a stopped server vanished after the restart: ${JSON.stringify(roster.map((s) => s.id))}`);
+if (seated.state !== 'stopped') fail(`a stopped server should come back stopped, got ${seated.state}`);
+ok('a stopped server is still in the roster after a restart');
+const restarted = await (await fetch(`${BASE}/api/servers/echo/start`, { method: 'POST' })).json();
+if (restarted.state !== 'ready') fail(`could not start the stopped server again: ${JSON.stringify(restarted)}`);
+ok('and can be started again from the UI');
+
 // ── stopping the daemon from the API (the UI's Stop button) ─────────────────
 // Guards first: the route is the one that ends everything, so an unauthenticated
 // caller and a foreign web page must both be turned away before we use it.
