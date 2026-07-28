@@ -145,6 +145,52 @@ analytics = await (await fetch(`${BASE}/api/analytics`)).json();
 if (!analytics.clients.some((c) => c.client === 'echo-agent')) fail(`analytics did not attribute the call to echo-agent: ${JSON.stringify(analytics.clients.map((c) => c.client))}`);
 ok('analytics attributes calls to the named agent');
 
+// ── enable/disable one server for one agent (the per-agent toggle) ──────────
+// The UI's switch is this endpoint, and what it changes must be visible through
+// the gateway immediately, which is the whole point of the permission.
+const setPerm = async (agentId, serverId, allowedFlag) => {
+  const res = await fetch(`${BASE}/api/clients/${agentId}/servers/${encodeURIComponent(serverId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ allowed: allowedFlag }),
+  });
+  return { status: res.status, body: res.status === 200 ? await res.json() : await res.text() };
+};
+
+const off = await setPerm(allowed.id, 'echo', false);
+if (off.status !== 200 || (off.body.servers ?? []).includes('echo')) fail(`disabling echo for the agent failed: ${JSON.stringify(off)}`);
+const offList = await mcp(allowed.token, 'tools/list', {});
+if ((offList.body?.result?.tools ?? []).some((t) => t.name === 'echo__echo')) fail('a server disabled for an agent must vanish from its tools/list');
+const offCall = await mcp(allowed.token, 'tools/call', { name: 'echo__echo', arguments: { text: 'x' } });
+if (!(offCall.body?.error || offCall.body?.result?.isError)) fail(`a disabled server must refuse tools/call: ${JSON.stringify(offCall.body)}`);
+ok('disabling a server for an agent takes effect on the live gateway');
+
+const on = await setPerm(allowed.id, 'echo', true);
+if (on.status !== 200 || !(on.body.servers ?? []).includes('echo')) fail(`re-enabling echo failed: ${JSON.stringify(on)}`);
+const onCall = await mcp(allowed.token, 'tools/call', { name: 'echo__echo', arguments: { text: 'back' } });
+if (onCall.body?.result?.content?.[0]?.text !== 'back') fail(`re-enabled server should answer: ${JSON.stringify(onCall.body)}`);
+ok('re-enabling it restores the tool immediately');
+
+// An "all servers" agent has no way to say "all but this one", so turning one
+// off must materialise the wildcard into the explicit list it stood for.
+const wild = await (await fetch(`${BASE}/api/clients`, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ name: 'wildcard-agent', servers: '*' }),
+})).json();
+const pinned = await setPerm(wild.id, 'echo', false);
+if (pinned.body.servers === '*' || (pinned.body.servers ?? []).includes('echo'))
+  fail(`wildcard agent was not pinned to an explicit list: ${JSON.stringify(pinned.body.servers)}`);
+await session(wild.token, 'wildcard-agent');
+const wildList = await mcp(wild.token, 'tools/list', {});
+if ((wildList.body?.result?.tools ?? []).some((t) => t.name === 'echo__echo')) fail('pinned wildcard agent should not see echo');
+ok('disabling a server on an "all servers" agent pins it to the rest');
+
+const bogus = await setPerm(allowed.id, 'no-such-server', true);
+if (bogus.status !== 404) fail(`granting access to an unknown server should 404, got ${bogus.status}`);
+const revokeBogus = await setPerm(allowed.id, 'no-such-server', false);
+if (revokeBogus.status !== 200) fail(`revoking an unknown server should still work, got ${revokeBogus.status}`);
+ok('granting an unknown server 404s; revoking one is always allowed');
+
 // ── registry search (network; soft-asserted so it passes offline) ───────────
 try {
   const results = await (await fetch(`${BASE}/api/registry/search?q=github`)).json();
@@ -170,6 +216,36 @@ ok(`analytics persisted across restart (totalCalls ${before} → ${after.totalCa
 const usageAfter = await (await fetch(`${BASE}/api/usage/events?limit=50`)).json();
 if (!Array.isArray(usageAfter) || usageAfter.length < 1) fail('durable usage history did not survive the restart');
 ok(`durable usage history survived the restart (${usageAfter.length} event(s))`);
+
+// ── stopping the daemon from the API (the UI's Stop button) ─────────────────
+// Guards first: the route is the one that ends everything, so an unauthenticated
+// caller and a foreign web page must both be turned away before we use it.
+const masterAfter = await gwToken();
+const noToken = await fetch(`${BASE}/api/shutdown`, { method: 'POST' });
+if (noToken.status !== 401) fail(`shutdown without a token should 401, got ${noToken.status}`);
+const agentToken = await fetch(`${BASE}/api/shutdown`, {
+  method: 'POST',
+  headers: { authorization: `Bearer ${allowed.token}` },
+});
+if (agentToken.status !== 401) fail(`an agent token must not stop the daemon, got ${agentToken.status}`);
+const foreign = await fetch(`${BASE}/api/shutdown`, {
+  method: 'POST',
+  headers: { authorization: `Bearer ${masterAfter}`, origin: 'https://evil.example' },
+});
+if (foreign.status !== 403) fail(`a cross-origin page must not stop the daemon, got ${foreign.status}`);
+ok('shutdown refuses no token, an agent token, and a foreign origin');
+
+const exited = new Promise((r) => daemon.once('exit', r));
+const stopRes = await fetch(`${BASE}/api/shutdown`, {
+  method: 'POST',
+  headers: { authorization: `Bearer ${masterAfter}`, origin: BASE },
+});
+const stopBody = await stopRes.json();
+if (stopRes.status !== 200 || stopBody.ok !== true) fail(`shutdown was not accepted: ${stopRes.status} ${JSON.stringify(stopBody)}`);
+const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r('timeout'), 10_000))]);
+if (code === 'timeout') fail('the daemon did not exit after accepting the shutdown');
+if (await fetch(`${BASE}/health`).then((r) => r.ok).catch(() => false)) fail('the daemon is still answering after shutdown');
+ok(`daemon stopped itself on request (exit ${code}, ${stopBody.servers} managed server(s) taken down)`);
 
 await shutdown(daemon, DIR);
 console.log('\nFeature smoke: all green');

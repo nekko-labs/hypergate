@@ -25,6 +25,7 @@ import {
   formatCommand,
   shellsFor,
   HypergateOAuthProvider,
+  setServerAllowed,
   type OAuthStore,
 } from '@hypergate/core';
 import { openStore } from './store.ts';
@@ -47,6 +48,8 @@ import type {
   ConnectTargetsInfo,
   AgentConnectInfo,
   ConnectResult,
+  SetAgentServerRequest,
+  ShutdownResponse,
 } from '@hypergate/shared';
 
 /**
@@ -90,7 +93,7 @@ const OAUTH_DIR = join(DATA_DIR, 'oauth');
 // sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
-const VERSION = '0.10.0';
+const VERSION = '0.11.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -706,6 +709,24 @@ if (STDIO_MODE) {
     const agent = clients.find((c) => tokenEq(got, c.token));
     return agent ? { kind: 'agent', agent } : null;
   };
+  /**
+   * Is this request safe to treat as coming from *our own* UI (or from something
+   * that isn't a browser at all)?
+   *
+   * The management API answers on localhost with `Access-Control-Allow-Origin: *`,
+   * so any web page the user visits can fire a cross-origin POST at it. It can't
+   * read the reply, but the side effect still happens, which is exactly why the
+   * CLI's `stop` used a pid file instead of a shutdown route. Browsers always
+   * send `Origin` on a cross-origin request, so requiring it to be our own origin
+   * (or absent, i.e. curl / the CLI / a native client) closes that door. A `null`
+   * origin (a sandboxed iframe or a `file://` page) is not our UI, so it is refused.
+   */
+  const selfOrigin = (req: IncomingMessage): boolean => {
+    const origin = req.headers.origin;
+    if (origin === undefined) return true;
+    return origin === `http://localhost:${PORT}` || origin === `http://127.0.0.1:${PORT}`;
+  };
+
   // Best-effort caller identity for analytics. The gateway is stateless (a fresh
   // instance per request), so we can't correlate by session; instead we capture
   // the MCP handshake's clientInfo on `initialize` and attribute the tool calls
@@ -987,6 +1008,22 @@ if (STDIO_MODE) {
       }
     }
 
+    // ── stop the daemon (the manager UI's Stop button) ───────────────────────
+    // Two guards, because this is the one route whose whole job is destructive:
+    //   • same-origin (see selfOrigin), so no web page the user happens to visit
+    //     can reach in and kill the gateway;
+    //   • the MASTER gateway token, because an agent's scoped token can call tools, not
+    //     take the runtime down.
+    // Everything is stopped in `shutdown()` after the response is flushed, so the
+    // UI learns it worked instead of seeing a dropped connection.
+    if (pathname === '/api/shutdown' && req.method === 'POST') {
+      if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const body: ShutdownResponse = { ok: true, servers: supervisor.ids().length };
+      res.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' });
+      return res.end(JSON.stringify(body), () => shutdown('requested from the manager UI'));
+    }
+
     // ── connected agents (scoped gateway tokens) ─────────────────────────────
     if (pathname === '/api/clients' && req.method === 'GET') return json(res, 200, clients.map(agentInfo));
     if (pathname === '/api/clients' && req.method === 'POST') {
@@ -1061,6 +1098,39 @@ if (STDIO_MODE) {
         return json(res, 200, result);
       } catch (e) {
         return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
+      }
+    }
+
+    // Enable or disable ONE server for ONE agent: the per-agent toggles in the
+    // UI (both on the agent row and under a server's "Agents" panel).
+    //
+    // Deliberately not a whole-allow-list PATCH: turning a server off for an
+    // agent scoped to `'*'` means writing out the servers that exist *now* minus
+    // that one, and only the daemon knows the full roster. A UI computing that
+    // from a stale list would silently revoke a server it hadn't heard of yet.
+    const permM = /^\/api\/clients\/([^/]+)\/servers\/([^/]+)$/.exec(pathname);
+    if (permM && req.method === 'POST') {
+      const agent = clients.find((c) => c.id === permM[1]);
+      if (!agent) return json(res, 404, { error: 'not_found' });
+      const serverId = decodeURIComponent(permM[2]);
+      try {
+        const b = JSON.parse(await readBody(req)) as SetAgentServerRequest;
+        if (typeof b.allowed !== 'boolean') return json(res, 400, { error: 'allowed must be true or false' });
+        // Granting access needs a server that exists; revoking never does, because an
+        // agent listing a server that was since removed must still be clearable.
+        if (b.allowed && !servers.some((s) => s.id === serverId)) return json(res, 404, { error: 'unknown_server' });
+        // Mutating the live object is the point: the gateway reads the agent's
+        // scope per request, so the next tools/list already reflects this.
+        agent.servers = setServerAllowed(
+          agent.servers,
+          serverId,
+          b.allowed,
+          servers.map((s) => s.id),
+        );
+        saveClients(clients);
+        return json(res, 200, agentInfo(agent));
+      } catch {
+        return json(res, 400, { error: 'invalid_json' });
       }
     }
 
@@ -1201,6 +1271,33 @@ if (STDIO_MODE) {
     // Anything else is the web UI.
     return serveUi(res, pathname);
   });
+  /**
+   * Take the daemon down cleanly. Idempotent, because the response callback that
+   * triggers it can fire alongside a signal handler.
+   *
+   * Order matters: stop listening first so nothing new arrives, then stop the
+   * managed servers. Their child processes are ours, and exiting without closing
+   * them leaks a process tree, which is the very thing `hypergate stop`'s
+   * `taskkill /T` has to clean up when the daemon is killed from outside.
+   */
+  let shuttingDown = false;
+  const shutdown = (reason: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stdout.write(`hypergated stopping: ${reason}\n`);
+    server.close();
+    void supervisor
+      .stopAll()
+      .catch(() => {
+        /* a server that was already gone must not block the exit */
+      })
+      .finally(() => {
+        flushStore();
+        store?.close();
+        process.exit(0);
+      });
+  };
+
   void booted.then(() =>
     server.listen(PORT, '127.0.0.1', () =>
       process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`),

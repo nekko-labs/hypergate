@@ -13,10 +13,14 @@ use std::time::{Duration, Instant};
 use crate::{api, paths};
 
 /// Records the pid of a daemon we launched, so a later `hypergate stop` can
-/// find it. We deliberately do *not* add a shutdown route to the daemon: the
-/// management API is currently unauthenticated on localhost, and a kill switch
-/// reachable from any local process (or a page exploiting the wildcard CORS
-/// header) would be worse than needing a pid file.
+/// find it.
+///
+/// The daemon does have a shutdown route now (the manager UI's Stop button), but
+/// it is guarded by the master gateway token *and* a same-origin check, since
+/// the management API otherwise answers with a wildcard CORS header and an unguarded
+/// kill switch would be reachable from any page the user happens to visit. The
+/// pid path stays because it needs no token and still works when the daemon is
+/// wedged and no longer answering HTTP at all.
 fn pid_file() -> PathBuf {
     paths::data_dir().join("daemon.pid")
 }
@@ -163,6 +167,14 @@ pub fn stop() -> Result<bool, String> {
     let Some(pid) = read_pid() else {
         return Ok(false);
     };
+    // The daemon can now exit on its own (the UI's Stop button, or a crash),
+    // which leaves our pid file pointing at nothing. Killing that pid would
+    // report a failure for a daemon that is already down, so treat it as
+    // "nothing to stop" and clear the stale file instead.
+    if !api::is_up() {
+        clear_pid();
+        return Ok(false);
+    }
     kill(pid)?;
     // Give it a moment to release its port and SQLite handles before reporting done.
     let deadline = Instant::now() + Duration::from_secs(5);
