@@ -153,6 +153,7 @@ fn help_lists_every_subcommand() {
     assert!(out.status.success());
     let help = String::from_utf8_lossy(&out.stdout);
     for cmd in [
+        "app",
         "tray",
         "start",
         "stop",

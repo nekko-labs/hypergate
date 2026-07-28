@@ -16,6 +16,9 @@ jobs:
   # with the on-demand build so a release and a test build are the same thing.
   build:
     uses: ./.github/workflows/build-artifacts.yml
+    # The signing secrets (docs/signing.md). With none configured the build
+    # runs unsigned, exactly as before.
+    secrets: inherit
 
   publish:
     name: publish
@@ -73,6 +76,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
@@ -87,6 +91,15 @@ jobs:
               *) cp "$binary" "release-assets/hypergate-$name" ;;
             esac
           done
+          # Checksums always; a GPG signature over them when the release key is
+          # configured. Linux has no OS-level code signing, so a signed checksum
+          # file is how .deb/.rpm/tarball users verify what they downloaded
+          # (public key: docs/release-signing-key.asc).
+          (cd release-assets && sha256sum -- * > SHA256SUMS)
+          if [ -n "$GPG_PRIVATE_KEY" ]; then
+            printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+            gpg --batch --yes --armor --detach-sign release-assets/SHA256SUMS
+          fi
           ls -la release-assets
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --title "$GITHUB_REF_NAME" \

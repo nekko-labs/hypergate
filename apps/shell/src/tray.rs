@@ -1,21 +1,25 @@
-//! The tray agent: a system-tray icon with a menu, supervising the daemon.
+//! The tray agent: a system-tray icon with a menu, supervising the daemon,
+//! plus the manager window (`window.rs`) when the user wants a real app.
 //!
-//! Interaction is **menu-only on every platform**, deliberately. Linux's
+//! Tray interaction is **menu-only on every platform**, deliberately. Linux's
 //! StatusNotifierItem delivers no click events at all, so a click-to-open
 //! gesture would silently not exist there; making the menu the single surface
 //! keeps behaviour identical across Windows, macOS and Linux.
 //!
-//! The UI opens in the user's default browser rather than a bundled webview:
-//! developers already have a browser, and it beats WebKitGTK on Linux.
+//! "Open manager" prefers the native manager window and falls back to the
+//! default browser when the platform webview is unavailable; both frames show
+//! the same UI the daemon serves, so nothing is lost either way.
 
+use std::io::{BufRead, BufReader, Write};
 use std::sync::mpsc;
 use std::time::Duration;
 
 use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tao::event::Event;
+use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::{TrayIcon, TrayIconBuilder};
 
+use crate::window::ManagerWindow;
 use crate::{api, autostart, daemon, icon, secrets};
 
 /// Stable menu ids. Using explicit ids (rather than comparing generated ones)
@@ -60,8 +64,14 @@ fn hide_own_console() {}
 /// on a polling tick. "Fast and fluid" means no perceptible menu latency.
 enum Wake {
     Menu(MenuEvent),
-    /// A refreshed status line for the menu header.
-    Status(String),
+    /// A refreshed status line for the menu header, plus the real OS autostart
+    /// state. Both are computed on the polling thread: the UI thread only ever
+    /// applies them, so nothing that can block (HTTP, registry, launchctl)
+    /// runs where it could freeze an open menu.
+    Status(String, bool),
+    /// Show the manager window (from the menu, or from a second `hypergate app`
+    /// launch handing off through the single-instance socket).
+    OpenWindow,
 }
 
 /// Everything the running tray owns.
@@ -139,18 +149,24 @@ fn status_line() -> String {
     }
 }
 
-/// Run the tray agent. Blocks until the user quits.
-pub fn run() -> Result<(), String> {
+/// Run the tray agent, and the manager window when `with_window` asks for one
+/// up front (`hypergate app`). Blocks until the user quits.
+pub fn run(with_window: bool) -> Result<(), String> {
     hide_own_console();
 
     // Only one tray at a time, or the user gets duplicate icons that fight over
     // the same daemon. The lock is a bound loopback socket, which the OS releases
     // automatically however this process dies (no stale lock file to clean up).
-    let _lock = match single_instance() {
+    let lock = match single_instance() {
         Some(l) => l,
         None => {
-            // Another tray owns the icon; the useful thing is to surface the UI.
-            let _ = open::that_detached(api::ui_url());
+            // Another instance owns the icon. A second `app` launch means "show
+            // me the app", so ask the owner to surface its manager window
+            // (browser fallback if it won't answer). A second `tray` launch is
+            // a login item finding the agent already running: do nothing.
+            if with_window && !ask_running_instance_to_open() {
+                let _ = open::that_detached(api::ui_url());
+            }
             return Ok(());
         }
     };
@@ -192,12 +208,29 @@ pub fn run() -> Result<(), String> {
         let _ = menu_proxy.send_event(Wake::Menu(e));
     }));
 
+    // The single-instance lock doubles as a handoff channel: a second launch
+    // connects and asks us to show the manager window instead of duplicating
+    // the tray. Loopback-only, and the only verb is "surface the local UI",
+    // which any local process could already do by opening the URL itself.
+    let open_proxy = event_loop.create_proxy();
+    std::thread::spawn(move || {
+        for stream in lock.incoming().flatten() {
+            let mut line = String::new();
+            let mut reader = BufReader::new(stream);
+            if reader.read_line(&mut line).is_ok() && line.trim() == "open" {
+                let _ = open_proxy.send_event(Wake::OpenWindow);
+            }
+        }
+    });
+
     // Refresh the header line off-thread; the HTTP calls must never block the UI.
+    // The autostart checkbox state rides along so a change made outside the app
+    // (or in the web UI) still shows up here, without the UI thread doing the read.
     let status_proxy = event_loop.create_proxy();
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
     std::thread::spawn(move || {
         loop {
-            let _ = status_proxy.send_event(Wake::Status(status_line()));
+            let _ = status_proxy.send_event(Wake::Status(status_line(), autostart::is_enabled()));
             if stop_rx.recv_timeout(Duration::from_secs(4)).is_ok() {
                 return; // shutting down
             }
@@ -205,9 +238,10 @@ pub fn run() -> Result<(), String> {
     });
 
     let mut tray: Option<Tray> = None;
+    let mut window: Option<ManagerWindow> = None;
     let mut pending_child = child;
 
-    event_loop.run(move |event, _target, control_flow| {
+    event_loop.run(move |event, target, control_flow| {
         *control_flow = ControlFlow::Wait;
 
         match event {
@@ -226,14 +260,33 @@ pub fn run() -> Result<(), String> {
                         *control_flow = ControlFlow::Exit;
                     }
                 }
+                if with_window {
+                    open_manager(&mut window, target);
+                }
             }
 
-            Event::UserEvent(Wake::Status(line)) => {
+            Event::UserEvent(Wake::OpenWindow) => {
+                open_manager(&mut window, target);
+            }
+
+            // Closing the manager never quits: Hypergate is a resident agent,
+            // so the window goes away and the tray stays. Quit is in the menu.
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                window_id,
+                ..
+            } => {
+                if window.as_ref().is_some_and(|w| w.id() == window_id) {
+                    window = None;
+                }
+            }
+
+            Event::UserEvent(Wake::Status(line, autostart_on)) => {
                 if let Some(t) = &tray {
                     t.status.set_text(&line);
-                    // Reconcile the checkbox with the real OS state, so a change
-                    // made outside the app (or in the web UI) shows up here.
-                    t.autostart.set_checked(autostart::is_enabled());
+                    // Reconcile the checkbox with the real OS state (read on the
+                    // polling thread), so an outside change shows up here.
+                    t.autostart.set_checked(autostart_on);
                 }
             }
 
@@ -241,7 +294,7 @@ pub fn run() -> Result<(), String> {
                 let clicked = ev.id.as_ref();
                 match clicked {
                     id::OPEN => {
-                        let _ = open::that_detached(api::ui_url());
+                        open_manager(&mut window, target);
                     }
                     id::START_ALL => act_on_all(true),
                     id::STOP_ALL => act_on_all(false),
@@ -328,10 +381,40 @@ fn restart_daemon(tray: &mut Tray) {
     }
 }
 
+/// Show the manager window, creating it if it isn't open. When the platform
+/// webview can't be created (no WebView2 runtime, no webkit2gtk), fall back to
+/// the browser: same UI, different frame.
+fn open_manager<T>(window: &mut Option<ManagerWindow>, target: &tao::event_loop::EventLoopWindowTarget<T>) {
+    if let Some(w) = window.as_ref() {
+        w.focus();
+        return;
+    }
+    match ManagerWindow::open(target) {
+        Ok(w) => *window = Some(w),
+        Err(e) => {
+            eprintln!("[hypergate] {e}; opening the manager in the browser instead");
+            let _ = open::that_detached(api::ui_url());
+        }
+    }
+}
+
 /// Bind a loopback port as a single-instance lock. Cross-platform, and released
 /// by the OS on exit however abrupt, unlike a pid or lock file.
 fn single_instance() -> Option<std::net::TcpListener> {
     // One above the daemon's port, so a custom PORT keeps them paired.
     let port = crate::paths::port().saturating_add(1);
     std::net::TcpListener::bind(("127.0.0.1", port)).ok()
+}
+
+/// Ask the instance holding the lock to show its manager window. True when the
+/// message was delivered.
+fn ask_running_instance_to_open() -> bool {
+    let port = crate::paths::port().saturating_add(1);
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_secs(2),
+    ) else {
+        return false;
+    };
+    stream.write_all(b"open\n").is_ok()
 }
