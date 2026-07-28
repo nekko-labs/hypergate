@@ -99,6 +99,28 @@ pub struct RegistryEntry {
     pub runnable: Option<bool>,
 }
 
+/// `/api/update`: the daemon's view of versions, and what updating takes here.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    pub current: String,
+    #[serde(default)]
+    pub latest: Option<String>,
+    #[serde(default)]
+    pub update_available: bool,
+    /// npm · installer · repo · unknown (see `detectInstallChannel` in core).
+    #[serde(default)]
+    pub channel: String,
+    #[serde(default)]
+    pub can_apply: bool,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub release_url: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Analytics {
@@ -205,6 +227,23 @@ pub fn gateway() -> Result<GatewayInfo, String> {
 
 pub fn analytics() -> Result<Analytics, String> {
     get("/api/analytics")
+}
+
+/// What the daemon last knew about updates. Never hits the network.
+pub fn update() -> Result<UpdateInfo, String> {
+    get("/api/update")
+}
+
+/// Ask the daemon to check the feed now (it caches for a day unless forced).
+pub fn update_check() -> Result<UpdateInfo, String> {
+    let body = send("/api/update/check", None, SLOW_TIMEOUT)?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from /api/update/check: {e}"))
+}
+
+/// Stop the daemon through its own API (needs the master token, which `get`/`send`
+/// already attach). Used by the updater when there is no tray to quit.
+pub fn shutdown() -> Result<(), String> {
+    post("/api/shutdown")
 }
 
 pub fn logs(id: &str) -> Result<Logs, String> {

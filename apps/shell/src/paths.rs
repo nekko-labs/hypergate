@@ -105,6 +105,12 @@ fn repo_daemon_entry() -> Option<PathBuf> {
     None
 }
 
+/// Public wrapper: find an executable beside us or on `PATH`. Used by the
+/// updater to locate `node`, which an npm install always has.
+pub fn find_on_path(name: &str) -> Option<PathBuf> {
+    find_sibling_or_path(name)
+}
+
 /// Look for `name` (with a platform executable extension) beside this binary,
 /// then on `PATH`. Shell-free, so nothing here can be turned into an injection.
 fn find_sibling_or_path(name: &str) -> Option<PathBuf> {

@@ -18,6 +18,8 @@ import type {
   ConnectTargetsInfo,
   AgentConnectInfo,
   ConnectResult,
+  UpdateInfo,
+  InstallChannel,
 } from '@hypergate/shared';
 import { api } from './api';
 
@@ -95,9 +97,23 @@ export function App() {
   const [adding, setAdding] = useState<RegistryEntry | 'custom' | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
   const [version, setVersion] = useState('');
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [checking, setChecking] = useState(false);
 
   const refreshAgents = useCallback(() => {
     void api.clients().then(setAgents).catch(() => {});
+  }, []);
+
+  /**
+   * Ask the daemon about updates. Cheap by default: the daemon caches the answer
+   * for a day, so calling it whenever the manager opens is what makes the version
+   * chip aware without the daemon ever reaching out on its own. `force` is the
+   * explicit "check now" the user pressed.
+   */
+  const checkUpdate = useCallback(async (force = false) => {
+    setChecking(true);
+    setUpdate(await api.checkUpdate(force).catch(() => null));
+    setChecking(false);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -118,9 +134,10 @@ export function App() {
     void api.gateway().then(setGateway).catch(() => {});
     // The daemon knows its version; a hardcoded chip goes stale every release.
     void api.health().then((h) => setVersion(h.version)).catch(() => {});
+    void checkUpdate();
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, checkUpdate]);
 
   const running = servers?.filter((s) => s.state === 'ready').length ?? 0;
   const tools = servers?.reduce((n, s) => n + s.tools.length, 0) ?? 0;
@@ -156,7 +173,13 @@ export function App() {
         <div className="topbar-in">
           <div className="logo-tile"><img src="/favicon.svg" alt="" width="22" height="22" /></div>
           <span className="wordmark">Hypergate</span>
-          {version && <span className="chip">v{version}</span>}
+          <VersionBox
+            version={version}
+            update={update}
+            checking={checking}
+            onCheck={() => void checkUpdate(true)}
+            onOpenUpdates={() => setView('settings')}
+          />
           <nav className="nav">
             <button className={view === 'servers' ? 'active' : ''} onClick={() => setView('servers')}>Servers</button>
             <button className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}>
@@ -240,7 +263,13 @@ export function App() {
         ) : view === 'analytics' ? (
           <AnalyticsView stats={stats} />
         ) : (
-          <SettingsView gateway={gateway} version={version} />
+          <SettingsView
+            gateway={gateway}
+            version={version}
+            updateInfo={update}
+            checking={checking}
+            onCheck={() => void checkUpdate(true)}
+          />
         )}
 
         <div className="footer">
@@ -250,6 +279,47 @@ export function App() {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * The version, and everything you'd want next to it: whether a newer Hypergate
+ * exists, and a way to ask again.
+ *
+ * The update state sits immediately right of the version, because that is where
+ * you look to answer "am I current?". When you are, it says so quietly ("latest")
+ * rather than showing nothing, since silence reads as "hasn't checked". The check
+ * button appears on hover so the chrome stays calm, and on a touch screen (where
+ * there is no hover) it is simply always there.
+ */
+function VersionBox({
+  version, update, checking, onCheck, onOpenUpdates,
+}: {
+  version: string;
+  update: UpdateInfo | null;
+  checking: boolean;
+  onCheck: () => void;
+  onOpenUpdates: () => void;
+}) {
+  if (!version) return null;
+  return (
+    <span className="verbox">
+      <span className="chip">v{version}</span>
+      {update?.updateAvailable ? (
+        <button
+          className="chip chip-update"
+          onClick={onOpenUpdates}
+          title={`Hypergate ${update.latest} is available. Open Settings to install it`}
+        >
+          ↑ v{update.latest}
+        </button>
+      ) : update?.latest ? (
+        <span className="small muted vb-latest" title={`Checked ${fmtRel(update.checkedAt)}`}>latest</span>
+      ) : null}
+      <button className="btn sm btn-ghost vb-check" onClick={onCheck} disabled={checking}>
+        {checking ? 'Checking…' : 'Check for updates'}
+      </button>
+    </span>
   );
 }
 
@@ -310,12 +380,56 @@ const STATE_PILL: Record<string, string> = {
   authorizing: 'pill-authorizing',
 };
 
+/**
+ * The two row actions that need no words: cycle it, or throw it away. Both are
+ * universally read as icons, and dropping the labels keeps a long action row
+ * from pushing the useful controls off the edge. The semantic button tint
+ * (amber = cycle, red = destroy) still carries the meaning, and every icon
+ * button keeps a title + aria-label so the intent survives without the glyph.
+ */
+function Icon({ name }: { name: 'restart' | 'trash' }) {
+  return (
+    <svg
+      viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+    >
+      {name === 'restart' ? (
+        <>
+          <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+          <path d="M21 3v5h-5" />
+        </>
+      ) : (
+        <>
+          <path d="M3 6h18" />
+          <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+          <path d="M10 11v6M14 11v6" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+function IconBtn({
+  icon, label, tone, onClick, disabled,
+}: {
+  icon: 'restart' | 'trash'; label: string; tone: 'warn' | 'danger';
+  onClick: () => void; disabled?: boolean;
+}) {
+  return (
+    <button className={`btn sm btn-icon btn-${tone}`} title={label} aria-label={label} onClick={onClick} disabled={disabled}>
+      <Icon name={icon} />
+    </button>
+  );
+}
+
 function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClientInfo[]; onChange: () => void }) {
   const [logs, setLogs] = useState<string[] | null>(null);
   const [showTools, setShowTools] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
   const allowedBy = agents.filter((a) => a.servers === '*' || a.servers.includes(s.id)).length;
   const busy = s.state === 'starting';
+  const running = s.state === 'ready' || s.state === 'starting';
   const isRemote = s.runtime === 'remote';
   const authorizing = s.state === 'authorizing';
   const act = async (action: 'start' | 'stop' | 'restart') => {
@@ -351,12 +465,25 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
         <div className="row">
           {authorizing ? (
             <button className="btn sm btn-primary" onClick={() => void signIn()}>🔐 Sign in</button>
-          ) : s.state === 'ready' ? (
-            <button className="btn sm btn-warn" onClick={() => void act('stop')}>Stop</button>
           ) : (
-            <button className="btn sm btn-go" onClick={() => void act('start')} disabled={busy}>{busy ? 'Starting…' : 'Start'}</button>
+            /* Up/down is one bit of state, so it gets one control. It reads as on
+               while starting — that is where the click is taking it — and stays
+               disabled until the daemon settles, which the state pill narrates. */
+            <button
+              role="switch"
+              aria-checked={running}
+              aria-label={running ? `Stop ${s.name}` : `Start ${s.name}`}
+              title={running ? `Stop ${s.name}` : `Start ${s.name}`}
+              className={`toggle sm toggle-go ${running ? 'on' : ''}`}
+              disabled={busy}
+              onClick={() => void act(running ? 'stop' : 'start')}
+            >
+              <span className="knob" />
+            </button>
           )}
-          {!authorizing && <button className="btn sm btn-warn" onClick={() => void act('restart')}>Restart</button>}
+          {!authorizing && (
+            <IconBtn icon="restart" label={`Restart ${s.name}`} tone="warn" onClick={() => void act('restart')} disabled={busy} />
+          )}
           {isRemote && !authorizing && <button className="btn sm btn-warn" onClick={() => void disconnect()} title="Sign out and drop stored tokens">Disconnect</button>}
           {agents.length > 0 && (
             <button
@@ -368,7 +495,7 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
             </button>
           )}
           <button className="btn sm" onClick={() => void toggleLogs()}>Logs</button>
-          <button className="btn sm btn-danger" onClick={() => { void api.remove(s.id).then(onChange); }}>Remove</button>
+          <IconBtn icon="trash" label={`Remove ${s.name}`} tone="danger" onClick={() => { void api.remove(s.id).then(onChange); }} />
         </div>
       </div>
       {authorizing && (
@@ -536,8 +663,16 @@ function ToggleRow({
   );
 }
 
-/** Service/desktop options: run at login, start minimized, stop the daemon. */
-function SettingsView({ gateway, version }: { gateway: GatewayInfo | null; version: string }) {
+/** Updates, service/desktop options (run at login, start minimized), stop the daemon. */
+function SettingsView({
+  gateway, version, updateInfo, checking, onCheck,
+}: {
+  gateway: GatewayInfo | null;
+  version: string;
+  updateInfo: UpdateInfo | null;
+  checking: boolean;
+  onCheck: () => void;
+}) {
   const [s, setS] = useState<SettingsInfo | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -566,7 +701,19 @@ function SettingsView({ gateway, version }: { gateway: GatewayInfo | null; versi
         </div>
       </div>
 
-      <div className="section-title">Startup &amp; desktop</div>
+      <div className="section-title" id="updates">
+        Updates
+        <span className="rt">
+          <button className="btn sm" onClick={onCheck} disabled={checking}>
+            {checking ? 'Checking…' : 'Check for updates'}
+          </button>
+        </span>
+      </div>
+      <div className="panel"><div className="list">
+        <UpdateRow info={updateInfo} gateway={gateway} version={version} />
+      </div></div>
+
+      <div className="section-title" style={{ marginTop: 24 }}>Startup &amp; desktop</div>
       <div className="panel">
         {!s ? (
           <div className="list-row small muted">Loading…</div>
@@ -607,6 +754,97 @@ function SettingsView({ gateway, version }: { gateway: GatewayInfo | null; versi
         <StopDaemon gateway={gateway} />
       </div></div>
     </>
+  );
+}
+
+const CHANNEL_LABEL: Record<InstallChannel, string> = {
+  npm: 'installed with npm',
+  installer: 'installed from the native installer',
+  repo: 'running from a checkout',
+  unknown: 'installed some other way',
+};
+
+/**
+ * The Updates row: what you're running, what's out there, and the one button
+ * that closes the gap when we can do it for you.
+ *
+ * One-click is limited to an npm install by design (see `updatePlan` in core):
+ * the native installers aren't signed yet, and downloading and running an
+ * unsigned installer unattended would be worse than pointing you at the release.
+ * Every channel still shows the exact command, so nothing is hidden.
+ */
+function UpdateRow({ info, gateway, version }: { info: UpdateInfo | null; gateway: GatewayInfo | null; version: string }) {
+  const [busy, setBusy] = useState(false);
+  const [started, setStarted] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [copied, copy] = useCopy();
+
+  const apply = async () => {
+    if (!gateway?.token) {
+      setErr('No gateway token available. Reload the page and try again.');
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.applyUpdate(gateway.token);
+      setStarted(r.command ?? 'the update');
+    } catch {
+      setErr('The daemon would not start the update. Check ~/.hypergate/update.log, or run the command below yourself.');
+    }
+    setBusy(false);
+  };
+
+  if (!info) {
+    return <div className="list-row small muted">Checking for updates…</div>;
+  }
+
+  return (
+    <div className="list-row setting-row">
+      <div className="setting-text">
+        <div className="setting-label">
+          {info.updateAvailable ? `Hypergate ${info.latest} is available` : info.latest ? "You're on the latest version" : 'Update check'}
+        </div>
+        <div className="small muted">
+          Running <b>v{info.current || version}</b>
+          {info.latest && !info.updateAvailable && <> · latest is <b>v{info.latest}</b></>}
+          {' · '}
+          {CHANNEL_LABEL[info.channel]}
+          {info.checkedAt && <> · checked {fmtRel(info.checkedAt)}</>}
+        </div>
+        {!info.latest && (
+          <div className="small muted" style={{ marginTop: 4 }}>
+            {info.error
+              ? `Couldn't reach the update feed (${info.error}). Hypergate never checks on its own, so this is only ever a connection problem, not telemetry.`
+              : 'No published release found yet, so there is nothing to compare against. Hypergate only looks when you open this page or press the button, never on its own.'}
+          </div>
+        )}
+        {info.updateAvailable && info.note && <div className="small muted" style={{ marginTop: 4 }}>{info.note}</div>}
+        {started && (
+          <div className="small" style={{ marginTop: 6, color: 'var(--success)' }}>
+            Updating now. Hypergate will stop, install <code>{started}</code>, and start again on its own. This page
+            reconnects when it's back; progress is logged to <code>~/.hypergate/update.log</code>.
+          </div>
+        )}
+        {err && <div className="small" style={{ color: 'var(--danger)', marginTop: 6 }}>{err}</div>}
+        {info.updateAvailable && info.command && !started && (
+          <div className="row wrap-gap" style={{ marginTop: 8 }}>
+            <code className="path">{info.command}</code>
+            <button className="btn sm" onClick={() => copy('cmd', info.command ?? '')}>{copied === 'cmd' ? 'Copied!' : 'Copy'}</button>
+          </div>
+        )}
+      </div>
+      <div className="row" style={{ flex: 'none' }}>
+        {info.releaseUrl && info.updateAvailable && (
+          <a className="btn sm" href={info.releaseUrl} target="_blank" rel="noreferrer">Release notes</a>
+        )}
+        {info.updateAvailable && info.canApply && !started && (
+          <button className="btn btn-primary" onClick={() => void apply()} disabled={busy}>
+            {busy ? 'Starting…' : 'Update now'}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1139,7 +1377,7 @@ function AgentRow({
           <span className="small muted">{agent.lastUsed ? `used ${fmtRel(agent.lastUsed)}` : 'never used'}</span>
           <button className={`btn sm ${connect ? '' : 'btn-accent'}`} onClick={onConnect}>Connect {connect ? '▴' : '▾'}</button>
           <button className="btn sm" onClick={onEdit}>Edit</button>
-          <button className="btn sm btn-danger" onClick={() => { void api.removeClient(agent.id).then(onChange); }}>Remove</button>
+          <IconBtn icon="trash" label={`Remove ${agent.name}`} tone="danger" onClick={() => { void api.removeClient(agent.id).then(onChange); }} />
         </div>
       </div>
       {/* Permissions are editable right here: one click per server, no dialog.

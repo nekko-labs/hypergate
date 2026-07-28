@@ -7,6 +7,7 @@
 //!   • `hypergate start|stop|…` a CLI over the daemon's existing HTTP API
 //!   • `hypergate add|call|…`   managing servers and driving the gateway
 //!   • `hypergate sandbox-exec` the resource-limit launcher the supervisor uses
+//!   • `hypergate update`       check for a newer release, and install it
 //!   • `hypergate secret`       OS keychain access, including for the daemon
 //!
 //! Nothing here reimplements daemon logic. The CLI is a client of the same API
@@ -22,6 +23,7 @@ mod sandbox;
 mod secrets;
 mod shortcut;
 mod tray;
+mod update;
 mod window;
 
 use std::io::Read;
@@ -54,6 +56,12 @@ enum Command {
     Stop,
     /// Restart the daemon.
     Restart,
+    /// Check for a newer Hypergate, and optionally install it.
+    Update {
+        /// Install the update and restart Hypergate (npm installs only).
+        #[arg(long)]
+        apply: bool,
+    },
     /// Show whether the daemon is up, and what it is serving.
     Status,
     /// List managed MCP servers and their state.
@@ -297,6 +305,15 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
             } else {
                 Err(format!("daemon (pid {pid}) did not answer /health within 20s"))
             }
+        }
+
+        Command::Update { apply } => {
+            if apply {
+                update::apply()?;
+            } else {
+                update::show()?;
+            }
+            Ok(ExitCode::SUCCESS)
         }
 
         Command::Status => match api::health() {

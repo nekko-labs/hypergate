@@ -7,3 +7,4 @@ export * from './clis.js';
 export * from './connect.js';
 export * from './agents.js';
 export * from './oauth.js';
+export * from './update.js';
