@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 const NAME: &str = "Hypergate";
 #[cfg(target_os = "windows")]
-const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(target_os = "macos")]
 const LABEL: &str = "app.hypergate.tray";
 
@@ -42,43 +42,105 @@ pub fn is_supported() -> bool {
 }
 
 // ── Windows: HKCU Run key ───────────────────────────────────────────────────
+//
+// Native registry calls, not `reg.exe`. This used to shell out, and the tray
+// polls `is_enabled()` every few seconds: each spawn of a console-subsystem
+// child from the console-less tray made Windows allocate a brand-new console
+// window, so a terminal flashed (and stole focus) on every poll, and the
+// blocking `.output()` on the UI thread froze the open tray menu. An in-process
+// API call has none of those failure modes, and there is no argv at all, so
+// paths with spaces or quotes cannot become injection either.
 #[cfg(target_os = "windows")]
 mod platform {
     use super::*;
-    use std::process::{Command, Stdio};
 
-    /// `reg.exe` with explicit argv (never a shell string), so a path with
-    /// spaces or quotes cannot turn into command injection.
-    fn reg(args: &[&str]) -> Result<std::process::Output, String> {
-        Command::new("reg")
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("reg.exe failed: {e}"))
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ, RegCloseKey,
+        RegCreateKeyExW, RegDeleteValueW, RegGetValueW, RegOpenKeyExW, RegSetValueExW,
+    };
+    use windows::core::{HSTRING, PCWSTR};
+
+    /// An open registry key that closes itself, so no error path can leak it.
+    struct Key(HKEY);
+    impl Drop for Key {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = RegCloseKey(self.0);
+            }
+        }
     }
 
     pub fn enable(exe: &Path) -> Result<(), String> {
         let value = format!("\"{}\" tray", exe.display());
-        let out = reg(&["ADD", RUN_KEY, "/v", NAME, "/t", "REG_SZ", "/d", &value, "/f"])?;
-        if !out.status.success() {
-            return Err(format!(
-                "could not write the Run key: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
+        // UTF-16, with the terminating NUL the registry expects for REG_SZ.
+        let mut data: Vec<u16> = value.encode_utf16().collect();
+        data.push(0);
+        let bytes: &[u8] = unsafe { std::slice::from_raw_parts(data.as_ptr().cast(), data.len() * 2) };
+
+        unsafe {
+            let mut raw = HKEY::default();
+            let rc = RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                &HSTRING::from(RUN_KEY),
+                None,
+                PCWSTR::null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_SET_VALUE,
+                None,
+                &mut raw,
+                None,
+            );
+            if rc != ERROR_SUCCESS {
+                return Err(format!("could not open the Run key (error {})", rc.0));
+            }
+            let key = Key(raw);
+            let rc = RegSetValueExW(key.0, &HSTRING::from(NAME), None, REG_SZ, Some(bytes));
+            if rc != ERROR_SUCCESS {
+                return Err(format!("could not write the Run key (error {})", rc.0));
+            }
         }
         Ok(())
     }
 
     pub fn disable() -> Result<(), String> {
-        // A missing value is success: disable() is idempotent.
-        let _ = reg(&["DELETE", RUN_KEY, "/v", NAME, "/f"])?;
+        unsafe {
+            let mut raw = HKEY::default();
+            let rc = RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                &HSTRING::from(RUN_KEY),
+                None,
+                KEY_SET_VALUE,
+                &mut raw,
+            );
+            if rc == ERROR_FILE_NOT_FOUND {
+                return Ok(()); // no Run key at all: nothing to disable
+            }
+            if rc != ERROR_SUCCESS {
+                return Err(format!("could not open the Run key (error {})", rc.0));
+            }
+            let key = Key(raw);
+            let rc = RegDeleteValueW(key.0, &HSTRING::from(NAME));
+            // A missing value is success: disable() is idempotent.
+            if rc != ERROR_SUCCESS && rc != ERROR_FILE_NOT_FOUND {
+                return Err(format!("could not delete the Run value (error {})", rc.0));
+            }
+        }
         Ok(())
     }
 
     pub fn is_enabled() -> bool {
-        reg(&["QUERY", RUN_KEY, "/v", NAME])
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                &HSTRING::from(RUN_KEY),
+                &HSTRING::from(NAME),
+                RRF_RT_REG_SZ,
+                None,
+                None,
+                None,
+            ) == ERROR_SUCCESS
+        }
     }
 }
 

@@ -180,10 +180,14 @@ fn kill(pid: u32) -> Result<(), String> {
         // /T takes the whole tree: the daemon's managed MCP servers are its
         // children, and leaving them orphaned is exactly the leak the
         // sandbox-exec Job Object fixes for the supervised case.
+        use std::os::windows::process::CommandExt;
         let status = Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            // CREATE_NO_WINDOW: a console child of the console-less tray would
+            // otherwise flash a terminal window at the user.
+            .creation_flags(0x0800_0000)
             .status()
             .map_err(|e| format!("taskkill failed: {e}"))?;
         if !status.success() {

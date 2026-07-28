@@ -39,8 +39,8 @@ VIAddVersionKey "CompanyName" "Nekko Labs"
 !define MUI_UNICON "${ICON}"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\hypergate.exe"
-!define MUI_FINISHPAGE_RUN_PARAMETERS "tray"
-!define MUI_FINISHPAGE_RUN_TEXT "Turn Hypergate on now"
+!define MUI_FINISHPAGE_RUN_PARAMETERS "app"
+!define MUI_FINISHPAGE_RUN_TEXT "Open Hypergate now"
 !define MUI_FINISHPAGE_LINK "hypergate.app"
 !define MUI_FINISHPAGE_LINK_LOCATION "https://hypergate.app"
 

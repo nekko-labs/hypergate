@@ -48,7 +48,7 @@ cat > "$ROOT/usr/share/applications/hypergate.desktop" <<'DESKTOP'
 Type=Application
 Name=Hypergate
 Comment=Local-first runtime and gateway for MCP servers
-Exec=/usr/lib/hypergate/hypergate tray
+Exec=/usr/lib/hypergate/hypergate app
 Icon=hypergate
 Terminal=false
 Categories=Development;Utility;
@@ -69,9 +69,10 @@ DEBROOT="$WORK/deb"
 cp -a "$ROOT" "$DEBROOT"
 mkdir -p "$DEBROOT/DEBIAN"
 
-# GTK is a hard dependency, not an optional one: the tray links it at load time
-# and it is the same binary as the CLI, so `hypergate status` would fail to start
-# without it. Headless boxes should use the npm package or run the daemon alone.
+# GTK and WebKitGTK are hard dependencies, not optional ones: the tray links GTK
+# and the manager window links webkit2gtk at load time, and it is the same binary
+# as the CLI, so `hypergate status` would fail to start without them. Both ship
+# with every mainstream desktop; headless boxes should run the daemon alone.
 cat > "$DEBROOT/DEBIAN/control" <<CONTROL
 Package: hypergate
 Version: ${VERSION}
@@ -79,7 +80,7 @@ Section: devel
 Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: Nekko Labs <philip@nekkolabs.com>
-Depends: libc6, libgtk-3-0, libxdo3, libayatana-appindicator3-1 | libappindicator3-1
+Depends: libc6, libgtk-3-0, libxdo3, libayatana-appindicator3-1 | libappindicator3-1, libwebkit2gtk-4.1-0
 Homepage: https://hypergate.app
 Description: Local-first runtime and gateway for MCP servers
  Run MCP servers securely, supervise them, and expose one gateway endpoint any
@@ -111,7 +112,7 @@ Summary:        Local-first runtime and gateway for MCP servers
 License:        MIT
 URL:            https://hypergate.app
 BuildArch:      ${RPM_ARCH}
-Requires:       gtk3, xdotool, libappindicator-gtk3
+Requires:       gtk3, xdotool, libappindicator-gtk3, webkit2gtk4.1
 # The payload is already built; this spec only stages it.
 %global _build_id_links none
 %global __os_install_post %{nil}

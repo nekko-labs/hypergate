@@ -50,7 +50,7 @@ jobs:
       - if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev libwebkit2gtk-4.1-dev
       - run: cargo fmt --manifest-path apps/shell/Cargo.toml --check
       - run: cargo clippy --manifest-path apps/shell/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path apps/shell/Cargo.toml
@@ -87,7 +87,7 @@ jobs:
           workspaces: apps/shell
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev libwebkit2gtk-4.1-dev
       - run: npm ci
       # Proves what a user actually gets: assemble the npm packages, install the
       # tarballs into a clean prefix, and drive the installed CLI.

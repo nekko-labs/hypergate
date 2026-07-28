@@ -143,7 +143,9 @@ mod platform {
                 .map_err(|e| format!("could not create a shell link: {e}"))?;
 
             let exe_w = wide(&exe.to_string_lossy());
-            let args_w = wide("tray");
+            // `app`, not `tray`: clicking a launcher means "show me the app",
+            // so the manager window opens. The login item stays on `tray`.
+            let args_w = wide("app");
             let desc_w = wide(DESCRIPTION);
             let icon_w = wide(&icon.to_string_lossy());
             // Working directory: the user's home, not wherever this ran from.
@@ -245,10 +247,11 @@ mod platform {
 
         // A stub rather than a copy of the binary: an upgrade in place then
         // needs no re-install, and the bundle can't go stale against it.
+        // `app`, not `tray`: opening it from Launchpad means "show me the app".
         let stub = macos.join("Hypergate");
         std::fs::write(
             &stub,
-            format!("#!/bin/sh\nexec {} tray\n", shell_quote(&exe.to_string_lossy())),
+            format!("#!/bin/sh\nexec {} app\n", shell_quote(&exe.to_string_lossy())),
         )
         .map_err(|e| format!("could not write the launcher stub: {e}"))?;
         std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
@@ -315,14 +318,15 @@ mod platform {
             std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
         }
         // Exec fields are unquoted-with-escapes per the Desktop Entry spec, the
-        // same escaping the autostart entry uses.
+        // same escaping the autostart entry uses. `app`, not `tray`: launching
+        // from an app grid means "show me the app".
         let exec = exe.display().to_string().replace('\\', "\\\\").replace(' ', "\\ ");
         let contents = format!(
             "[Desktop Entry]\n\
              Type=Application\n\
              Name=Hypergate\n\
              Comment=Local-first runtime and gateway for MCP servers\n\
-             Exec={exec} tray\n\
+             Exec={exec} app\n\
              Icon=hypergate\n\
              Terminal=false\n\
              Categories=Development;Utility;\n\

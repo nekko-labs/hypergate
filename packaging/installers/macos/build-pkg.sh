@@ -33,10 +33,12 @@ chmod 755 "$APP/Contents/MacOS/hypergate" "$APP/Contents/MacOS/hypergated"
 # `web` sits beside hypergated because that is where the daemon looks: it
 # resolves the UI relative to process.execPath when it is a compiled binary.
 
-# An app bundle's executable takes no arguments, so a stub supplies `tray`.
+# An app bundle's executable takes no arguments, so a stub supplies `app`:
+# opening it from Launchpad/Finder means "show me the app", so the manager
+# window opens. The login item runs `tray` (headless) instead.
 cat > "$APP/Contents/MacOS/Hypergate" <<'STUB'
 #!/bin/sh
-exec "$(dirname "$0")/hypergate" tray
+exec "$(dirname "$0")/hypergate" app
 STUB
 chmod 755 "$APP/Contents/MacOS/Hypergate"
 
@@ -58,6 +60,16 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Code signing, when the workflow provides an identity. The two Mach-O binaries
+# arrive already signed (the workflow signs them with hardened runtime before
+# packaging); here the assembled bundle gets its seal, after Info.plist is
+# written, because the plist is part of what codesign seals. Unset means a
+# local unsigned build, unchanged.
+if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+  codesign --force --options runtime --timestamp \
+    --sign "$MACOS_SIGN_IDENTITY" "$APP"
+fi
 
 # The CLI on PATH. A relative symlink, so it keeps working if the bundle is
 # reinstalled and does not encode the build machine's layout.
@@ -93,10 +105,22 @@ cat > "$WORK/distribution.xml" <<DIST
 </installer-gui-script>
 DIST
 
-productbuild \
-  --distribution "$WORK/distribution.xml" \
-  --package-path "$WORK/pkg" \
-  --resources "$WORK/resources" \
-  "$OUTPUT"
+# Build unsigned, then productsign into place when an installer identity is
+# set. Distribution signing is a separate certificate (Developer ID Installer)
+# from app signing (Developer ID Application), hence the second variable.
+if [ -n "${MACOS_INSTALLER_IDENTITY:-}" ]; then
+  productbuild \
+    --distribution "$WORK/distribution.xml" \
+    --package-path "$WORK/pkg" \
+    --resources "$WORK/resources" \
+    "$WORK/unsigned.pkg"
+  productsign --sign "$MACOS_INSTALLER_IDENTITY" "$WORK/unsigned.pkg" "$OUTPUT"
+else
+  productbuild \
+    --distribution "$WORK/distribution.xml" \
+    --package-path "$WORK/pkg" \
+    --resources "$WORK/resources" \
+    "$OUTPUT"
+fi
 
 echo "Built $OUTPUT"

@@ -128,6 +128,15 @@ pub fn tray_icon() -> Result<Icon, String> {
     Icon::from_rgba(rgba(template), SIZE, SIZE).map_err(|e| format!("could not build the tray icon: {e}"))
 }
 
+/// The manager window's titlebar/taskbar icon. Bigger than the tray's 32px:
+/// Alt-Tab and the taskbar render at 48–64px, and scaling up a 32px mark
+/// looks soft where rendering at 64px stays crisp.
+pub fn window_icon() -> Result<tao::window::Icon, String> {
+    const WINDOW_SIZE: u32 = 64;
+    tao::window::Icon::from_rgba(rgba_at(WINDOW_SIZE, false), WINDOW_SIZE, WINDOW_SIZE)
+        .map_err(|e| format!("could not build the window icon: {e}"))
+}
+
 /// Sizes a Windows `.ico` should carry: 16 for the Start Menu list, 32 for the
 /// desktop, 48 for large icons, 256 for Explorer's extra-large view.
 const ICO_SIZES: [u32; 4] = [16, 32, 48, 256];

@@ -2,6 +2,7 @@
 //!
 //! One binary, several jobs, all of them thin:
 //!
+//!   • `hypergate app`          the desktop app (manager window + tray agent)
 //!   • `hypergate tray`         the per-user logon agent (tray icon + menu)
 //!   • `hypergate start|stop|…` a CLI over the daemon's existing HTTP API
 //!   • `hypergate add|call|…`   managing servers and driving the gateway
@@ -21,6 +22,7 @@ mod sandbox;
 mod secrets;
 mod shortcut;
 mod tray;
+mod window;
 
 use std::io::Read;
 use std::process::ExitCode;
@@ -42,6 +44,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Open the desktop app: the manager window plus the tray agent.
+    App,
     /// Run the tray agent in the foreground (what the login item launches).
     Tray,
     /// Start the daemon in the background if it is not already running.
@@ -242,8 +246,15 @@ fn main() -> ExitCode {
 
 fn dispatch(command: Command) -> Result<ExitCode, String> {
     match command {
+        // The same resident agent either way; `app` also opens the manager
+        // window up front, while `tray` stays headless (it's what the login
+        // item runs, and a window at every login would be noise).
+        Command::App => {
+            tray::run(true)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Tray => {
-            tray::run()?;
+            tray::run(false)?;
             Ok(ExitCode::SUCCESS)
         }
 
