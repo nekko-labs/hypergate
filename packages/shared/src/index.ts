@@ -378,6 +378,92 @@ export interface AgentClientInfo extends AgentClient {
 }
 
 /**
+ * Connecting an agent harness to the gateway.
+ *
+ * Every connection is one scoped agent token pointed at one client, so this all
+ * hangs off a connected agent rather than off the master token. A `cli` target
+ * we can wire up ourselves — the daemon runs the client's own `mcp add` command,
+ * shell-free, with an argv it built; a `config` target gets a snippet plus the
+ * path of the file to paste it into. Either way the UI also shows the exact
+ * command, quoted for the user's shell, so nothing is hidden behind the button.
+ */
+
+/** Shell whose quoting rules a copy-paste connect command should follow. */
+export type ConnectShell = 'powershell' | 'cmd' | 'bash';
+
+/** How a client gets connected: run its CLI, or paste a config snippet. */
+export type ConnectMethod = 'cli' | 'config';
+
+/** An agent harness the gateway can be connected to. Pure data. */
+export interface ConnectTarget {
+  id: string;
+  name: string;
+  method: ConnectMethod;
+  /** The executable to look for on PATH (`cli` targets). */
+  command?: string;
+  /** One-line description shown under the client's name. */
+  hint?: string;
+  homepage?: string;
+  /** How to install the CLI, shown when it isn't on PATH (`cli` targets). */
+  install?: string;
+}
+
+/** A target plus what this machine actually has. */
+export interface ConnectTargetStatus extends ConnectTarget {
+  /** `cli`: the command is on PATH. `config`: always true (it's just a file). */
+  found: boolean;
+  /** Version of the detected CLI, best-effort. */
+  version?: string;
+  /** Where this client keeps its MCP config (`config` targets), resolved for this OS. */
+  configPath?: string;
+}
+
+/** The detected clients on this machine, plus the shell to preselect. */
+export interface ConnectTargetsInfo {
+  platform: string;
+  defaultShell: ConnectShell;
+  shells: ConnectShell[];
+  targets: ConnectTargetStatus[];
+}
+
+/** A target with the connect material filled in for one agent's token. */
+export interface AgentConnectTarget extends ConnectTargetStatus {
+  /** The argv the daemon runs on one click (`cli` targets). */
+  argv?: string[];
+  /** The same command quoted per shell, for users who'd rather run it themselves. */
+  commands?: Record<ConnectShell, string>;
+  /** Config-file snippet to paste (`config` targets). */
+  snippet?: string;
+}
+
+/** `GET /api/clients/:id/connect` — everything needed to connect one agent. */
+export interface AgentConnectInfo extends ConnectTargetsInfo {
+  agentId: string;
+  /** The MCP entry name the client ends up with (constant, so re-connecting replaces it). */
+  entryName: string;
+  url: string;
+  targets: AgentConnectTarget[];
+}
+
+/** `POST /api/clients/:id/connect` — run a `cli` target's install for the user. */
+export interface ConnectRequest {
+  /** Id of the `cli` target to connect (see ConnectTarget.id). */
+  target: string;
+}
+
+/** Outcome of a one-click connect. */
+export interface ConnectResult {
+  ok: boolean;
+  target: string;
+  /** The command that ran, as a display string. */
+  command: string;
+  /** Combined stdout/stderr from the client's CLI, trimmed. */
+  output: string;
+  /** Why it failed, when it did. */
+  error?: string;
+}
+
+/**
  * Desktop/service preferences for the local daemon. Persisted in
  * `~/.hypergate/settings.json`. `runOnStartup` is backed by an OS autostart
  * entry (Windows: an HKCU `…\Run` value launching the tray hidden);

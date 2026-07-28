@@ -184,15 +184,15 @@ Everything is local, under `~/.hypergate/` (override with `HYPERGATE_DIR`):
 
 ### Use it from your agent
 
-One endpoint for all your servers. HTTP (recommended, the daemon keeps supervising):
+One endpoint for all your servers, and one place to connect one: **Connected agents** in the web UI. Pick your client and Hypergate wires it up — for Claude Code and the Gemini CLI it runs their own `mcp add` for you; for Cursor, VS Code, `.mcp.json` and Open Paw it hands you the snippet and the file it goes in. The exact command is always shown too, quoted for your shell, if you'd rather run it yourself:
 
 ```bash
-claude mcp add -t http hypergate http://localhost:7777/mcp -H "Authorization: Bearer <token>"
+claude mcp add -t http hypergate http://localhost:7777/mcp -H "Authorization: Bearer <token>" -s user
 ```
 
 or stdio: `{ "mcpServers": { "hypergate": { "command": "hypergated", "args": ["--stdio"] } } }`
 
-**Scoped agents.** The master token above sees every server. To hand a specific client a narrower token, add a **connected agent** in the UI (or `POST /api/clients`), pick which servers it may use, and give it that agent's token. It will only see and call the servers you allowed, and its calls show up under its name in Analytics.
+**Scoped agents.** Every connected agent has its own token and its own allow-list: pick which servers it may use (or all of them), and it will only see and call those. Its calls show up under its name in Analytics, and you can revoke it without touching anything else. The master token in the gateway bar always reaches every server — prefer an agent token for a real client. Same thing over the API: `POST /api/clients`, then `POST /api/clients/:id/connect`.
 
 **Kotrain** auto-detects a running daemon: Settings → MCP servers → **Connect gateway** (one click), plus an **Open manager** button that opens this UI in a workbench pane.
 
