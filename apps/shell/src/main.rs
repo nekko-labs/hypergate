@@ -50,8 +50,18 @@ enum Command {
     App,
     /// Run the tray agent in the foreground (what the login item launches).
     Tray,
-    /// Start the daemon in the background if it is not already running.
-    Start,
+    /// Turn Hypergate on: the daemon, a launcher on first run, and the manager.
+    Start {
+        /// Don't open the manager UI in a browser.
+        #[arg(long = "no-open")]
+        no_open: bool,
+        /// Don't create a launcher, even on the first run.
+        #[arg(long = "no-shortcut")]
+        no_shortcut: bool,
+        /// Also put an icon on the desktop (Windows), now and not just first run.
+        #[arg(long)]
+        desktop: bool,
+    },
     /// Stop a daemon started by this shell.
     Stop,
     /// Restart the daemon.
@@ -266,21 +276,17 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
 
-        Command::Start => {
-            if api::is_up() {
-                println!("Daemon already running at {}", paths::base_url());
-                return Ok(ExitCode::SUCCESS);
-            }
-            // Keychain first, so the daemon inherits HYPERGATE_TOKEN and never
-            // writes the token to disk in the clear.
-            let _ = secrets::adopt_gateway_token();
-            let pid = daemon::spawn_detached()?;
-            if daemon::wait_until_up(Duration::from_secs(20)) {
-                println!("Daemon started (pid {pid}) at {}", paths::base_url());
-                Ok(ExitCode::SUCCESS)
-            } else {
-                Err(format!("daemon (pid {pid}) did not answer /health within 20s"))
-            }
+        Command::Start {
+            no_open,
+            no_shortcut,
+            desktop,
+        } => {
+            commands::start(&commands::StartOptions {
+                open: !no_open,
+                shortcut: !no_shortcut,
+                desktop,
+            })?;
+            Ok(ExitCode::SUCCESS)
         }
 
         Command::Stop => {
@@ -341,6 +347,18 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
                         "disabled"
                     }
                 );
+                // From the daemon's cache, so `status` stays a local question.
+                // Stated either way: "how do I update this" should be
+                // answerable without knowing that `hypergate update` exists.
+                if let Ok(info) = api::update() {
+                    match info.latest.as_deref() {
+                        Some(latest) if info.update_available => {
+                            println!("Update    v{latest} available — run `hypergate update --apply`");
+                        }
+                        Some(_) => println!("Update    up to date ({} channel)", info.channel),
+                        None => println!("Update    run `hypergate update` to check"),
+                    }
+                }
                 Ok(ExitCode::SUCCESS)
             }
             Err(e) => {

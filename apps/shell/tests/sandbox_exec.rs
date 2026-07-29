@@ -163,6 +163,8 @@ fn help_lists_every_subcommand() {
         "logs",
         "open",
         "gateway",
+        "update",
+        "shortcut",
         "autostart",
         "secret",
         "sandbox-exec",

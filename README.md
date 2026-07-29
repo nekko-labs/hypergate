@@ -14,16 +14,27 @@
 
 ```bash
 npm install -g hypergated
-hypergate shortcut install --desktop   # a Start Menu entry and a desktop icon
 hypergate start
-hypergate open
 ```
+
+That's the whole setup. `hypergate start` brings the daemon up, creates a launcher to click next time (Start Menu, Launchpad, or your app menu; add `--desktop` for a desktop icon as well), and opens the manager in your browser. Run it as often as you like: the launcher is made once, so removing it later is final, and a daemon that is already up is left alone. `--no-open` and `--no-shortcut` turn off either half, and it skips both by itself on CI, over SSH, and on a Linux box with no display, so the same command is also the right one on a headless machine (`HYPERGATE_HEADLESS=1`/`0` overrides that guess).
 
 Either way you get two commands: `hypergate` (the CLI and tray agent, a prebuilt native binary for your platform) and `hypergated` (the daemon on its own, for headless boxes, WSL and containers). `npx hypergated` runs it without installing anything.
 
 For the npm route, Node 20+ is required and 22.5+ is recommended, because durable usage history and logs use the built-in `node:sqlite` and older runtimes fall back to in-memory analytics. The installers bundle a runtime that always has it. The package name is `hypergated` because `hypergate` on npm belongs to an unrelated project; the command you type is still `hypergate`.
 
 Every release also attaches the bare `hypergate` binaries, for scripting your own install.
+
+### Updating
+
+```bash
+hypergate update           # what you have, what's out, and what updating takes here
+hypergate update --apply   # install it and restart Hypergate
+```
+
+`hypergate status` reports the same thing, and the manager's topbar carries a **↑ v0.13.0** button when there is one, so you don't have to remember to ask.
+
+`--apply` is for npm installs, which are the ones a per-user agent can safely replace: it writes an updater to the temp directory, stops Hypergate so nothing being replaced is still running, runs `npm install -g hypergated@<version>`, starts the app again, and logs every step to `~/.hypergate/update.log`. Installed from a `.exe`/`.pkg`/`.deb` instead, or running from a checkout? Then `hypergate update` prints the exact command for that channel rather than half-doing it — the native installers aren't code-signed yet ([docs/signing.md](docs/signing.md)) and the Linux packages need root.
 
 ## Why
 Kotrain and Claude Code are MCP *clients*. Hypergate is the piece they need: a secure local *server runtime/manager*, a supervisor plus an aggregating gateway. Add servers from a catalog (or custom), pick how they're isolated, start them, and paste one URL/command into your agent.
@@ -125,10 +136,12 @@ The same binary is the CLI, talking to the daemon over its HTTP API. Everything 
 
 ```bash
 # the daemon
-hypergate start          # start the daemon in the background
-hypergate status         # daemon, servers, usage, keychain and autostart state
+hypergate start          # daemon + launcher + manager: the one command
+hypergate start --no-open --no-shortcut   # just the daemon, for scripts and servers
+hypergate status         # daemon, servers, usage, keychain, autostart and updates
 hypergate stop           # stop a daemon this shell started
 hypergate open           # the manager UI in your browser
+hypergate update         # check for a newer version (--apply installs it)
 
 # finding and adding servers
 hypergate catalog                    # the curated catalog (★ recommended, ✓ official)

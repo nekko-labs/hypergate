@@ -459,6 +459,113 @@ pub fn call(tool: &str, json_body: Option<&str>, pairs: &[String]) -> Result<boo
     Ok(!failed)
 }
 
+// ── `hypergate start`: the one command that turns Hypergate on ───────────────
+
+/// What `start` should do beyond bringing the daemon up.
+pub struct StartOptions {
+    /// Open the manager UI in a browser.
+    pub open: bool,
+    /// Create the launcher, if this is the first run.
+    pub shortcut: bool,
+    /// Also put an icon on the desktop, now rather than only on the first run.
+    pub desktop: bool,
+}
+
+/// Is this a machine where opening a browser or making a desktop icon is wrong?
+///
+/// Pure, with the environment injected, so every case is testable: setting real
+/// env vars in a test would race the other tests in the same process.
+///
+/// `HYPERGATE_HEADLESS` decides outright when it is set, because no heuristic
+/// covers every container, remote desktop and CI runner, and a user who is told
+/// "we guessed wrong" needs something to say back.
+pub fn is_headless(platform: &str, var: impl Fn(&str) -> Option<String>) -> bool {
+    match var("HYPERGATE_HEADLESS").as_deref() {
+        Some("1") => return true,
+        Some("0") => return false,
+        _ => {}
+    }
+    let set = |k: &str| var(k).is_some_and(|v| !v.is_empty());
+    // An SSH session or a CI runner has a user, but not one who can see a window.
+    if set("CI") || set("SSH_CONNECTION") || set("SSH_TTY") {
+        return true;
+    }
+    // Windows and macOS always have a session to draw on; Linux may not.
+    platform == "linux" && !set("DISPLAY") && !set("WAYLAND_DISPLAY")
+}
+
+/// `hypergate start`: bring the daemon up, and on a desktop make it usable in
+/// the same breath — a launcher to click next time, and the manager on screen.
+///
+/// This is the whole install story after `npm install -g hypergated`, which is
+/// why it does three things instead of one: a user who has just installed a
+/// manager wants to see it, not to be told the next two commands to type. The
+/// pieces stay available separately (`shortcut install`, `open`) and every one
+/// of them can be turned off here, so the scripted and headless uses that only
+/// want a daemon still get exactly that.
+pub fn start(opts: &StartOptions) -> Result<(), String> {
+    use std::time::Duration;
+
+    use crate::{daemon, paths, secrets, shortcut};
+
+    let headless = is_headless(std::env::consts::OS, |k| std::env::var(k).ok());
+
+    // 1. The daemon. Keychain first, so it inherits HYPERGATE_TOKEN and never
+    //    writes the token to disk in the clear.
+    if api::is_up() {
+        println!("Daemon    already running at {}", paths::base_url());
+    } else {
+        let _ = secrets::adopt_gateway_token();
+        let pid = daemon::spawn_detached()?;
+        if !daemon::wait_until_up(Duration::from_secs(20)) {
+            return Err(format!("daemon (pid {pid}) did not answer /health within 20s"));
+        }
+        println!("Daemon    started (pid {pid}) at {}", paths::base_url());
+    }
+
+    // 2. The launcher. Once, unless asked again: someone who deleted the icon
+    //    on purpose should not find it back after the next start.
+    if opts.shortcut && !headless {
+        let made = if opts.desktop {
+            shortcut::install(true)
+        } else {
+            shortcut::install_once(false)
+        };
+        match made {
+            Ok(paths) if paths.is_empty() => {}
+            Ok(paths) => {
+                for path in &paths {
+                    println!("Launcher  {}", path.display());
+                }
+            }
+            // Never fatal: the daemon is up, which is what was asked for.
+            Err(e) => println!("Launcher  could not be created ({e})"),
+        }
+    }
+
+    // 3. The manager.
+    let url = api::ui_url();
+    if opts.open && !headless {
+        match open::that_detached(&url) {
+            Ok(()) => println!("Manager   opened at {url}"),
+            Err(e) => println!("Manager   {url}  (couldn't open a browser: {e})"),
+        }
+    } else {
+        println!("Manager   {url}");
+    }
+
+    // 4. Whatever the daemon already knew about updates. Cached by definition:
+    //    `/api/update` never fetches, so this cannot slow a start down or make
+    //    one fail on a machine with no network.
+    if let Ok(info) = api::update()
+        && info.update_available
+        && let Some(latest) = info.latest.as_deref()
+    {
+        println!("Update    v{latest} available — run `hypergate update --apply`");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,6 +593,41 @@ mod tests {
 
     fn no_env(_: &str) -> Option<String> {
         None
+    }
+
+    /// An environment built from pairs, for the headless heuristic.
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k: &str| pairs.iter().find(|(key, _)| *key == k).map(|(_, v)| (*v).to_string())
+    }
+
+    #[test]
+    fn a_desktop_is_not_headless_but_ci_and_ssh_are() {
+        for os in ["windows", "macos"] {
+            assert!(!is_headless(os, no_env), "{os} always has a session to draw on");
+        }
+        assert!(is_headless("linux", no_env), "no DISPLAY, no window");
+        assert!(!is_headless("linux", env(&[("DISPLAY", ":0")])));
+        assert!(!is_headless("linux", env(&[("WAYLAND_DISPLAY", "wayland-0")])));
+
+        for remote in ["CI", "SSH_CONNECTION", "SSH_TTY"] {
+            assert!(is_headless("windows", env(&[(remote, "1")])), "{remote}");
+            // Even with a display: an X server on the far end of an SSH session
+            // is not somewhere to pop a browser tab.
+            assert!(
+                is_headless("linux", env(&[(remote, "1"), ("DISPLAY", ":0")])),
+                "{remote}"
+            );
+        }
+        // An empty value is how CI vars often arrive when they mean "not set".
+        assert!(!is_headless("macos", env(&[("CI", "")])));
+    }
+
+    #[test]
+    fn the_headless_override_wins_in_both_directions() {
+        assert!(is_headless("macos", env(&[("HYPERGATE_HEADLESS", "1")])));
+        assert!(!is_headless("linux", env(&[("HYPERGATE_HEADLESS", "0"), ("CI", "1")])));
+        // Anything else is not an answer, so the heuristic still decides.
+        assert!(is_headless("linux", env(&[("HYPERGATE_HEADLESS", "yes")])));
     }
 
     #[test]

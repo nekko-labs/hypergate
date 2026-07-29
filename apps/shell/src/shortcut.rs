@@ -36,6 +36,29 @@ pub fn install(desktop: bool) -> Result<Vec<PathBuf>, String> {
     platform::install(desktop)
 }
 
+/// A stamp recording that the launchers have been created once already.
+///
+/// Existence of the launcher itself is the wrong test: someone who ran
+/// `shortcut uninstall`, or dragged the icon to the bin, has expressed a
+/// preference, and `hypergate start` putting it back every time would be a bug.
+fn first_run_stamp() -> PathBuf {
+    crate::paths::data_dir().join("launcher.stamp")
+}
+
+/// Create the launchers the first time only, and report what was created.
+/// Returns an empty list, not an error, when it has run before.
+pub fn install_once(desktop: bool) -> Result<Vec<PathBuf>, String> {
+    let stamp = first_run_stamp();
+    if stamp.exists() {
+        return Ok(Vec::new());
+    }
+    // Written before the attempt, deliberately: a platform where this cannot
+    // work (no COM, a read-only home) must not retry on every single start.
+    let _ = std::fs::create_dir_all(crate::paths::data_dir());
+    let _ = std::fs::write(&stamp, "created by `hypergate start`\n");
+    install(desktop)
+}
+
 pub fn uninstall() -> Result<Vec<PathBuf>, String> {
     let mut removed = Vec::new();
     for entry in platform::entries(true)? {
