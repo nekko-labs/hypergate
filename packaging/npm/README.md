@@ -8,7 +8,10 @@
 
 ```bash
 npm install -g hypergated
+hypergate start
 ```
+
+`hypergate start` is the whole setup: the daemon comes up in the background, you get a launcher to click next time (add `--desktop` for a desktop icon too), and the manager opens in your browser. `--no-open` and `--no-shortcut` turn either half off, and both are skipped automatically on CI, over SSH and on a display-less Linux box.
 
 That gives you two commands:
 
@@ -24,7 +27,7 @@ npx hypergated
 ## Use
 
 ```bash
-hypergate start                 # start the daemon in the background
+hypergate start                 # daemon + launcher + manager, all at once
 hypergate catalog               # browse servers you can add
 hypergate add context7          # add one (browser sign-in where needed)
 hypergate list                  # what's running
@@ -35,6 +38,15 @@ hypergate open                  # the manager UI in your browser
 hypergate tray                  # run it as a desktop tray app
 hypergate autostart on          # start at login
 ```
+
+## Updating
+
+```bash
+hypergate update                # what you have, what's out
+hypergate update --apply        # install it and restart Hypergate
+```
+
+`--apply` stops Hypergate, runs `npm install -g hypergated@<version>`, starts it again, and logs the lot to `~/.hypergate/update.log`. `hypergate status` and the manager's topbar both tell you when there's something to take.
 
 Point an agent at the gateway:
 

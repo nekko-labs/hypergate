@@ -120,9 +120,12 @@ const down = hg(['status']);
 if (!down.includes('not running')) fail(`status before start said: ${down}`);
 ok('status reports honestly with no daemon running');
 
-const started = hg(['start']);
+// --no-open --no-shortcut: `start` is the one-command setup, and a smoke test
+// must not open a browser tab or leave a Start Menu entry on the machine that
+// runs it. The headless guard would catch this on CI; it would not run locally.
+const started = hg(['start', '--no-open', '--no-shortcut']);
 if (!started.includes(String(PORT))) fail(`start said: ${started}`);
-ok(`daemon started by the installed CLI (${started})`);
+ok(`daemon started by the installed CLI (${started.split('\n')[0]})`);
 
 const status = hg(['status']);
 if (!status.includes('running')) fail(`status said: ${status}`);

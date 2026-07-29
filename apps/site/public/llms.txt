@@ -17,8 +17,9 @@ Hypergate is not a connector directory: it is a proper server runtime. Add serve
 ## Install
 
 - **Installers** (nothing else required, not even Node): `-setup.exe` for Windows, `.pkg` for macOS, `.deb`/`.rpm`/tarball for Linux, x64 and arm64, from the [latest release](https://github.com/nekko-labs/hypergate/releases). Per-user install, no admin prompt.
-- **npm** (Node 20+, 22.5+ recommended for durable analytics): `npm install -g hypergated`, then `hypergate start` and `hypergate open`. `npx hypergated` runs it without installing.
+- **npm** (Node 20+, 22.5+ recommended for durable analytics): `npm install -g hypergated`, then `hypergate start`. Two lines, and the second one is the whole setup: it starts the daemon, creates a launcher, and opens the manager. `--no-open`/`--no-shortcut` turn either half off, and both are skipped automatically on CI, over SSH, and on a Linux box with no display. `npx hypergated` runs it without installing.
 - **Two commands**: `hypergate` (CLI and tray agent) and `hypergated` (the daemon alone, for headless boxes, WSL, and containers). The npm package is named `hypergated` because `hypergate` on npm belongs to an unrelated project; the command you type is still `hypergate`.
+- **Updating**: `hypergate update` reports what is installed and what is available; `hypergate update --apply` installs it and restarts Hypergate (npm installs; other channels are given the exact command). `hypergate status` and the manager's topbar surface it too.
 
 ## Pages
 
