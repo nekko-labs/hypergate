@@ -121,6 +121,56 @@ pub struct UpdateInfo {
     pub release_url: Option<String>,
 }
 
+/// What the manager window's close button should do.
+///
+/// `Ask` is the first-run state: we put the question in the window rather than
+/// guessing, because one answer throws away a running gateway and the other
+/// leaves it running when the user meant to stop it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CloseAction {
+    #[default]
+    Ask,
+    Tray,
+    Quit,
+}
+
+impl CloseAction {
+    fn parse(s: &str) -> Self {
+        match s {
+            "tray" => Self::Tray,
+            "quit" => Self::Quit,
+            _ => Self::Ask,
+        }
+    }
+}
+
+/// `/api/settings`. Only the fields the shell acts on; the daemon owns the rest.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Settings {
+    #[serde(default)]
+    pub close_action: String,
+    #[serde(default)]
+    pub start_minimized: bool,
+}
+
+/// The close-button preference, or `Ask` when the daemon can't be reached — the
+/// safe default, since asking never destroys anything.
+pub fn close_action() -> CloseAction {
+    get::<Settings>("/api/settings")
+        .map(|s| CloseAction::parse(&s.close_action))
+        .unwrap_or_default()
+}
+
+/// Should a login-time launch stay in the tray rather than open the manager?
+/// Defaults to yes: a window appearing unbidden at every sign-in is the worse
+/// thing to do when we cannot ask.
+pub fn start_minimized() -> bool {
+    get::<Settings>("/api/settings")
+        .map(|s| s.start_minimized)
+        .unwrap_or(true)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Analytics {

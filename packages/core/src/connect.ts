@@ -8,12 +8,20 @@ import type {
 /**
  * Connecting an agent harness to the gateway.
  *
- * One scoped agent token, one client. For a `cli` target we know the client's
- * own `mcp add` invocation, so the daemon can run it — argv built here, never a
- * shell string, never anything the user typed. For a `config` target we produce
- * the snippet and say which file it belongs in. Both paths also render the
- * command/snippet for the user's shell, so the one-click button is a shortcut
- * for something visible rather than a black box.
+ * This table is also the **agent catalog**: the list "+ Add agent" offers, so
+ * picking a harness and connecting it are one decision instead of two. An agent
+ * created from here is that product — its name is the product's name and it has
+ * exactly one way in, its own — which is why the UI never shows a strip of every
+ * other client underneath it.
+ *
+ * Three ways in, in descending order of how little the user has to do:
+ *   • `cli`    — we know the client's own `mcp add` invocation, so the daemon can
+ *                run it. Argv is built here, never a shell string, never anything
+ *                the user typed. Most also carry a snippet, so a machine without
+ *                the CLI installed isn't a dead end.
+ *   • `config` — a config file we can name, and the exact text to put in it.
+ *   • `manual` — the client keeps its MCP list in a UI (or in the cloud), so we
+ *                hand over the endpoint, the token, and where to paste them.
  *
  * Pure data + string building; the daemon does the PATH lookup and the spawn.
  */
@@ -28,57 +36,105 @@ export const CONNECT_TARGETS: ConnectTarget[] = [
     name: 'Claude Code',
     method: 'cli',
     command: 'claude',
+    blurb: "Anthropic's terminal coding agent.",
     hint: 'Registered in the user scope, so the gateway is there in every project.',
     homepage: 'https://docs.anthropic.com/en/docs/claude-code',
     install: 'npm i -g @anthropic-ai/claude-code',
+  },
+  {
+    id: 'cursor',
+    name: 'Cursor',
+    method: 'config',
+    blurb: 'The AI code editor.',
+    hint: 'Cursor picks the file up without a restart.',
+    homepage: 'https://docs.cursor.com/context/model-context-protocol',
+  },
+  {
+    id: 'kotrain',
+    name: 'Kotrain',
+    method: 'config',
+    blurb: 'Local-first AI chat, cowork and coding in one window (Nekko Labs).',
+    hint: 'Or add it in Kotrain: Settings → MCP servers → add an HTTP server.',
+    homepage: 'https://kotrain.com',
+  },
+  {
+    id: 'openclaw',
+    name: 'OpenClaw',
+    method: 'cli',
+    command: 'openclaw',
+    blurb: 'Open-source agent runtime with per-agent tool routing.',
+    hint: 'Added to the global server list; per-agent routing can narrow it later.',
+    homepage: 'https://docs.openclaw.ai/cli/mcp',
   },
   {
     id: 'gemini-cli',
     name: 'Gemini CLI',
     method: 'cli',
     command: 'gemini',
+    blurb: "Google's terminal agent.",
     hint: 'Registered in the user scope of the Gemini CLI.',
     homepage: 'https://github.com/google-gemini/gemini-cli',
     install: 'npm i -g @google/gemini-cli',
   },
   {
-    id: 'openpaw',
-    name: 'Open Paw',
+    id: 'hermes',
+    name: 'Hermes',
     method: 'config',
-    hint: 'Nothing to paste — Open Paw finds the daemon itself.',
-    homepage: 'https://github.com/nekko-labs/open-paw',
-  },
-  {
-    id: 'mcp-json',
-    name: '.mcp.json',
-    method: 'config',
-    hint: 'The portable format — Claude Code project scope, Codex, and most harnesses read it.',
-  },
-  {
-    id: 'cursor',
-    name: 'Cursor',
-    method: 'config',
-    hint: 'Cursor picks the file up without a restart.',
-    homepage: 'https://docs.cursor.com/context/model-context-protocol',
+    blurb: "Nous Research's agent — YAML config, HTTP MCP servers.",
+    hint: 'Hermes reads its MCP servers from YAML; merge this under `mcp_servers`.',
+    homepage: 'https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp',
   },
   {
     id: 'vscode',
     name: 'VS Code',
     method: 'config',
+    blurb: 'Copilot Chat in VS Code.',
     hint: 'Copilot Chat reads MCP servers from this file.',
     homepage: 'https://code.visualstudio.com/docs/copilot/chat/mcp-servers',
+  },
+  {
+    id: 'mcp-json',
+    name: '.mcp.json',
+    method: 'config',
+    blurb: 'The portable file most harnesses read — Codex, Windsurf, Zed, and more.',
+    hint: 'The portable format — Claude Code project scope, Codex, and most harnesses read it.',
+  },
+  {
+    id: 'odysseus',
+    name: 'Odysseus',
+    method: 'manual',
+    blurb: 'Self-hosted AI workspace: chat, agent, research.',
+    hint: 'Odysseus manages MCP servers from its admin UI, so add the endpoint there.',
+    homepage: 'https://github.com/nekko-labs/odysseus',
+  },
+  {
+    id: 'devin',
+    name: 'Devin',
+    method: 'manual',
+    blurb: "Cognition's cloud software engineer.",
+    hint: 'Settings → Connections → MCP servers → Add a custom MCP, transport HTTP.',
+    // Worth saying before someone spends ten minutes on it: Devin's VM is not
+    // on this machine, so `localhost:7777` means *its* localhost, not yours.
+    note: 'Devin runs in the cloud and cannot reach a localhost gateway. Expose Hypergate on a public URL (a tunnel or a reachable host) first, then use that URL below.',
+    homepage: 'https://docs.devin.ai/work-with-devin/mcp',
   },
 ];
 
 export const connectTarget = (id: string): ConnectTarget | undefined => CONNECT_TARGETS.find((t) => t.id === id);
 
-/** Where a `config` client keeps its MCP config on this platform. `~` stays symbolic. */
+/** Where a client keeps its MCP config on this platform. `~` stays symbolic. */
 export const configPathFor = (id: string, platform: string): string | undefined => {
   switch (id) {
     case 'mcp-json':
       return '<your project>/.mcp.json';
     case 'cursor':
       return '~/.cursor/mcp.json';
+    case 'kotrain':
+      return '~/.kotrain/settings.json';
+    case 'openclaw':
+      return '~/.openclaw/openclaw.json';
+    case 'hermes':
+      return '~/.hermes/config.yaml';
     case 'vscode':
       return platform === 'win32'
         ? '%APPDATA%\\Code\\User\\mcp.json'
@@ -128,23 +184,69 @@ export const connectArgv = (id: string, ctx: ConnectContext): { add: string[]; r
           '--header', authHeader(ctx.token), '--scope', 'user',
         ],
       };
+    case 'openclaw':
+      return {
+        reset: ['mcp', 'remove', ENTRY_NAME],
+        add: [
+          'mcp', 'add', ENTRY_NAME, '--url', ctx.url,
+          '--transport', 'streamable-http', '--header', authHeader(ctx.token),
+        ],
+      };
     default:
       return undefined;
   }
 };
 
-/** The config snippet a `config` client wants, ready to paste. */
+/**
+ * The config text a client wants, ready to paste.
+ *
+ * `cli` clients get one too where the format is known: the button is the happy
+ * path, not the only path, and a machine without the CLI on it should still have
+ * something to copy.
+ */
 export const connectSnippet = (id: string, ctx: ConnectContext): string | undefined => {
   const headers = { Authorization: `Bearer ${ctx.token}` };
   switch (id) {
     case 'mcp-json':
+    case 'claude-code':
+    case 'gemini-cli':
       return JSON.stringify({ mcpServers: { [ENTRY_NAME]: { type: 'http', url: ctx.url, headers } } }, null, 2);
     case 'cursor':
       return JSON.stringify({ mcpServers: { [ENTRY_NAME]: { url: ctx.url, headers } } }, null, 2);
     case 'vscode':
       return JSON.stringify({ servers: { [ENTRY_NAME]: { type: 'http', url: ctx.url, headers } } }, null, 2);
-    case 'openpaw':
-      return 'Settings → MCP servers → "Connect Hypergate gateway".\nOpen Paw discovers the daemon on localhost and uses this agent\'s token.';
+    case 'openclaw':
+      return JSON.stringify(
+        {
+          mcp: {
+            servers: { [ENTRY_NAME]: { url: ctx.url, transport: 'streamable-http', headers } },
+          },
+        },
+        null,
+        2,
+      );
+    // Kotrain's mcpServers is an array of configs, each carrying its own bearer
+    // token rather than a headers map — its own shape, not the portable one.
+    case 'kotrain':
+      return JSON.stringify(
+        {
+          mcpServers: [
+            { id: ENTRY_NAME, name: 'Hypergate', command: '', args: [], url: ctx.url, token: ctx.token, enabled: true },
+          ],
+        },
+        null,
+        2,
+      );
+    // Hermes is the one YAML client we know; hand-built (no YAML dep in core),
+    // and every value is quoted so a token starting with a digit stays a string.
+    case 'hermes':
+      return [
+        'mcp_servers:',
+        `  ${ENTRY_NAME}:`,
+        `    url: "${ctx.url}"`,
+        '    headers:',
+        `      Authorization: "Bearer ${ctx.token}"`,
+      ].join('\n');
     default:
       return undefined;
   }
@@ -186,13 +288,16 @@ export const formatCommands = (command: string, argv: string[]): Record<ConnectS
 
 /**
  * Fill a detected target in with one agent's connect material: the argv we'd
- * run, that command quoted per shell, or the config snippet to paste.
+ * run, that command quoted per shell, the config snippet to paste, or — for a
+ * `manual` client — the endpoint and token to type into its settings.
  */
 export const agentConnectTarget = (status: ConnectTargetStatus, ctx: ConnectContext): AgentConnectTarget => {
+  const snippet = connectSnippet(status.id, ctx);
+  if (status.method === 'manual') return { ...status, token: ctx.token, snippet };
   if (status.method === 'cli') {
     const argv = connectArgv(status.id, ctx);
-    if (!argv) return status;
-    return { ...status, argv: argv.add, commands: formatCommands(status.command ?? status.id, argv.add) };
+    if (!argv) return { ...status, snippet };
+    return { ...status, argv: argv.add, commands: formatCommands(status.command ?? status.id, argv.add), snippet };
   }
-  return { ...status, snippet: connectSnippet(status.id, ctx) };
+  return { ...status, snippet };
 };

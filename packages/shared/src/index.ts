@@ -108,6 +108,31 @@ export interface ToolInfo {
   inputSchema?: unknown;
 }
 
+/**
+ * Who a signed-in remote server is signed in *as*.
+ *
+ * A remote MCP server is reached with one account's grant, and which account
+ * that is decides what the agent can see — so it belongs on the server row next
+ * to the state, not buried in a token blob. Derived locally from the grant's own
+ * claims (an `id_token`, or a JWT access token) and, only when those carry no
+ * identity, from the provider's OpenID `userinfo` endpoint.
+ *
+ * Never includes the token itself.
+ */
+export interface ServerAccount {
+  /** What to show: an email, a username, or (last resort) the subject id. */
+  label: string;
+  email?: string;
+  /** Human display name, when the claims carry one. */
+  name?: string;
+  /** Stable account id (`sub`), when known. */
+  subject?: string;
+  /** Organisation / tenant / workspace the grant is scoped to, when named. */
+  org?: string;
+  /** Where the identity came from, so the UI can be honest about it. */
+  source: 'id_token' | 'access_token' | 'userinfo';
+}
+
 /** Runtime status the API/UI shows. Never includes secrets. */
 export interface ServerStatus {
   id: string;
@@ -132,6 +157,18 @@ export interface ServerStatus {
    * only transiently, right after an OAuth flow is (re)started for this server.
    */
   authUrl?: string;
+  /**
+   * The account this server's stored grant belongs to (remote + OAuth only).
+   * Absent when the server needs no login, isn't signed in, or the provider
+   * gave us nothing to identify the account with.
+   */
+  account?: ServerAccount;
+  /**
+   * This server holds a live OAuth grant. Distinguishes "signed in, but the
+   * provider won't say as whom" from "no sign-in involved at all", which
+   * `account` alone cannot.
+   */
+  signedIn?: boolean;
 }
 
 /** A curated/known server users can add in one click. */
@@ -353,12 +390,24 @@ export interface AgentClient {
   createdAt: string;
   /** Last time a call was attributed to this agent's token. */
   lastUsed?: string;
+  /**
+   * The known harness this agent *is* (a {@link ConnectTarget} id), when it was
+   * created from the catalog rather than by hand.
+   *
+   * This is what makes an agent "official": its name is the product's name, so
+   * it is not the user's to rename, and it has exactly one way to be connected
+   * — the client's own. A custom agent has no target: the user named it, and
+   * picks a client when they connect it.
+   */
+  target?: string;
 }
 
 /** Request body to create an agent. */
 export interface CreateAgentRequest {
   name: string;
   servers: '*' | string[];
+  /** Known harness this agent is for (a {@link ConnectTarget} id), if any. */
+  target?: string;
 }
 
 /** Request body to update an agent (partial). */
@@ -404,8 +453,12 @@ export interface AgentClientInfo extends AgentClient {
 /** Shell whose quoting rules a copy-paste connect command should follow. */
 export type ConnectShell = 'powershell' | 'cmd' | 'bash';
 
-/** How a client gets connected: run its CLI, or paste a config snippet. */
-export type ConnectMethod = 'cli' | 'config';
+/**
+ * How a client gets connected: run its CLI, paste a config snippet, or add the
+ * endpoint by hand in the client's own settings (`manual` — a cloud agent or an
+ * app whose MCP list lives in a UI, not a file we can name).
+ */
+export type ConnectMethod = 'cli' | 'config' | 'manual';
 
 /** An agent harness the gateway can be connected to. Pure data. */
 export interface ConnectTarget {
@@ -419,15 +472,19 @@ export interface ConnectTarget {
   homepage?: string;
   /** How to install the CLI, shown when it isn't on PATH (`cli` targets). */
   install?: string;
+  /** What this agent *is*, one line, for the "add an agent" picker. */
+  blurb?: string;
+  /** A caveat worth stating up front (e.g. a cloud agent that can't see localhost). */
+  note?: string;
 }
 
 /** A target plus what this machine actually has. */
 export interface ConnectTargetStatus extends ConnectTarget {
-  /** `cli`: the command is on PATH. `config`: always true (it's just a file). */
+  /** `cli`: the command is on PATH. `config`/`manual`: always true (nothing to detect). */
   found: boolean;
   /** Version of the detected CLI, best-effort. */
   version?: string;
-  /** Where this client keeps its MCP config (`config` targets), resolved for this OS. */
+  /** Where this client keeps its MCP config, resolved for this OS, when it is a file. */
   configPath?: string;
 }
 
@@ -445,8 +502,14 @@ export interface AgentConnectTarget extends ConnectTargetStatus {
   argv?: string[];
   /** The same command quoted per shell, for users who'd rather run it themselves. */
   commands?: Record<ConnectShell, string>;
-  /** Config-file snippet to paste (`config` targets). */
+  /**
+   * Config-file snippet to paste. Present for `config` targets, and also for a
+   * `cli` target whose config format we know — so someone without the CLI
+   * installed still has a way in rather than a dead end.
+   */
   snippet?: string;
+  /** The bearer token to paste into a `manual` client's settings form. */
+  token?: string;
 }
 
 /** `GET /api/clients/:id/connect` — everything needed to connect one agent. */
@@ -455,6 +518,8 @@ export interface AgentConnectInfo extends ConnectTargetsInfo {
   /** The MCP entry name the client ends up with (constant, so re-connecting replaces it). */
   entryName: string;
   url: string;
+  /** The agent's own harness, when it has one — the only target worth showing. */
+  target?: string;
   targets: AgentConnectTarget[];
 }
 
@@ -477,31 +542,53 @@ export interface ConnectResult {
 }
 
 /**
+ * What the manager window's close button does.
+ *
+ * `tray` keeps Hypergate resident (the window goes away, the gateway and every
+ * managed server stay up); `quit` takes the whole thing down. `ask` is the
+ * first-run state: the shell shows the choice in the window the first time it is
+ * closed and records the answer here, because guessing wrong either kills a
+ * user's running servers or leaves them running when they meant to stop.
+ */
+export type CloseAction = 'ask' | 'tray' | 'quit';
+
+/**
  * Desktop/service preferences for the local daemon. Persisted in
- * `~/.hypergate/settings.json`. `runOnStartup` is backed by an OS autostart
- * entry (Windows: an HKCU `…\Run` value launching the tray hidden);
- * `startMinimized` is read by the tray launcher to decide whether to open the
- * manager UI on launch or just sit in the notification area.
+ * `~/.hypergate/settings.json`. `runOnStartup` is backed by a real OS autostart
+ * entry (Windows: an HKCU `…\Run` value; macOS: a LaunchAgent; Linux: an XDG
+ * autostart entry); `startMinimized` is read by the tray launcher to decide
+ * whether to open the manager UI on launch or just sit in the notification area.
  */
 export interface DaemonSettings {
   /** Launch Hypergate automatically when the user signs in. */
   runOnStartup: boolean;
   /** Stay in the tray on launch instead of opening the manager UI. */
   startMinimized: boolean;
+  /** What the manager window's close button does. Defaults to `ask` (first run). */
+  closeAction: CloseAction;
 }
 
 /** `/api/settings` payload: the settings plus what this platform can actually do. */
 export interface SettingsInfo extends DaemonSettings {
   /** Host platform, e.g. `win32` / `darwin` / `linux`. */
   platform: string;
-  /** Whether OS autostart integration is wired up on this platform (Windows for now). */
+  /** Whether OS autostart integration works on this platform. */
   startupSupported: boolean;
+  /**
+   * How the login item is (or would be) installed: `shell` = delegated to the
+   * `hypergate` binary, `daemon` = written by the daemon itself, `none` = not
+   * available here. Surfaced so the UI can say what it will actually launch.
+   */
+  startupVia: 'shell' | 'daemon' | 'none';
+  /** The command the login item runs, when autostart is available. */
+  startupCommand?: string;
 }
 
 /** Request body to update settings (partial). */
 export interface UpdateSettingsRequest {
   runOnStartup?: boolean;
   startMinimized?: boolean;
+  closeAction?: CloseAction;
 }
 
 /**

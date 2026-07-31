@@ -123,6 +123,22 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
   .verbox .vb-check { opacity: 1; pointer-events: auto; }
 }
 
+/* Server health + the one control that changes it. Same reveal-on-hover rule as
+   the update check: the state is always visible, the button that ends the
+   session is not, until you reach for it (and always is, on touch). */
+.healthbox { display: inline-flex; align-items: center; gap: 7px; }
+.healthbox .hb-stop {
+  opacity: 0; pointer-events: none; transition: opacity .12s;
+  white-space: nowrap; padding: 2px 8px; font-size: 11.5px;
+}
+.healthbox:hover .hb-stop, .healthbox:focus-within .hb-stop { opacity: 1; pointer-events: auto; }
+.healthbox .hb-actions { display: inline-flex; align-items: center; gap: 5px; }
+.healthbox .hb-actions .btn { padding: 2px 9px; font-size: 11.5px; }
+.healthbox .hb-err { color: var(--danger); white-space: nowrap; }
+@media (hover: none) {
+  .healthbox .hb-stop { opacity: 1; pointer-events: auto; }
+}
+
 /* theme switch */
 .themeswitch { display: inline-flex; gap: 1px; background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px; }
 .themeswitch button {
@@ -223,16 +239,17 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .chip-accent { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 /* Official / verified-publisher chip (green, like the ready pill) */
 .chip-official { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); border-color: color-mix(in srgb, var(--success) 32%, transparent); font-weight: 600; }
+/* Who a signed-in remote server is signed in as. Tinted like the OAuth state it
+   belongs to, so "connected" and "as whom" read as one fact. */
+.chip-account {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* Recommended star, before a catalog entry's name */
 .rec-star { color: var(--warning); font-size: 14px; line-height: 1; flex: none; }
 /* Ad-hoc CLI availability-check row sits atop the known list, subtly set apart */
 .cli-check { background: var(--paper-2); }
-
-/* ── tabs (gateway snippets) ────────────────────────────────────────────── */
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
-.tab { border: none; background: none; color: var(--ink-3); font-size: 12.5px; font-weight: 500; padding: 6px 11px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; font-family: inherit; }
-.tab:hover { color: var(--ink-2); }
-.tab.active { color: var(--ink); border-bottom-color: var(--accent); }
 
 pre.snippet, pre.logs {
   background: var(--paper); border: 1px solid var(--line); color: var(--ink-2);
@@ -301,26 +318,57 @@ pre.logs { max-height: 220px; }
 .perm-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 0; border-top: 1px solid var(--line); }
 .perm-toggle-row:first-of-type { border-top: none; }
 
-/* Quick connect: the empty state's one-click grid of clients on this machine. */
-.qc-grid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 16px auto 0; max-width: 560px; }
-.qc {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 132px;
+/* The agent catalog: "which agent are you connecting?", asked before anything
+   else, because the answer is both the agent's name and its only way in. */
+.agent-picker { text-align: left; }
+.empty .agent-picker { margin-top: 16px; }
+.empty-pick { text-align: center; }
+.empty-pick .agent-picker .row { justify-content: center; text-align: center; }
+.ag-grid {
+  display: grid; gap: 9px; margin-top: 13px;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+}
+.ag-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
   border: 1px solid var(--line-2); background: var(--card-2); color: var(--ink-2);
-  border-radius: 11px; padding: 9px 13px; cursor: pointer; font-family: inherit; text-align: left;
+  border-radius: 12px; padding: 11px 13px; cursor: pointer; font-family: inherit; text-align: left;
   transition: border-color .12s, background .12s, transform .06s;
 }
-.qc:hover { border-color: var(--ink-3); background: var(--card); }
-.qc:active { transform: translateY(1px); }
-.qc .qc-name { font-weight: 600; font-size: 13.5px; color: var(--ink); letter-spacing: -0.2px; }
-.qc .qc-state { color: var(--ink-3); font-size: 11.5px; }
+.ag-card:hover { border-color: var(--ink-3); background: var(--card); }
+.ag-card:active { transform: translateY(1px); }
+.ag-card:disabled { opacity: .6; cursor: default; }
+.ag-card .ag-name { font-weight: 600; font-size: 13.5px; color: var(--ink); letter-spacing: -0.2px; display: inline-flex; align-items: center; gap: 6px; }
+.ag-card .ag-blurb { line-height: 1.35; }
+.ag-card .ag-state { color: var(--ink-3); font-size: 11.5px; margin-top: 2px; }
+.ag-card .ag-tick { color: var(--success); font-size: 11.5px; }
 /* An installed CLI is the one-click path — say so before the click. */
-.qc-found { border-color: color-mix(in srgb, var(--accent) 34%, transparent); background: color-mix(in srgb, var(--accent) 11%, var(--card-2)); }
-.qc-found:hover { border-color: var(--accent); }
-.qc-found .qc-state { color: var(--accent); }
+.ag-found { border-color: color-mix(in srgb, var(--accent) 34%, transparent); background: color-mix(in srgb, var(--accent) 11%, var(--card-2)); }
+.ag-found:hover { border-color: var(--accent); }
+.ag-found .ag-state { color: var(--accent); }
+.ag-added { border-style: dashed; }
+.ag-custom { border-style: dashed; }
 
-/* Per-agent connect panel (client tabs → one-click install or snippet). */
+/* A custom agent's name is edited where it is shown; there is no Edit button. */
+.agent-name-input {
+  font-weight: 600; font-size: 14px; letter-spacing: -0.2px; font-family: inherit;
+  padding: 2px 7px; border-radius: 8px; min-width: 90px; max-width: 260px;
+  background: transparent; border: 1px solid transparent; color: var(--ink);
+}
+.agent-name-input:hover { border-color: var(--line-2); background: var(--card-2); }
+.agent-name-input:focus { border-color: var(--accent); background: var(--paper); outline: none; }
+.agent-name-input.bad { border-color: var(--danger); }
+
+/* Per-agent connect panel: one client's own way in (no tab strip of the rest). */
 .connect-panel { margin-top: 11px; border: 1px solid var(--line); border-radius: 11px; padding: 10px 13px 13px; background: var(--paper-2); }
-.connect-panel .tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); display: inline-block; margin-left: 6px; vertical-align: middle; }
+.conn-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.conn-title { font-weight: 600; font-size: 13px; letter-spacing: -0.2px; }
+.conn-pick { display: inline-flex; align-items: center; gap: 7px; }
+.conn-pick .client-select { padding: 3px 8px; font-size: 12.5px; border-radius: 8px; }
+.conn-docs { margin-left: auto; }
+/* A `manual` client asks for the endpoint and the header, so give it both. */
+.conn-fields { display: flex; flex-direction: column; gap: 7px; margin-top: 11px; }
+.conn-field { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.conn-field > .small { min-width: 82px; }
 .conn-body { margin-top: 10px; }
 .conn-body code, .conn-result code { font-family: ui-monospace, monospace; font-size: 11.5px; background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; }
 .conn-body .path { color: var(--ink); }
@@ -425,9 +473,44 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .foot-gh { display: inline-flex; align-items: center; color: var(--ink-3); transition: color .15s ease, transform .15s ease; }
 .foot-gh:hover { color: var(--ink); text-decoration: none; transform: translateY(-1px); }
 
+/* ── modal (the first-run "what should closing do?" question) ───────────── */
+.modal-veil {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px;
+  background: color-mix(in srgb, #05070d 62%, transparent); backdrop-filter: blur(3px);
+  animation: veil-in .14s ease-out;
+}
+@keyframes veil-in { from { opacity: 0 } to { opacity: 1 } }
+.modal {
+  width: min(520px, 100%); background: var(--paper); border: 1px solid var(--line-2);
+  border-radius: 16px; padding: 22px 24px 18px; box-shadow: 0 24px 60px rgba(0, 0, 0, .38);
+  animation: modal-in .16s cubic-bezier(.2, .8, .3, 1);
+}
+@keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.985) } to { opacity: 1; transform: none } }
+.modal-mark { font-size: 26px; line-height: 1; }
+.modal-title { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; margin: 9px 0 6px; }
+.modal-choices { display: flex; flex-direction: column; gap: 9px; margin-top: 16px; }
+.choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  border: 1px solid var(--line-2); background: var(--card-2); border-radius: 12px;
+  padding: 12px 14px; cursor: pointer; font-family: inherit; color: var(--ink-2);
+  transition: border-color .12s, background .12s, transform .06s;
+}
+.choice:hover { border-color: var(--accent); background: var(--card); }
+.choice:active { transform: translateY(1px); }
+.choice:disabled { opacity: .6; cursor: default; }
+.choice .choice-t { font-weight: 600; font-size: 13.5px; color: var(--ink); }
+.choice-warn:hover { border-color: var(--danger); }
+
 @media (max-width: 640px) {
   .pagehead h1 { font-size: 19px; }
   .feed-row { grid-template-columns: 1fr; gap: 3px; }
   .feed-row .f-meta { justify-content: flex-start; }
   .nav button { padding: 5px 10px; }
+  .ag-grid { grid-template-columns: 1fr; }
+  /* The topbar carries a lot for one line: mark, version, update state, nav,
+     theme, health, and two hover-revealed buttons that a touch screen shows
+     unconditionally. Let it wrap onto a second row rather than push the page
+     sideways — the body must never scroll horizontally. */
+  .topbar-in { flex-wrap: wrap; row-gap: 8px; padding: 10px 14px; }
+  .topbar .spacer { flex-basis: 100%; height: 0; }
 }

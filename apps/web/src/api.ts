@@ -5,6 +5,7 @@ import type {
   ManagedServerConfig,
   AnalyticsSummary,
   AgentClientInfo,
+  CreateAgentRequest,
   SettingsInfo,
   UpdateSettingsRequest,
   PopularityMap,
@@ -46,8 +47,10 @@ export const api = {
   clis: () => j<CliStatus[]>('/api/clis'),
   checkCli: (name: string) => j<CliCheckResult>(`/api/clis/check?name=${encodeURIComponent(name)}`),
   clients: () => j<AgentClientInfo[]>('/api/clients'),
-  addClient: (name: string, servers: '*' | string[]) =>
-    j<AgentClientInfo>('/api/clients', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, servers }) }),
+  // `target` marks the agent as a known harness from the catalog: the daemon
+  // takes its name from there and then refuses to rename it.
+  addClient: (req: CreateAgentRequest) =>
+    j<AgentClientInfo>('/api/clients', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) }),
   updateClient: (id: string, patch: { name?: string; servers?: '*' | string[] }) =>
     j<AgentClientInfo>(`/api/clients/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
   removeClient: (id: string) => j<{ ok: boolean }>(`/api/clients/${id}`, { method: 'DELETE' }),

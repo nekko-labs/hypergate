@@ -1,10 +1,12 @@
 //! The tray agent: a system-tray icon with a menu, supervising the daemon,
 //! plus the manager window (`window.rs`) when the user wants a real app.
 //!
-//! Tray interaction is **menu-only on every platform**, deliberately. Linux's
-//! StatusNotifierItem delivers no click events at all, so a click-to-open
-//! gesture would silently not exist there; making the menu the single surface
-//! keeps behaviour identical across Windows, macOS and Linux.
+//! The menu is the surface that exists everywhere: Linux's StatusNotifierItem
+//! delivers no click events at all, so any click gesture has to be an addition
+//! to it, never a replacement. On Windows, where clicks *are* delivered, we
+//! follow the platform convention on top of that — right-click for the menu,
+//! **double-click to open the app** — because that is what a tray icon means
+//! there. macOS keeps the single-click menu its menu bar extras all use.
 //!
 //! "Open manager" prefers the native manager window and falls back to the
 //! default browser when the platform webview is unavailable; both frames show
@@ -16,9 +18,10 @@ use std::time::Duration;
 
 use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tray_icon::{TrayIcon, TrayIconBuilder};
 
+use crate::api::CloseAction;
 use crate::window::ManagerWindow;
 use crate::{api, autostart, daemon, icon, secrets};
 
@@ -60,22 +63,45 @@ fn hide_own_console() {
 #[cfg(not(windows))]
 fn hide_own_console() {}
 
+/// What closing the manager window should actually do, once decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CloseDecision {
+    /// Hide the window; the gateway and every managed server keep running.
+    Tray,
+    /// Take the whole thing down, daemon included.
+    Quit,
+    /// Never mind — leave the window open.
+    Cancel,
+}
+
 /// Woken into the tao loop so menu clicks are handled immediately rather than
 /// on a polling tick. "Fast and fluid" means no perceptible menu latency.
-enum Wake {
+pub(crate) enum Wake {
     Menu(MenuEvent),
-    /// A refreshed status line for the menu header, plus the real OS autostart
-    /// state. Both are computed on the polling thread: the UI thread only ever
-    /// applies them, so nothing that can block (HTTP, registry, launchctl)
-    /// runs where it could freeze an open menu.
-    Status(String, bool),
-    /// Show the manager window (from the menu, or from a second `hypergate app`
-    /// launch handing off through the single-instance socket).
+    /// A refreshed status line for the menu header, the real OS autostart
+    /// state, and the current close-button preference. All three are computed
+    /// on the polling thread: the UI thread only ever applies them, so nothing
+    /// that can block (HTTP, registry, launchctl) runs where it could freeze an
+    /// open menu — or stall a window close.
+    Status(String, bool, CloseAction),
+    /// Show the manager window (from the menu, from a tray double-click, or
+    /// from a second `hypergate app` launch handing off through the
+    /// single-instance socket).
     OpenWindow,
     /// Quit, asked for over the single-instance socket. Used by `hypergate
     /// update --apply`, which has to get the tray out of the way before the
     /// files it is running from can be replaced.
     Quit,
+    /// The close question has an answer, from the window's own prompt.
+    Close(CloseDecision),
+    /// The page confirmed the prompt is on screen. Stops the deadline below:
+    /// someone is reading it, and yanking the window away mid-read would be
+    /// exactly the rudeness the prompt exists to avoid.
+    CloseAsked,
+    /// Nobody answered and nobody said the prompt appeared, so the page can't
+    /// have loaded. Close anyway — a window that refuses to close is worse than
+    /// a question that went unasked.
+    CloseDeadline,
 }
 
 /// Everything the running tray owns.
@@ -127,10 +153,17 @@ fn build(child: Option<std::process::Child>) -> Result<Tray, String> {
         .with_menu(Box::new(menu))
         .with_icon(icon::tray_icon()?)
         .with_icon_as_template(icon::is_template())
-        .with_tooltip("Hypergate")
-        // Windows convention is the menu on right-click; showing it on left-click
-        // too means one predictable gesture everywhere it is supported at all.
-        .with_menu_on_left_click(true)
+        .with_tooltip(if cfg!(windows) {
+            "Hypergate — double-click to open"
+        } else {
+            "Hypergate"
+        })
+        // Windows: the menu belongs on right-click, which frees the left button
+        // for the gesture users already expect from a tray icon — double-click
+        // opens the app. Everywhere else the menu stays on left-click: macOS
+        // menu bar extras work that way, and Linux delivers no clicks for a
+        // double-click gesture to be built out of.
+        .with_menu_on_left_click(!cfg!(windows))
         .build()
         .map_err(|e| format!("could not create the tray icon: {e}"))?;
 
@@ -212,6 +245,20 @@ pub fn run(with_window: bool) -> Result<(), String> {
         let _ = menu_proxy.send_event(Wake::Menu(e));
     }));
 
+    // Double-click the icon to open the app. Windows-only in the crate (the
+    // event simply is not synthesised elsewhere), which matches where the
+    // gesture is a convention in the first place.
+    let click_proxy = event_loop.create_proxy();
+    tray_icon::TrayIconEvent::set_event_handler(Some(move |e: tray_icon::TrayIconEvent| {
+        if let tray_icon::TrayIconEvent::DoubleClick {
+            button: tray_icon::MouseButton::Left,
+            ..
+        } = e
+        {
+            let _ = click_proxy.send_event(Wake::OpenWindow);
+        }
+    }));
+
     // The single-instance lock doubles as a handoff channel. Two verbs, both
     // loopback-only and both things a local process could already do for itself:
     // `open` surfaces the manager UI, and `quit` shuts the agent down, which is
@@ -237,13 +284,19 @@ pub fn run(with_window: bool) -> Result<(), String> {
     });
 
     // Refresh the header line off-thread; the HTTP calls must never block the UI.
-    // The autostart checkbox state rides along so a change made outside the app
-    // (or in the web UI) still shows up here, without the UI thread doing the read.
+    // The autostart checkbox state and the close-button preference ride along,
+    // so a change made outside the app (or in the web UI) shows up here without
+    // the UI thread ever doing a read that could block — which matters most at
+    // the moment the user clicks the window's close button.
     let status_proxy = event_loop.create_proxy();
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
     std::thread::spawn(move || {
         loop {
-            let _ = status_proxy.send_event(Wake::Status(status_line(), autostart::is_enabled()));
+            let _ = status_proxy.send_event(Wake::Status(
+                status_line(),
+                autostart::is_enabled(),
+                api::close_action(),
+            ));
             if stop_rx.recv_timeout(Duration::from_secs(4)).is_ok() {
                 return; // shutting down
             }
@@ -253,6 +306,14 @@ pub fn run(with_window: bool) -> Result<(), String> {
     let mut tray: Option<Tray> = None;
     let mut window: Option<ManagerWindow> = None;
     let mut pending_child = child;
+    // Nothing has been read from the daemon yet, so ask rather than assume.
+    let mut close_action = CloseAction::Ask;
+    // A close question is outstanding; a second close must not re-ask.
+    let mut awaiting_close = false;
+    // …and the page has confirmed it is actually showing that question.
+    let mut prompt_shown = false;
+    // Handed to the manager window so its page can answer that question.
+    let window_proxy = event_loop.create_proxy();
 
     event_loop.run(move |event, target, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -273,32 +334,100 @@ pub fn run(with_window: bool) -> Result<(), String> {
                         *control_flow = ControlFlow::Exit;
                     }
                 }
-                if with_window {
-                    open_manager(&mut window, target);
+                // `hypergate app` always means "show me the app". A login-time
+                // `hypergate tray` defers to the Start minimized preference,
+                // which is the only thing that setting was ever supposed to do.
+                if with_window || !api::start_minimized() {
+                    open_manager(&mut window, target, &window_proxy);
                 }
             }
 
             Event::UserEvent(Wake::OpenWindow) => {
-                open_manager(&mut window, target);
+                open_manager(&mut window, target, &window_proxy);
             }
 
             Event::UserEvent(Wake::Quit) => {
-                quit(&mut tray, &stop_tx, control_flow);
+                quit(&mut tray, &stop_tx, control_flow, false);
             }
 
-            // Closing the manager never quits: Hypergate is a resident agent,
-            // so the window goes away and the tray stays. Quit is in the menu.
+            // Closing the manager is a real choice, not a foregone conclusion:
+            // Hypergate is a resident agent, but it is also what is running the
+            // user's servers. Whichever way it goes the window is *hidden*, not
+            // destroyed, so reopening is instant and the page keeps its state.
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 window_id,
                 ..
             } => {
                 if window.as_ref().is_some_and(|w| w.id() == window_id) {
-                    window = None;
+                    match close_action {
+                        CloseAction::Tray => {
+                            if let Some(w) = &window {
+                                w.hide();
+                            }
+                        }
+                        CloseAction::Quit => quit(&mut tray, &stop_tx, control_flow, true),
+                        CloseAction::Ask => {
+                            if awaiting_close {
+                                // The prompt is already up and the user clicked
+                                // the X again — take that as "yes, go away".
+                                if let Some(w) = &window {
+                                    w.hide();
+                                }
+                                awaiting_close = false;
+                            } else if let Some(w) = &window {
+                                awaiting_close = true;
+                                prompt_shown = false;
+                                w.ask_close();
+                                // A page that failed to load cannot answer, and
+                                // a window that will not close is worse than a
+                                // missed question. Cancelled the moment the page
+                                // says the prompt is up, so a user reading it is
+                                // never interrupted.
+                                let deadline = window_proxy.clone();
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(Duration::from_secs(3));
+                                    let _ = deadline.send_event(Wake::CloseDeadline);
+                                });
+                            }
+                        }
+                    }
                 }
             }
 
-            Event::UserEvent(Wake::Status(line, autostart_on)) => {
+            Event::UserEvent(Wake::CloseAsked) => {
+                prompt_shown = true;
+            }
+
+            Event::UserEvent(Wake::CloseDeadline) => {
+                // Only when the prompt never made it on screen. Hiding is the
+                // reversible outcome, so that is the one we default to.
+                if awaiting_close && !prompt_shown {
+                    awaiting_close = false;
+                    eprintln!("[hypergate] the manager page did not answer the close prompt; hiding to the tray");
+                    if let Some(w) = &window {
+                        w.hide();
+                    }
+                }
+            }
+
+            Event::UserEvent(Wake::Close(decision)) => {
+                if awaiting_close {
+                    awaiting_close = false;
+                    match decision {
+                        CloseDecision::Tray => {
+                            if let Some(w) = &window {
+                                w.hide();
+                            }
+                        }
+                        CloseDecision::Quit => quit(&mut tray, &stop_tx, control_flow, true),
+                        CloseDecision::Cancel => {}
+                    }
+                }
+            }
+
+            Event::UserEvent(Wake::Status(line, autostart_on, action)) => {
+                close_action = action;
                 if let Some(t) = &tray {
                     t.status.set_text(&line);
                     // Reconcile the checkbox with the real OS state (read on the
@@ -311,7 +440,7 @@ pub fn run(with_window: bool) -> Result<(), String> {
                 let clicked = ev.id.as_ref();
                 match clicked {
                     id::OPEN => {
-                        open_manager(&mut window, target);
+                        open_manager(&mut window, target, &window_proxy);
                     }
                     id::START_ALL => act_on_all(true),
                     id::STOP_ALL => act_on_all(false),
@@ -337,7 +466,11 @@ pub fn run(with_window: bool) -> Result<(), String> {
                             t.autostart.set_checked(autostart::is_enabled());
                         }
                     }
-                    id::QUIT => quit(&mut tray, &stop_tx, control_flow),
+                    // The menu's Quit leaves a daemon this tray didn't start
+                    // alone — it isn't ours to stop. The close button's "quit
+                    // and stop the server" is an explicit instruction, so that
+                    // one does stop it.
+                    id::QUIT => quit(&mut tray, &stop_tx, control_flow, false),
                     _ => {}
                 }
             }
@@ -349,14 +482,29 @@ pub fn run(with_window: bool) -> Result<(), String> {
 /// Shut the agent down: stop the status poller, reap the daemon if this tray
 /// started it, and leave the event loop. Reached from the Quit menu item and
 /// from a `quit` on the single-instance socket, which must behave identically.
-fn quit(tray: &mut Option<Tray>, stop_tx: &mpsc::Sender<()>, control_flow: &mut ControlFlow) {
+///
+/// `stop_daemon` extends that to a daemon we merely attached to. It is off for
+/// the menu's Quit — a daemon someone else started is not ours to kill — and on
+/// for the close button's "quit and stop the server", where the user asked for
+/// exactly that and would not accept a gateway still serving afterwards.
+fn quit(tray: &mut Option<Tray>, stop_tx: &mpsc::Sender<()>, control_flow: &mut ControlFlow, stop_daemon: bool) {
     let _ = stop_tx.send(());
-    if let Some(t) = tray {
-        // Only reap the daemon if this tray started it.
-        if let Some(child) = &mut t.child {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+    let mut ours = false;
+    if let Some(t) = tray
+        && let Some(child) = &mut t.child
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        ours = true;
+    }
+    // Not our child: the pid file if some shell recorded one, else the daemon's
+    // own shutdown route (which our master token can call).
+    if stop_daemon
+        && !ours
+        && !daemon::stop().unwrap_or(false)
+        && let Err(e) = api::shutdown()
+    {
+        eprintln!("[hypergate] could not stop the daemon on quit: {e}");
     }
     *control_flow = ControlFlow::Exit;
 }
@@ -403,15 +551,19 @@ fn restart_daemon(tray: &mut Tray) {
     }
 }
 
-/// Show the manager window, creating it if it isn't open. When the platform
-/// webview can't be created (no WebView2 runtime, no webkit2gtk), fall back to
-/// the browser: same UI, different frame.
-fn open_manager<T>(window: &mut Option<ManagerWindow>, target: &tao::event_loop::EventLoopWindowTarget<T>) {
+/// Show the manager window, creating it if it isn't open and un-hiding it if a
+/// close put it away. When the platform webview can't be created (no WebView2
+/// runtime, no webkit2gtk), fall back to the browser: same UI, different frame.
+fn open_manager(
+    window: &mut Option<ManagerWindow>,
+    target: &tao::event_loop::EventLoopWindowTarget<Wake>,
+    proxy: &EventLoopProxy<Wake>,
+) {
     if let Some(w) = window.as_ref() {
         w.focus();
         return;
     }
-    match ManagerWindow::open(target) {
+    match ManagerWindow::open(target, proxy.clone()) {
         Ok(w) => *window = Some(w),
         Err(e) => {
             eprintln!("[hypergate] {e}; opening the manager in the browser instead");
