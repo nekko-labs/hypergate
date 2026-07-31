@@ -110,12 +110,17 @@ describe.runIf(process.platform === 'linux')('linux: an XDG autostart entry', ()
     expect(autostart.enabled()).toBe(false);
   });
 
-  it('escapes spaces in Exec, which the Desktop Entry spec splits on', async () => {
+  it('escapes spaces inside an argument, which the Desktop Entry spec splits on', async () => {
     const autostart = await load();
-    shell.shellBin.mockReturnValue(undefined);
     autostart.set(true);
-    const exec = readFileSync(entry(), 'utf8').split('\n').find((l) => l.startsWith('Exec='))!;
-    expect(exec).not.toMatch(/[^\\] /);
+    const argv = autostart.launchCommandArgv()!;
+    const exec = readFileSync(entry(), 'utf8').split('\n').find((l) => l.startsWith('Exec='))!.slice('Exec='.length);
+    // Only the separators between arguments may be bare spaces: splitting on
+    // those must give back exactly the argv we meant, however many spaces a
+    // path happens to contain.
+    const parts = exec.split(/(?<!\\) /);
+    expect(parts).toHaveLength(argv.length);
+    expect(parts.map((p) => p.replaceAll('\\ ', ' ').replaceAll('\\\\', '\\'))).toEqual(argv);
   });
 });
 
