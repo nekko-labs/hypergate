@@ -20,11 +20,25 @@ import type {
   ConnectResult,
   UpdateInfo,
   InstallChannel,
+  CloseAction,
 } from '@hypergate/shared';
 import { api } from './api';
 
 type View = 'servers' | 'analytics' | 'settings';
 type Theme = 'light' | 'medium' | 'dark';
+
+/**
+ * The two hooks the native manager window and this page use to talk.
+ *
+ * `__hypergateAskClose` is ours, registered by {@link CloseChoice}: the shell
+ * calls it instead of closing when it doesn't yet know what the close button
+ * should do. `ipc` is wry's, and carries the answer back. Neither exists in a
+ * browser, which is exactly why the prompt only ever appears in the app.
+ */
+interface HypergateWindow extends Window {
+  __hypergateAskClose?: () => void;
+  ipc?: { postMessage: (message: string) => void };
+}
 
 function useCopy(): [string | null, (key: string, text: string) => void] {
   const [copied, setCopied] = useState<string | null>(null);
@@ -169,6 +183,7 @@ export function App() {
 
   return (
     <>
+      <CloseChoice />
       <header className="topbar">
         <div className="topbar-in">
           <div className="logo-tile"><img src="/favicon.svg" alt="" width="22" height="22" /></div>
@@ -189,10 +204,7 @@ export function App() {
           </nav>
           <div className="spacer" />
           <ThemeSwitch />
-          <span className={`pill ${offline ? 'pill-errored' : 'pill-ready'}`}>
-            <span className="dot" />
-            {offline ? 'daemon offline' : 'daemon up'}
-          </span>
+          <ServerHealth offline={offline} gateway={gateway} />
         </div>
       </header>
 
@@ -292,6 +304,88 @@ export function App() {
   );
 }
 
+/**
+ * "What should the close button do?" — asked once, in the window being closed.
+ *
+ * Closing a desktop app usually means *close*, but closing this one could also
+ * mean stopping a gateway that other agents are mid-call on. Both readings are
+ * reasonable, so the first close asks instead of guessing, and the answer is
+ * kept (changeable later in Settings → Startup & desktop).
+ *
+ * The shell drives it: on a close request with no preference recorded it calls
+ * `__hypergateAskClose()` rather than closing, and waits for the answer over
+ * wry's IPC channel. In a browser tab neither side exists, so nothing here ever
+ * fires — the browser's own close button is the browser's business.
+ */
+function CloseChoice() {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const reply = (message: string): void => (window as HypergateWindow).ipc?.postMessage(message);
+
+  useEffect(() => {
+    const w = window as HypergateWindow;
+    w.__hypergateAskClose = () => {
+      setOpen(true);
+      // Tell the shell the question is on screen. It gives up and closes the
+      // window if nothing answers — a page that failed to load must not be able
+      // to trap it — and that deadline has to stop running the moment there is
+      // a human reading the dialog.
+      w.ipc?.postMessage('close:asking');
+    };
+    return () => { delete w.__hypergateAskClose; };
+  }, []);
+
+  const decide = async (action: 'tray' | 'quit') => {
+    setBusy(true);
+    // Save first: if the window is about to go away, the answer must already be
+    // on disk, or the next close asks all over again.
+    await api.updateSettings({ closeAction: action }).catch(() => {});
+    setBusy(false);
+    setOpen(false);
+    reply(`close:${action}`);
+  };
+
+  const cancel = () => {
+    setOpen(false);
+    reply('close:cancel');
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  if (!open) return null;
+  return (
+    <div className="modal-veil" role="dialog" aria-modal="true" aria-labelledby="closechoice-t">
+      <div className="modal">
+        <div className="modal-mark">🐾</div>
+        <h2 id="closechoice-t" className="modal-title">When you close this window…</h2>
+        <p className="small muted">
+          Hypergate can stay in the tray with the gateway running, so your agents keep their tools — or shut down
+          completely. We'll remember which you pick; you can change it in <b>Settings → Startup &amp; desktop</b>.
+        </p>
+        <div className="modal-choices">
+          <button className="choice" disabled={busy} onClick={() => void decide('tray')}>
+            <span className="choice-t">Keep running in the tray</span>
+            <span className="choice-d small muted">The window closes. The gateway and every managed server stay up.</span>
+          </button>
+          <button className="choice choice-warn" disabled={busy} onClick={() => void decide('quit')}>
+            <span className="choice-t">Quit and stop the server</span>
+            <span className="choice-d small muted">Closes the window, stops the gateway, and stops every managed server.</span>
+          </button>
+        </div>
+        <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
+          <button className="btn sm btn-ghost" onClick={cancel} disabled={busy}>Don't close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** A small filled heart, standing in for the word "love" in the footer. */
 function Heart() {
   return (
@@ -350,6 +444,67 @@ function VersionBox({
       <button className="btn sm btn-ghost vb-check" onClick={onCheck} disabled={checking}>
         {checking ? 'Checking…' : 'Check for updates'}
       </button>
+    </span>
+  );
+}
+
+/**
+ * Whether the thing serving this page is well, and the way to turn it off.
+ *
+ * It says "server healthy" rather than "daemon up" because that is the question
+ * being answered — is the gateway serving? — and because "daemon" is a word for
+ * the implementation, not for what the user has running. Stop lives here, on
+ * hover, for the same reason the update check lives next to the version: the
+ * control belongs beside the state it changes. It stays hidden until you reach
+ * for it (and is always visible on touch, where there is no hover), so the one
+ * button that ends the session isn't sitting a stray click away.
+ */
+function ServerHealth({ offline, gateway }: { offline: boolean; gateway: GatewayInfo | null }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // A daemon that went down has nothing left to confirm against.
+  useEffect(() => { if (offline) { setConfirming(false); setErr(null); } }, [offline]);
+
+  const stop = async () => {
+    if (!gateway?.token) { setErr('No gateway token — reload the page.'); return; }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.shutdown(gateway.token);
+      setConfirming(false);
+    } catch {
+      setErr('The daemon refused the request.');
+    }
+    setBusy(false);
+  };
+
+  if (offline) {
+    return (
+      <span className="pill pill-errored"><span className="dot" />server offline</span>
+    );
+  }
+  return (
+    <span className="healthbox">
+      <span className="pill pill-ready"><span className="dot" />server healthy</span>
+      {confirming ? (
+        <span className="hb-actions">
+          <button className="btn sm btn-danger" onClick={() => void stop()} disabled={busy}>
+            {busy ? 'Stopping…' : 'Stop it'}
+          </button>
+          <button className="btn sm btn-ghost" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
+        </span>
+      ) : (
+        <button
+          className="btn sm btn-ghost hb-stop"
+          title="Stop the gateway and every managed server"
+          onClick={() => setConfirming(true)}
+        >
+          Stop server
+        </button>
+      )}
+      {err && <span className="small hb-err">{err}</span>}
     </span>
   );
 }
@@ -488,6 +643,7 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
           <span className="server-name">{s.name}</span>
           <span className="chip">{RUNTIME_CHIP[s.runtime] ?? '⚡ process'}</span>
           {isRemote && s.url && <span className="chip mono" title={s.url}>{new URL(s.url).host}</span>}
+          <AccountChip s={s} />
           {s.state === 'ready' && (
             <button className="link-btn" onClick={() => setShowTools(!showTools)}>{s.tools.length} tools {showTools ? '▾' : '▸'}</button>
           )}
@@ -541,6 +697,40 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
       )}
       {logs && <pre className="logs">{logs.join('\n') || '(no output yet)'}</pre>}
     </div>
+  );
+}
+
+/**
+ * Which account a signed-in server is signed in as.
+ *
+ * "Connected" is only half of what you want to know about a remote server —
+ * the other half is *whose* account the agent is acting through, since that is
+ * what decides which repos, issues or projects it can see. Shown right on the
+ * row, next to the state, because that is where you look when something comes
+ * back empty and you start to wonder which account you signed in with.
+ *
+ * When the provider hands out an opaque token and offers no identity endpoint,
+ * this says "signed in" and stops there. That is the honest answer; inventing a
+ * name from the server's own title would be worse than admitting we don't know.
+ */
+function AccountChip({ s }: { s: ServerStatus }) {
+  if (!s.signedIn) return null;
+  const a = s.account;
+  if (!a) {
+    return <span className="chip chip-account" title="Signed in — this provider doesn't say which account">👤 signed in</span>;
+  }
+  // A raw subject id is a UUID as often as not; keep the row readable and put
+  // the whole thing in the tooltip.
+  const opaque = !a.email && !a.name && a.label.length > 14 && !a.label.includes('@') && !a.label.includes(' ');
+  const shown = opaque ? `${a.label.slice(0, 10)}…` : a.label;
+  const detail = [a.email, a.name, a.org && `org: ${a.org}`, a.subject && `id: ${a.subject}`]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <span className="chip chip-account" title={`Signed in as ${a.label}${detail ? ` — ${detail}` : ''} (from the ${a.source.replace('_', ' ')})`}>
+      👤 {shown}
+      {a.org && <span className="muted"> · {a.org}</span>}
+    </span>
   );
 }
 
@@ -694,6 +884,47 @@ function ToggleRow({
   );
 }
 
+/** What actually installs the login item, per platform — stated, not implied. */
+const STARTUP_MECHANISM: Record<string, string> = {
+  win32: 'A per-user startup entry',
+  darwin: 'A per-user LaunchAgent',
+  linux: 'An XDG autostart entry',
+};
+
+/**
+ * What the window's close button does — the same choice the app asks for the
+ * first time you close it, kept here so it can be changed without hunting.
+ *
+ * It is three options rather than a switch because "ask me" is a real state, and
+ * hiding it would mean the first-run prompt has no home in Settings afterwards.
+ */
+function CloseActionRow({ value, busy, onChange }: { value: CloseAction; busy: boolean; onChange: (v: CloseAction) => void }) {
+  const opts: [CloseAction, string][] = [
+    ['tray', 'Minimize to tray'],
+    ['quit', 'Quit & stop the server'],
+    ['ask', 'Ask each time'],
+  ];
+  return (
+    <div className="list-row setting-row">
+      <div className="setting-text">
+        <div className="setting-label">Closing the window</div>
+        <div className="small muted">
+          {value === 'quit'
+            ? 'The close button shuts down the gateway and every managed server.'
+            : value === 'tray'
+              ? 'The close button hides the window; the gateway and your servers keep running.'
+              : "Hypergate will ask the first time you close the window, and remember your answer."}
+        </div>
+      </div>
+      <div className="seg" style={{ flex: 'none' }}>
+        {opts.map(([v, label]) => (
+          <button key={v} className={value === v ? 'active' : ''} disabled={busy} onClick={() => onChange(v)}>{label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Updates, service/desktop options (run at login, start minimized), stop the daemon. */
 function SettingsView({
   gateway, version, updateInfo, checking, onCheck,
@@ -753,9 +984,11 @@ function SettingsView({
             <ToggleRow
               label="Run on startup"
               desc={
-                s.startupSupported
-                  ? 'Launch Hypergate in the tray automatically when you sign in to Windows.'
-                  : `Autostart isn't wired up on ${s.platform} yet — it's coming with the desktop shell.`
+                !s.startupSupported
+                  ? `Hypergate can't work out what to launch at login on this install, so it won't pretend to. Put \`hypergated\` on your PATH, or install the desktop shell.`
+                  : s.startupVia === 'shell'
+                    ? `${STARTUP_MECHANISM[s.platform] ?? 'A login item'} launches Hypergate in the tray when you sign in.`
+                    : `${STARTUP_MECHANISM[s.platform] ?? 'A login item'} starts the gateway when you sign in. Install the desktop shell to get the tray icon with it.`
               }
               checked={s.runOnStartup}
               disabled={!s.startupSupported || busy === 'runOnStartup'}
@@ -768,13 +1001,21 @@ function SettingsView({
               disabled={busy === 'startMinimized'}
               onChange={(v) => void update({ startMinimized: v }, 'startMinimized')}
             />
+            <CloseActionRow
+              value={s.closeAction}
+              busy={busy === 'closeAction'}
+              onChange={(v) => void update({ closeAction: v }, 'closeAction')}
+            />
           </div>
         )}
       </div>
       {err && <p className="small" style={{ color: 'var(--danger)', marginTop: 10 }}>{err}</p>}
       <p className="small muted" style={{ marginTop: 12 }}>
-        Startup launches the tray app, which keeps the daemon running in the background. Right-click the tray icon for
-        Open manager / Restart / Quit.
+        {s?.startupCommand ? (
+          <>Login runs <code>{s.startupCommand}</code>. </>
+        ) : null}
+        The tray keeps the daemon running in the background — right-click its icon for Open manager / Restart / Quit,
+        and double-click it to open the app.
       </p>
 
       <div className="section-title" style={{ marginTop: 24 }}>
@@ -1266,95 +1507,181 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
 }
 
 /**
+ * How a client gets wired up, in three words for a picker card. `cli` isn't
+ * here because a CLI's card says something more useful — whether we can see it
+ * on this machine.
+ */
+const METHOD_LABEL: Record<string, string> = {
+  config: 'config snippet',
+  manual: 'add it in-app',
+};
+
+/**
+ * The agent catalog: which harness are you connecting?
+ *
+ * "+ Add agent" asks this first, because it is the question that decides
+ * everything after it — the name, and the one way that client gets connected.
+ * The old flow asked for a name instead and then showed every client we know as
+ * a row of tabs under the agent, which put the choice in the wrong place: an
+ * agent called "Cursor" has no use for Claude Code's install command.
+ */
+function AgentPicker({
+  targets, agents, busy, error, onPick, onCustom, onClose,
+}: {
+  targets: ConnectTargetStatus[];
+  agents: AgentClientInfo[];
+  busy: string | null;
+  error: string | null;
+  onPick: (t: ConnectTargetStatus) => void;
+  onCustom: () => void;
+  onClose?: () => void;
+}) {
+  return (
+    <div className="agent-picker">
+      <div className="row between">
+        <div>
+          <b>Which agent are you connecting?</b>
+          <div className="small muted" style={{ marginTop: 3 }}>
+            It gets its own token — scoped to every server to start with, and revocable on its own.
+          </div>
+        </div>
+        {onClose && <button className="btn sm btn-ghost" onClick={onClose}>✕</button>}
+      </div>
+      <div className="ag-grid">
+        {targets.map((t) => {
+          const added = agents.some((a) => a.target === t.id);
+          const detected = t.method === 'cli' && t.found;
+          return (
+            <button
+              key={t.id}
+              className={`ag-card ${detected ? 'ag-found' : ''} ${added ? 'ag-added' : ''}`}
+              disabled={busy === t.id}
+              title={added ? `${t.name} is already connected — opens its instructions again` : t.hint}
+              onClick={() => onPick(t)}
+            >
+              <span className="ag-name">
+                {t.name}
+                {added && <span className="ag-tick" title="Already added">✓</span>}
+              </span>
+              <span className="ag-blurb small muted">{t.blurb ?? t.hint}</span>
+              <span className="ag-state small">
+                {busy === t.id
+                  ? 'adding…'
+                  : detected
+                    ? `detected${t.version ? ` · v${t.version}` : ''}`
+                    : t.method === 'cli'
+                      ? 'not installed'
+                      : METHOD_LABEL[t.method]}
+              </span>
+            </button>
+          );
+        })}
+        <button className="ag-card ag-custom" onClick={onCustom}>
+          <span className="ag-name">Custom agent</span>
+          <span className="ag-blurb small muted">Anything else that speaks MCP. You name it, and pick what it may reach.</span>
+          <span className="ag-state small">name it yourself</span>
+        </button>
+      </div>
+      {error && <div className="small" style={{ color: 'var(--danger)', marginTop: 10 }}>{error}</div>}
+    </div>
+  );
+}
+
+/**
  * "Connected agents" — the one place an agent gets connected. Each row is a
  * scoped gateway token with its per-server permissions, and its own Connect
- * panel: one click to have Hypergate run the client's `mcp add` for you, or the
- * exact command quoted for your shell if you'd rather run it yourself.
+ * panel showing that client's own way in: one click to have Hypergate run its
+ * `mcp add`, the exact command if you'd rather run it yourself, the snippet for
+ * its config file, or the endpoint to paste into its settings.
  */
 function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInfo[]; servers: ServerStatus[]; onChange: () => void }) {
-  const [editing, setEditing] = useState<AgentClientInfo | 'new' | null>(null);
-  /** Agent whose Connect panel is open, which client tab it opened on, and whether to install straight away. */
+  /** The catalog is open (from "+ Add agent"), or the custom-agent form is. */
+  const [picking, setPicking] = useState(false);
+  const [custom, setCustom] = useState<AgentClientInfo | 'new' | null>(null);
+  /** Agent whose Connect panel is open, which client it opened on, and whether to install straight away. */
   const [connect, setConnect] = useState<{ id: string; target?: string; run?: boolean } | null>(null);
   const [targets, setTargets] = useState<ConnectTargetsInfo | null>(null);
-  const [quick, setQuick] = useState<{ target: string; error?: string } | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => { void api.connectTargets().then(setTargets).catch(() => {}); }, []);
 
-  // Quick connect: create the scoped agent and wire the client up in one go.
-  // Re-clicking reuses the agent of the same name instead of stacking duplicates.
-  const quickConnect = useCallback(async (t: ConnectTargetStatus) => {
-    setQuick({ target: t.id });
-    const agent = agents.find((a) => a.name === t.name) ?? (await api.addClient(t.name, '*').catch(() => null));
+  // Pick a known agent: create its scoped token and go straight to how it gets
+  // connected. Re-picking one you already have reopens it rather than stacking
+  // a duplicate — the catalog is a way in, not an "add another".
+  const addKnown = useCallback(async (t: ConnectTargetStatus) => {
+    setAdding(t.id);
+    setErr(null);
+    const existing = agents.find((a) => a.target === t.id) ?? agents.find((a) => !a.target && a.name === t.name);
+    const agent = existing ?? (await api.addClient({ name: t.name, servers: '*', target: t.id }).catch(() => null));
+    setAdding(null);
     if (!agent) {
-      setQuick({ target: t.id, error: 'Could not create the agent — check the daemon logs.' });
+      setErr(`Could not create the ${t.name} agent — check the daemon logs.`);
       return;
     }
+    setPicking(false);
     onChange();
     // A detected CLI is genuinely one click: create, install, show the outcome.
-    setConnect({ id: agent.id, target: t.id, run: t.method === 'cli' && t.found });
-    setQuick(null);
+    setConnect({ id: agent.id, target: t.id, run: !existing && t.method === 'cli' && t.found });
   }, [agents, onChange]);
 
-  const detected = (targets?.targets ?? []).filter((t) => t.method === 'cli' && t.found);
+  const picker = (onClose?: () => void) => (
+    <AgentPicker
+      targets={targets?.targets ?? []}
+      agents={agents}
+      busy={adding}
+      error={err}
+      onPick={(t) => void addKnown(t)}
+      onCustom={() => { setPicking(false); setCustom('new'); }}
+      onClose={onClose}
+    />
+  );
+
   return (
     <>
       <div className="section-title" id="agents" style={{ marginTop: 22 }}>
         Connected agents
         <span className="rt">
-          <button className={`btn sm ${editing === 'new' ? '' : 'btn-accent'}`} onClick={() => setEditing(editing === 'new' ? null : 'new')}>
-            {editing === 'new' ? 'Close' : '+ Add agent'}
+          <button
+            className={`btn sm ${picking ? '' : 'btn-accent'}`}
+            onClick={() => { setPicking((v) => !v); setCustom(null); setErr(null); }}
+          >
+            {picking ? 'Close' : '+ Add agent'}
           </button>
         </span>
       </div>
-      {agents.length === 0 && editing !== 'new' ? (
-        <div className="panel"><div className="empty">
+      {agents.length === 0 && !picking && !custom ? (
+        <div className="panel"><div className="empty empty-pick">
           <div className="cat">🔌</div>
           <b>No agents connected yet.</b>
-          <div className="small" style={{ marginTop: 4, maxWidth: 460, marginInline: 'auto' }}>
-            Every agent gets its own token, scoped to the servers you allow and revocable on its own.
-            Pick a client and Hypergate sets it up{detected.length > 0 ? ' — one click, no config to edit' : ''}.
-          </div>
-          <div className="qc-grid">
-            {(targets?.targets ?? []).map((t) => (
-              <button key={t.id} className={`qc ${t.method === 'cli' && t.found ? 'qc-found' : ''}`} onClick={() => void quickConnect(t)}>
-                <span className="qc-name">{t.name}</span>
-                <span className="qc-state small">
-                  {t.method !== 'cli'
-                    ? 'config snippet'
-                    : t.found
-                      ? `detected${t.version ? ` · v${t.version}` : ''}`
-                      : 'not installed'}
-                </span>
-              </button>
-            ))}
-          </div>
-          {quick?.error && <div className="small" style={{ color: 'var(--danger)', marginTop: 10 }}>{quick.error}</div>}
-          <div className="small muted" style={{ marginTop: 12 }}>
-            Want to pick which servers it may reach? <button className="link-btn" onClick={() => setEditing('new')}>Add a scoped agent</button>
-          </div>
+          {picker()}
         </div></div>
       ) : (
-        <div className="panel"><div className="list">
-          {agents.map((a) => (
-            <AgentRow
-              key={a.id}
-              agent={a}
-              servers={servers}
-              connect={connect?.id === a.id ? connect : null}
-              onConnect={() => setConnect(connect?.id === a.id ? null : { id: a.id })}
-              onEdit={() => setEditing(a)}
-              onChange={onChange}
-            />
-          ))}
-        </div></div>
+        <>
+          {agents.length > 0 && (
+            <div className="panel"><div className="list">
+              {agents.map((a) => (
+                <AgentRow
+                  key={a.id}
+                  agent={a}
+                  servers={servers}
+                  connect={connect?.id === a.id ? connect : null}
+                  onConnect={() => setConnect(connect?.id === a.id ? null : { id: a.id })}
+                  onChange={onChange}
+                />
+              ))}
+            </div></div>
+          )}
+          {picking && <div className="panel" style={{ marginTop: 12, padding: 16 }}>{picker(() => setPicking(false))}</div>}
+        </>
       )}
-      {editing && (
+      {custom && (
         <AgentEditor
-          agent={editing === 'new' ? null : editing}
+          agent={custom === 'new' ? null : custom}
           servers={servers}
-          onClose={() => setEditing(null)}
+          onClose={() => setCustom(null)}
           onSaved={(saved, created) => {
-            setEditing(null);
+            setCustom(null);
             onChange();
             // A brand-new agent isn't connected to anything yet — go straight to how.
             if (created) setConnect({ id: saved.id });
@@ -1365,14 +1692,59 @@ function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInf
   );
 }
 
+/**
+ * A custom agent's name, edited where it is shown.
+ *
+ * There is no Edit button any more: for an agent you named, the name *is* the
+ * control — click it and type. For one picked from the catalog there is nothing
+ * to edit (it is Cursor, and calling it something else would only make the row
+ * lie about whose token it is), so that name renders as text and the daemon
+ * refuses the rename too.
+ */
+function AgentName({ agent, onChange }: { agent: AgentClientInfo; onChange: () => void }) {
+  const [value, setValue] = useState(agent.name);
+  const [failed, setFailed] = useState(false);
+  // The list is re-polled every couple of seconds; follow a name that changed
+  // underneath us rather than pinning the stale one in the box.
+  useEffect(() => setValue(agent.name), [agent.name]);
+
+  const commit = async () => {
+    const next = value.trim();
+    if (!next || next === agent.name) { setValue(agent.name); setFailed(false); return; }
+    try {
+      await api.updateClient(agent.id, { name: next });
+      setFailed(false);
+      onChange();
+    } catch {
+      setFailed(true);
+      setValue(agent.name);
+    }
+  };
+
+  return (
+    <input
+      className={`agent-name-input ${failed ? 'bad' : ''}`}
+      value={value}
+      aria-label="Agent name"
+      title={failed ? 'That rename did not save — check the daemon logs' : 'Click to rename'}
+      size={Math.max(6, value.length)}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => void commit()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') { setValue(agent.name); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
 function AgentRow({
-  agent, servers, connect, onConnect, onEdit, onChange,
+  agent, servers, connect, onConnect, onChange,
 }: {
   agent: AgentClientInfo;
   servers: ServerStatus[];
   connect: { id: string; target?: string; run?: boolean } | null;
   onConnect: () => void;
-  onEdit: () => void;
   onChange: () => void;
 }) {
   const [copied, copy] = useCopy();
@@ -1399,7 +1771,14 @@ function AgentRow({
       <div className="list-head between">
         <div className="row wrap-gap">
           <span className="agent-dot" />
-          <span className="server-name">{agent.name}</span>
+          {agent.target ? (
+            <>
+              <span className="server-name">{agent.name}</span>
+              <span className="chip" title="Added from the agent catalog, so it carries that product's name">official</span>
+            </>
+          ) : (
+            <AgentName agent={agent} onChange={onChange} />
+          )}
           <span className="tok mono">{show ? agent.token.slice(0, 16) + '…' : '••••••'}</span>
           <button className="btn sm btn-ghost" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button>
           <button className="btn sm" onClick={() => copy(`tok-${agent.id}`, agent.token)}>{copied === `tok-${agent.id}` ? 'Copied!' : 'Copy token'}</button>
@@ -1407,7 +1786,6 @@ function AgentRow({
         <div className="row">
           <span className="small muted">{agent.lastUsed ? `used ${fmtRel(agent.lastUsed)}` : 'never used'}</span>
           <button className={`btn sm ${connect ? '' : 'btn-accent'}`} onClick={onConnect}>Connect {connect ? '▴' : '▾'}</button>
-          <button className="btn sm" onClick={onEdit}>Edit</button>
           <IconBtn icon="trash" label={`Remove ${agent.name}`} tone="danger" onClick={() => { void api.removeClient(agent.id).then(onChange); }} />
         </div>
       </div>
@@ -1461,10 +1839,16 @@ function AgentRow({
 const SHELL_LABEL: Record<ConnectShell, string> = { powershell: 'PowerShell', cmd: 'cmd.exe', bash: 'bash / zsh' };
 
 /**
- * The connect panel for one agent: a tab per client, then either the one-click
- * install (we run the client's own `mcp add`) or the snippet to paste. The exact
- * command is always on screen — quoted for the shell you're actually in — so the
- * button is a shortcut, not a black box.
+ * The connect panel for one agent: how *this* client gets connected.
+ *
+ * An agent added from the catalog knows what it is, so this shows one client's
+ * instructions and nothing else. (It used to show a tab per client under every
+ * agent, which offered Cursor's config file under an agent called "Claude Code"
+ * — six wrong answers surrounding the right one.) A custom agent is the only
+ * case where we genuinely don't know, so that one gets a client chooser.
+ *
+ * Whatever the route, the exact command or snippet is on screen — quoted for the
+ * shell you're actually in — so the button is a shortcut, not a black box.
  */
 function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInfo; initialTarget?: string; autoRun?: boolean }) {
   const [info, setInfo] = useState<AgentConnectInfo | null>(null);
@@ -1492,7 +1876,9 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
       .then((i) => {
         setInfo(i);
         setShell((s) => s ?? i.defaultShell);
-        setTab((t) => t ?? i.targets.find((x) => x.method === 'cli' && x.found)?.id ?? i.targets[0]?.id);
+        // An official agent has exactly one answer; a custom one starts on the
+        // client this machine actually has.
+        setTab((t) => t ?? i.target ?? i.targets.find((x) => x.method === 'cli' && x.found)?.id ?? i.targets[0]?.id);
         if (autoRun && initialTarget && !ran.current) {
           ran.current = true;
           void run(initialTarget);
@@ -1504,21 +1890,38 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
   if (failed) return <div className="connect-panel small" style={{ color: 'var(--danger)' }}>Could not load connect options — is the daemon still running?</div>;
   if (!info || !shell) return <div className="connect-panel small muted">Loading connect options…</div>;
 
-  const t = info.targets.find((x) => x.id === tab);
+  const t = info.targets.find((x) => x.id === (info.target ?? tab));
   return (
     <div className="connect-panel">
-      <div className="tabs">
-        {info.targets.map((x) => (
-          <button key={x.id} className={`tab ${x.id === tab ? 'active' : ''}`} onClick={() => { setTab(x.id); setResult(null); }}>
-            {x.name}
-            {x.method === 'cli' && x.found && <span className="tab-dot" title="Installed on this machine" />}
-          </button>
-        ))}
+      <div className="conn-head">
+        {info.target ? (
+          <span className="conn-title">Connect {t?.name ?? info.target}</span>
+        ) : (
+          <label className="conn-pick small muted">
+            This agent's client
+            <select
+              className="client-select"
+              value={tab ?? ''}
+              onChange={(e) => { setTab(e.target.value); setResult(null); }}
+            >
+              {info.targets.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name}
+                  {x.method === 'cli' && x.found ? ' · detected' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {t?.homepage && (
+          <a className="small muted conn-docs" href={t.homepage} target="_blank" rel="noreferrer">docs ↗</a>
+        )}
       </div>
 
       {t && (
         <div className="conn-body">
           {t.hint && <div className="small muted">{t.hint}</div>}
+          {t.note && <div className="small" style={{ color: 'var(--warning)', marginTop: 6 }}>{t.note}</div>}
 
           {t.method === 'cli' ? (
             <>
@@ -1547,6 +1950,45 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
                 <button className="btn sm" onClick={() => copy('cmd', t.commands?.[shell] ?? '')}>{copied === 'cmd' ? 'Copied!' : 'Copy command'}</button>
               </div>
               <pre className="snippet">{t.commands?.[shell]}</pre>
+              {/* No CLI on this machine is not a dead end when we know the file. */}
+              {!t.found && t.snippet && (
+                <>
+                  <div className="row wrap-gap" style={{ marginTop: 10 }}>
+                    <span className="small muted">or write it yourself into</span>
+                    <code className="path">{t.configPath ?? `${t.name}'s MCP config`}</code>
+                    <div className="spacer" style={{ flex: 1 }} />
+                    <button className="btn sm" onClick={() => copy('snip', t.snippet ?? '')}>{copied === 'snip' ? 'Copied!' : 'Copy snippet'}</button>
+                  </div>
+                  <pre className="snippet">{t.snippet}</pre>
+                </>
+              )}
+            </>
+          ) : t.method === 'manual' ? (
+            /* No file to write and no CLI to run: this client keeps its MCP list
+               in its own UI, so hand over exactly the two values it will ask for. */
+            <>
+              <div className="conn-fields">
+                <div className="conn-field">
+                  <span className="small muted">Server URL</span>
+                  <code className="path">{info.url}</code>
+                  <button className="btn sm" onClick={() => copy('url', info.url)}>{copied === 'url' ? 'Copied!' : 'Copy'}</button>
+                </div>
+                <div className="conn-field">
+                  <span className="small muted">Header</span>
+                  <code className="path">Authorization: Bearer {(t.token ?? '').slice(0, 8)}…</code>
+                  <button className="btn sm" onClick={() => copy('hdr', `Authorization: Bearer ${t.token ?? ''}`)}>
+                    {copied === 'hdr' ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+                <div className="conn-field">
+                  <span className="small muted">Token only</span>
+                  <code className="path">{(t.token ?? '').slice(0, 8)}••••••</code>
+                  <button className="btn sm" onClick={() => copy('tok', t.token ?? '')}>{copied === 'tok' ? 'Copied!' : 'Copy'}</button>
+                </div>
+              </div>
+              <div className="small muted" style={{ marginTop: 8 }}>
+                Transport is streamable HTTP. Name the entry <code>{info.entryName}</code> so a later re-connect replaces it.
+              </div>
             </>
           ) : (
             <>
@@ -1606,7 +2048,7 @@ function AgentEditor({
     try {
       const saved = agent
         ? await api.updateClient(agent.id, { name: name.trim(), servers: scoped })
-        : await api.addClient(name.trim(), scoped);
+        : await api.addClient({ name: name.trim(), servers: scoped });
       onSaved(saved, !agent);
     } catch {
       setErr('Could not save the agent, check the daemon logs.');
@@ -1617,9 +2059,12 @@ function AgentEditor({
   return (
     <section className="panel" style={{ marginTop: 14, padding: 18 }}>
       <div className="row between">
-        <b>{agent ? `Edit ${agent.name}` : 'Add a connected agent'}</b>
+        <b>{agent ? `Edit ${agent.name}` : 'Add a custom agent'}</b>
         <button className="btn sm btn-ghost" onClick={onClose}>✕</button>
       </div>
+      <p className="small muted" style={{ margin: '6px 0 0' }}>
+        For a client that isn't in the catalog. You name it, and you can rename it later from its row.
+      </p>
       <label className="field" style={{ marginTop: 14, maxWidth: 320 }}>
         Agent name
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. research-bot" />

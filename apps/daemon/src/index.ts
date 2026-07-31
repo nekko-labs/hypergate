@@ -34,10 +34,16 @@ import {
   updatePlan,
   GITHUB_FEED_URL,
   NPM_FEED_URL,
+  accountFromTokens,
+  accountFromUserinfo,
+  authorizationServersOf,
+  decodeJwtClaims,
+  userinfoEndpoint,
   type OAuthStore,
 } from '@hypergate/core';
 import { openStore } from './store.ts';
 import * as shell from './shell.ts';
+import * as autostart from './autostart.ts';
 import type {
   ManagedServerConfig,
   GatewayInfo,
@@ -61,6 +67,7 @@ import type {
   UpdateInfo,
   ApplyUpdateResponse,
   InstallChannel,
+  ServerAccount,
 } from '@hypergate/shared';
 
 /**
@@ -105,7 +112,7 @@ const OAUTH_DIR = join(DATA_DIR, 'oauth');
 // sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
-const VERSION = '0.13.0';
+const VERSION = '0.14.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -209,12 +216,10 @@ const loadToken = (): string => {
 // Preferences live in ~/.hypergate/settings.json. `runOnStartup` is backed by a
 // real OS login item, so it reflects reality even when changed outside the app.
 //
-// That login item is delegated to the `hypergate` shell binary, which implements
-// the idiomatic per-user mechanism on each platform (HKCU Run key, LaunchAgent,
-// XDG autostart). It is therefore supported wherever the shell is installed,
-// replacing the old Windows-only PowerShell path; without the shell we report
-// `startupSupported: false` and the toggle is inert.
-const STARTUP_SUPPORTED = shell.hasShell();
+// The login item goes through the `hypergate` shell binary when it is installed
+// (it owns the idiomatic per-user mechanism on each platform), and is written by
+// the daemon itself when it isn't — see autostart.ts. Either way the toggle
+// works, which it previously did not on an install with no shell.
 const pexecFile = promisify(execFile);
 
 // ── popularity ranking (lazy, cached; never fetched on boot) ────────────────
@@ -500,7 +505,7 @@ const runClientCli = async (file: string, args: string[]): Promise<{ ok: boolean
   }
 };
 
-const defaultSettings = (): DaemonSettings => ({ runOnStartup: false, startMinimized: true });
+const defaultSettings = (): DaemonSettings => ({ runOnStartup: false, startMinimized: true, closeAction: 'ask' });
 const loadSettings = (): DaemonSettings => {
   try {
     if (existsSync(SETTINGS_PATH)) {
@@ -517,23 +522,20 @@ const saveSettings = (s: DaemonSettings): void => {
   writeFileSync(SETTINGS_PATH, JSON.stringify(s, null, 2));
 };
 
-/** Is the login item present? Answered by the shell, so it reflects real OS state. */
-const isStartupEnabled = async (): Promise<boolean> => (STARTUP_SUPPORTED ? shell.autostartEnabled() : false);
-
-/** Add or remove the login item that starts the tray agent. */
-const setStartupEnabled = async (on: boolean): Promise<void> => {
-  if (!STARTUP_SUPPORTED) return;
-  if (!shell.setAutostart(on)) throw new Error('the hypergate shell could not change the login item');
-};
-
 /** The `/api/settings` payload: persisted prefs reconciled with the real OS autostart state. */
-const settingsInfo = async (): Promise<SettingsInfo> => {
+const settingsInfo = (): SettingsInfo => {
   const s = loadSettings();
+  const startupVia = autostart.via();
   return {
-    runOnStartup: await isStartupEnabled(),
+    // Read from the OS, not from the file: the login item can be removed in
+    // Task Manager or System Settings, and the toggle must not lie about it.
+    runOnStartup: startupVia === 'none' ? false : autostart.enabled(),
     startMinimized: s.startMinimized,
+    closeAction: s.closeAction,
     platform: process.platform,
-    startupSupported: STARTUP_SUPPORTED,
+    startupSupported: startupVia !== 'none',
+    startupVia,
+    startupCommand: autostart.startupCommand(),
   };
 };
 
@@ -643,6 +645,162 @@ const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
 /** A remote server that uses OAuth and has no usable token yet needs the user to sign in. */
 const needsAuth = (cfg: ManagedServerConfig): boolean =>
   cfg.runtime === 'remote' && cfg.auth !== 'none' && !makeProvider(cfg).hasTokens();
+
+// ── which account each remote server is signed in as ────────────────────────
+// "Connected" is only half the answer: a remote server is reached with one
+// person's grant, and which one decides what the agent can see. The cheap route
+// is the grant itself (an id_token, or a JWT access token) and costs nothing.
+// When the token is opaque — which plenty of providers issue — we ask the
+// provider once, following the same discovery chain the MCP OAuth flow already
+// used, and cache the answer in the grant blob so it is one call per sign-in,
+// not one per poll.
+const K_ACCOUNT = 'account';
+
+/** Servers we've already asked the network about, so a miss costs one attempt. */
+const accountProbed = new Set<string>();
+
+/**
+ * Derived accounts, memoised against the access token they came from.
+ *
+ * `/api/servers` is polled every couple of seconds and would otherwise decode a
+ * JWT per remote server every time. Keying on the token means a refresh or a
+ * re-login invalidates the memo for free; a successful `userinfo` probe has to
+ * clear it explicitly, since it lands after the "nothing found" answer was
+ * already memoised.
+ */
+const accountMemo = new Map<string, { token: string; account?: ServerAccount }>();
+
+const cachedAccount = (id: string): ServerAccount | undefined => {
+  const raw = secretStore(id).load(K_ACCOUNT);
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as ServerAccount;
+  } catch {
+    return undefined;
+  }
+};
+const cacheAccount = (id: string, account: ServerAccount): void => {
+  secretStore(id).save(K_ACCOUNT, JSON.stringify(account));
+};
+const forgetAccount = (id: string): void => {
+  secretStore(id).remove(K_ACCOUNT);
+  accountProbed.delete(id);
+  accountMemo.delete(id);
+};
+
+/** The identity the stored grant states about itself. No network, always cheap. */
+const accountFromGrant = (cfg: ManagedServerConfig): ServerAccount | undefined => {
+  if (cfg.runtime !== 'remote' || cfg.auth === 'none') return undefined;
+  const tokens = makeProvider(cfg).tokens();
+  if (!tokens?.access_token) return undefined;
+  const memo = accountMemo.get(cfg.id);
+  if (memo?.token === tokens.access_token) return memo.account;
+  const account = accountFromTokens(tokens) ?? cachedAccount(cfg.id);
+  accountMemo.set(cfg.id, { token: tokens.access_token, account });
+  return account;
+};
+
+const fetchJsonOr = async (url: string, signal: AbortSignal, token?: string): Promise<unknown | undefined> => {
+  try {
+    const res = await fetch(url, {
+      signal,
+      headers: {
+        'User-Agent': 'hypergate',
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!res.ok) return undefined;
+    return (await res.json()) as unknown;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Ask the provider who this grant belongs to, once.
+ *
+ * The chain is the MCP/OAuth one: the resource server's RFC 9728 document names
+ * its authorization server, whose metadata names a `userinfo` endpoint, which
+ * the access token can read. Every hop is optional and every failure is silent —
+ * a server with no identity endpoint is a normal server, not a broken one.
+ *
+ * The token only ever goes to the issuer's own origin (enforced in
+ * `userinfoEndpoint`), because the metadata that named the endpoint was fetched
+ * without authentication.
+ */
+const probeAccount = async (cfg: ManagedServerConfig): Promise<ServerAccount | undefined> => {
+  const provider = makeProvider(cfg);
+  const token = provider.tokens()?.access_token;
+  if (!token || !cfg.url) return undefined;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const resource = new URL(cfg.url);
+    // The issuer as the grant itself names it beats discovery when present.
+    const fromIss = (() => {
+      const iss = decodeJwtClaims(token)?.iss;
+      return typeof iss === 'string' ? iss : undefined;
+    })();
+    const prm = await fetchJsonOr(new URL('/.well-known/oauth-protected-resource', resource.origin).toString(), ctrl.signal);
+    const issuers = [fromIss, ...authorizationServersOf(prm), resource.origin].filter(
+      (v): v is string => typeof v === 'string' && v.length > 0,
+    );
+
+    for (const issuer of [...new Set(issuers)]) {
+      let origin: string;
+      try {
+        origin = new URL(issuer).origin;
+      } catch {
+        continue;
+      }
+      for (const wellKnown of ['/.well-known/openid-configuration', '/.well-known/oauth-authorization-server']) {
+        const metadata = await fetchJsonOr(new URL(wellKnown, origin).toString(), ctrl.signal);
+        const endpoint = userinfoEndpoint(metadata, origin);
+        if (!endpoint) continue;
+        const account = accountFromUserinfo(await fetchJsonOr(endpoint, ctrl.signal, token));
+        if (account) return account;
+      }
+    }
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * Decorate the supervisor's statuses with the account behind each remote server.
+ *
+ * Synchronous by design: `/api/servers` is polled every couple of seconds, and
+ * must never wait on a provider. A server whose grant says nothing gets one
+ * background probe, and the answer shows up on the next poll.
+ */
+const withAccounts = (list: ServerStatus[]): ServerStatus[] =>
+  list.map((s) => {
+    const cfg = servers.find((c) => c.id === s.id);
+    if (!cfg || cfg.runtime !== 'remote' || cfg.auth === 'none') return s;
+    const signedIn = makeProvider(cfg).hasTokens();
+    if (!signedIn) return s;
+    const account = accountFromGrant(cfg);
+    if (account) return { ...s, signedIn, account };
+    // Nothing free to show. Ask the provider once, in the background.
+    if (!accountProbed.has(cfg.id)) {
+      accountProbed.add(cfg.id);
+      void probeAccount(cfg)
+        .then((found) => {
+          if (!found) return;
+          cacheAccount(cfg.id, found);
+          // The memo already recorded "nothing found" for this token; drop it,
+          // or the answer we just fetched would never be read back.
+          accountMemo.delete(cfg.id);
+        })
+        .catch(() => {
+          /* an unidentifiable account is not an error */
+        });
+    }
+    return { ...s, signedIn };
+  });
 
 // Set to a debounced store writer in HTTP mode; stays a no-op in stdio mode so a
 // transient `--stdio` spawn never clobbers the resident daemon's aggregates.
@@ -905,6 +1063,9 @@ if (STDIO_MODE) {
       agentId: a.id,
       entryName: ENTRY_NAME,
       url,
+      // Echoed so the UI knows which of the targets below is *this* agent's,
+      // and can show that one alone instead of a strip of every other client.
+      target: a.target,
       platform: process.platform,
       defaultShell: defaultShellFor(process.platform),
       shells: shellsFor(process.platform),
@@ -1014,6 +1175,8 @@ if (STDIO_MODE) {
       if (!cfg) return oauthPage(res, false, 'Unknown or expired authorization request. Try adding the server again.');
       const result = await runOAuth(cfg, code);
       if (!result.authorized) return oauthPage(res, false, `Could not complete sign-in: ${result.error ?? 'unknown error'}`);
+      // A fresh grant may be a different person; the old label must not stick.
+      forgetAccount(cfg.id);
       const live = servers.find((s) => s.id === cfg.id);
       if (live) {
         live.enabled = true;
@@ -1106,19 +1269,22 @@ if (STDIO_MODE) {
       );
     }
 
-    // ── desktop/service settings (autostart + start-minimized) ───────────────
-    if (pathname === '/api/settings' && req.method === 'GET') return json(res, 200, await settingsInfo());
+    // ── desktop/service settings (autostart, start-minimized, close button) ──
+    if (pathname === '/api/settings' && req.method === 'GET') return json(res, 200, settingsInfo());
     if (pathname === '/api/settings' && req.method === 'PATCH') {
       try {
         const b = JSON.parse(await readBody(req)) as UpdateSettingsRequest;
         const cur = loadSettings();
         if (typeof b.startMinimized === 'boolean') cur.startMinimized = b.startMinimized;
-        if (typeof b.runOnStartup === 'boolean' && STARTUP_SUPPORTED) {
-          await setStartupEnabled(b.runOnStartup);
+        if (b.closeAction === 'ask' || b.closeAction === 'tray' || b.closeAction === 'quit') cur.closeAction = b.closeAction;
+        if (typeof b.runOnStartup === 'boolean') {
+          // Let the OS error surface: "could not write the Run key" is a far
+          // better answer than a toggle that silently springs back.
+          autostart.set(b.runOnStartup);
           cur.runOnStartup = b.runOnStartup;
         }
         saveSettings(cur);
-        return json(res, 200, await settingsInfo());
+        return json(res, 200, settingsInfo());
       } catch (e) {
         return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
       }
@@ -1178,8 +1344,10 @@ if (STDIO_MODE) {
     if (pathname === '/api/clients' && req.method === 'GET') return json(res, 200, clients.map(agentInfo));
     if (pathname === '/api/clients' && req.method === 'POST') {
       try {
-        const b = JSON.parse(await readBody(req)) as { name?: string; servers?: unknown };
-        const name = (b.name ?? '').trim();
+        const b = JSON.parse(await readBody(req)) as { name?: string; servers?: unknown; target?: unknown };
+        // A known harness names itself; only a custom agent needs a name typed.
+        const picked = typeof b.target === 'string' ? connectTarget(b.target) : undefined;
+        const name = ((b.name ?? '') || (picked?.name ?? '')).trim();
         if (!name) return json(res, 400, { error: 'name required' });
         const agent: AgentClient = {
           id: `${slugId(name)}-${randomBytes(2).toString('hex')}`,
@@ -1187,6 +1355,9 @@ if (STDIO_MODE) {
           token: randomBytes(24).toString('hex'),
           servers: normServers(b.servers),
           createdAt: new Date().toISOString(),
+          // Only a target we actually know: the UI shows an official agent's
+          // name as unchangeable, so an unrecognised id must not confer that.
+          ...(picked ? { target: picked.id } : {}),
         };
         clients.push(agent);
         saveClients(clients);
@@ -1290,7 +1461,13 @@ if (STDIO_MODE) {
       if (!agent) return json(res, 404, { error: 'not_found' });
       try {
         const b = JSON.parse(await readBody(req)) as { name?: string; servers?: unknown };
-        if (typeof b.name === 'string' && b.name.trim()) agent.name = b.name.trim();
+        // An agent created from the catalog is that product: its name is the
+        // product's name, and renaming it would leave a "Cursor" row that is
+        // Cursor's token but says something else. Permissions stay editable.
+        if (typeof b.name === 'string' && b.name.trim()) {
+          if (agent.target) return json(res, 409, { error: 'an official agent cannot be renamed' });
+          agent.name = b.name.trim();
+        }
         if (b.servers !== undefined) agent.servers = normServers(b.servers);
         saveClients(clients);
         return json(res, 200, agentInfo(agent));
@@ -1304,7 +1481,7 @@ if (STDIO_MODE) {
       return json(res, 200, { ok: true });
     }
 
-    if (pathname === '/api/servers' && req.method === 'GET') return json(res, 200, supervisor.list());
+    if (pathname === '/api/servers' && req.method === 'GET') return json(res, 200, withAccounts(supervisor.list()));
 
     // add a server (custom config, or a registry entry merged with overrides)
     if (pathname === '/api/servers' && req.method === 'POST') {
@@ -1395,6 +1572,7 @@ if (STDIO_MODE) {
       if (!cfg) return json(res, 404, { error: 'not_found' });
       await supervisor.stop(cfg.id);
       makeProvider(cfg).invalidateCredentials('all');
+      forgetAccount(cfg.id);
       cfg.enabled = false;
       saveConfig(servers);
       supervisor.markAuthorizing(cfg);

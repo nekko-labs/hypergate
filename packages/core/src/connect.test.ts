@@ -24,18 +24,38 @@ describe('connect targets', () => {
       if (t.method === 'cli') {
         expect(t.command, t.id).toBeTruthy();
         expect(connectArgv(t.id, ctx), t.id).toBeDefined();
-      } else {
+      } else if (t.method === 'config') {
         expect(connectSnippet(t.id, ctx), t.id).toBeTruthy();
+        expect(configPathFor(t.id, 'linux'), t.id).toBeTruthy();
       }
+    }
+  });
+
+  it('describes every agent in the picker', () => {
+    // The catalog doubles as "+ Add agent", so a nameless or blurb-less entry
+    // would show up there as an unexplained button.
+    for (const t of CONNECT_TARGETS) {
+      expect(t.name, t.id).toBeTruthy();
+      expect(t.blurb, t.id).toBeTruthy();
+    }
+  });
+
+  it('offers the popular agents by name', () => {
+    const ids = CONNECT_TARGETS.map((t) => t.id);
+    for (const id of ['claude-code', 'cursor', 'kotrain', 'devin', 'hermes', 'odysseus', 'openclaw']) {
+      expect(ids, id).toContain(id);
     }
   });
 
   it('only claims a config path for clients that read one', () => {
     expect(configPathFor('cursor', 'linux')).toBe('~/.cursor/mcp.json');
+    expect(configPathFor('kotrain', 'linux')).toBe('~/.kotrain/settings.json');
+    expect(configPathFor('openclaw', 'linux')).toBe('~/.openclaw/openclaw.json');
+    expect(configPathFor('hermes', 'linux')).toBe('~/.hermes/config.yaml');
     expect(configPathFor('vscode', 'win32')).toContain('APPDATA');
     expect(configPathFor('vscode', 'darwin')).toContain('Library');
-    // Open Paw auto-detects the daemon, so there is no file to point at.
-    expect(configPathFor('openpaw', 'linux')).toBeUndefined();
+    // Devin keeps its MCP list in the cloud, so there is no file to point at.
+    expect(configPathFor('devin', 'linux')).toBeUndefined();
   });
 
   it('resolves known ids only', () => {
@@ -73,6 +93,22 @@ describe('connect commands', () => {
       headers: { Authorization: `Bearer ${ctx.token}` },
     });
     expect(JSON.parse(connectSnippet('vscode', ctx)!).servers[ENTRY_NAME].url).toBe(ctx.url);
+    // OpenClaw nests under `mcp.servers` and names its transport explicitly.
+    expect(JSON.parse(connectSnippet('openclaw', ctx)!).mcp.servers[ENTRY_NAME].transport).toBe('streamable-http');
+    // Kotrain's list is an array of configs, each carrying its own bearer token.
+    const kotrain = JSON.parse(connectSnippet('kotrain', ctx)!).mcpServers;
+    expect(Array.isArray(kotrain)).toBe(true);
+    expect(kotrain[0]).toMatchObject({ id: ENTRY_NAME, url: ctx.url, token: ctx.token, enabled: true });
+    // Hermes is YAML, with every value quoted so a numeric-looking token stays a string.
+    expect(connectSnippet('hermes', ctx)).toContain(`Authorization: "Bearer ${ctx.token}"`);
+  });
+
+  it('adds the gateway to OpenClaw over streamable HTTP', () => {
+    const argv = connectArgv('openclaw', ctx)!;
+    expect(argv.add).toEqual([
+      'mcp', 'add', ENTRY_NAME, '--url', ctx.url,
+      '--transport', 'streamable-http', '--header', 'Authorization: Bearer deadbeef',
+    ]);
   });
 });
 
@@ -111,16 +147,23 @@ describe('agentConnectTarget', () => {
     id: 'claude-code', name: 'Claude Code', method: 'cli', command: 'claude', found: true, ...over,
   });
 
-  it('fills a CLI target with argv + per-shell commands', () => {
+  it('fills a CLI target with argv + per-shell commands, and a snippet to fall back on', () => {
     const t = agentConnectTarget(status({}), ctx);
     expect(t.argv?.[0]).toBe('mcp');
     expect(t.commands?.bash.startsWith('claude mcp add')).toBe(true);
-    expect(t.snippet).toBeUndefined();
+    // A machine without the CLI still needs a way in.
+    expect(t.snippet).toContain(ctx.token);
   });
 
   it('fills a config target with a snippet instead', () => {
     const t = agentConnectTarget(status({ id: 'cursor', name: 'Cursor', method: 'config', command: undefined }), ctx);
     expect(t.argv).toBeUndefined();
     expect(t.snippet).toContain(ctx.token);
+  });
+
+  it('hands a manual target the raw endpoint + token to type in', () => {
+    const t = agentConnectTarget(status({ id: 'devin', name: 'Devin', method: 'manual', command: undefined }), ctx);
+    expect(t.argv).toBeUndefined();
+    expect(t.token).toBe(ctx.token);
   });
 });
