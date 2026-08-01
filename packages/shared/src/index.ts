@@ -148,6 +148,16 @@ export interface ServerStatus {
   toolDetails?: ToolInfo[];
   /** Last error message, if state === 'errored'. */
   error?: string;
+  /**
+   * The most recent line this server wrote, for the collapsed row.
+   *
+   * A running server's log is the one thing a list can't summarise with a pill:
+   * "ready" and "ready but complaining every second" look identical. Carrying
+   * the last line on the status the UI already polls means the list can show it
+   * without a request per row. Absent for a server that has said nothing (a
+   * remote one never does: it has no stderr).
+   */
+  lastLog?: string;
   startedAt?: string;
   restarts: number;
   /** Remote endpoint (remote runtime), surfaced for display. */

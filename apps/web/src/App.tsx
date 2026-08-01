@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useEffect, useState, useCallback, useId, useRef, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type {
   ServerStatus,
@@ -421,18 +421,19 @@ export function App() {
           {view === 'servers' ? (
             <>
               <div className="pagehead">
-                <div>
+                <div className="pagehead-copy">
                   <h1>Every MCP server. <span className="grad-text">One endpoint.</span></h1>
                   <p>Run servers in sandboxed processes or Docker, supervise them, and connect any agent through a single gateway URL — with full local visibility into every call.</p>
                 </div>
-                <div className="summary">
-                  <b>{servers?.length ?? '–'}</b> servers<span className="sep">·</span>
-                  <b>{running}</b> running<span className="sep">·</span>
-                  <b>{tools}</b> tools
+                <div className="pagehead-meta">
+                  {gateway && <GatewayBar gateway={gateway} />}
+                  <div className="summary">
+                    <b>{servers?.length ?? '–'}</b> servers<span className="sep">·</span>
+                    <b>{running}</b> running<span className="sep">·</span>
+                    <b>{tools}</b> tools
+                  </div>
                 </div>
               </div>
-
-              {gateway && <GatewayBar gateway={gateway} />}
 
               <div className="section-title">
                 Active servers
@@ -873,32 +874,25 @@ function ThemeSwitch() {
 }
 
 /**
- * The gateway endpoint itself: URL + the master token, and a pointer to the one
- * place that connects agents. The snippet tabs that used to live here are gone —
- * they handed out the full-access master token and duplicated what Connected
- * agents does better (a scoped, revocable token per client, installed for you).
+ * The gateway endpoint itself: URL + the master token. It sits beside the page
+ * title so the server roster remains the first full-width working surface.
  */
 function GatewayBar({ gateway }: { gateway: GatewayInfo }) {
   const [copied, copy] = useCopy();
   const [showToken, setShowToken] = useState(false);
   const token = gateway.token ?? '';
   return (
-    <div className="gwbar">
-      <div className="gwbar-row">
+    <div className="gwbar" aria-label="Gateway credentials">
+      <div className="gw-field">
         <span className="glabel"><span className="dot-grad" />Gateway</span>
-        <span className="url">{gateway.url}</span>
-        <button className="btn sm" onClick={() => copy('url', gateway.url)}>{copied === 'url' ? 'Copied!' : 'Copy'}</button>
-        <div className="spacer" style={{ flex: 1 }} />
-        <span className="tok">master token {showToken ? token.slice(0, 12) + '…' : '••••••'}</span>
-        <button className="btn sm btn-ghost" onClick={() => setShowToken(!showToken)}>{showToken ? 'Hide' : 'Show'}</button>
-        <button className="btn sm" onClick={() => copy('token', token)}>{copied === 'token' ? 'Copied!' : 'Copy'}</button>
+        <span className="url" title={gateway.url}>{gateway.url}</span>
+        <button className="btn sm" aria-label="Copy gateway URL" onClick={() => copy('url', gateway.url)}>{copied === 'url' ? 'Copied!' : 'Copy'}</button>
       </div>
-      <div className="gwbar-note">
-        <span className="small muted">
-          The master token reaches every server. To connect a client, give it its own scoped token in{' '}
-          <b>Connected agents</b> — Hypergate can set it up in the client for you.
-        </span>
-        <a className="btn sm btn-accent" href="#agents">Connect an agent ↓</a>
+      <div className="gw-field">
+        <span className="glabel">Token</span>
+        <span className="tok" title="Full-access master token">{showToken ? token.slice(0, 12) + '…' : '••••••'}</span>
+        <button className="btn sm btn-ghost" aria-pressed={showToken} onClick={() => setShowToken(!showToken)}>{showToken ? 'Hide' : 'Show'}</button>
+        <button className="btn sm" aria-label="Copy master token" onClick={() => copy('token', token)}>{copied === 'token' ? 'Copied!' : 'Copy'}</button>
       </div>
     </div>
   );
@@ -915,15 +909,18 @@ const STATE_PILL: Record<string, string> = {
 /**
  * The two row actions that need no words: cycle it, or throw it away. Both are
  * universally read as icons, and dropping the labels keeps a long action row
- * from pushing the useful controls off the edge. The semantic button tint
- * (amber = cycle, red = destroy) still carries the meaning, and every icon
- * button keeps a title + aria-label so the intent survives without the glyph.
+ * from pushing the useful controls off the edge. They carry no box either: in
+ * a row that already holds pills, chips and a switch, a bordered button is a
+ * fourth kind of thing competing for the same glance, so the glyph is the
+ * control and the semantic tint (amber = cycle, red = destroy) arrives on
+ * hover. Every icon button keeps a title + aria-label so the intent survives
+ * without the glyph.
  */
 function Icon({ name }: { name: 'restart' | 'trash' }) {
   return (
     <svg
-      viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"
-      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"
+      fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"
     >
       {name === 'restart' ? (
         <>
@@ -955,10 +952,123 @@ function IconBtn({
   );
 }
 
+/** The disclosure caret on an expandable row: a chevron that turns as it opens. */
+function Caret({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`row-caret ${open ? 'open' : ''}`} viewBox="0 0 24 24" width="13" height="13"
+      aria-hidden="true" focusable="false"
+      fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
+    >
+      <path d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+/**
+ * A list row that opens.
+ *
+ * The row itself is the disclosure: everything about the thing lives inside it
+ * rather than behind a button per topic (Logs, Agents, Tools: three buttons
+ * that each answered "tell me more about this row"). The head stays the
+ * summary you scan the list with, and one click anywhere on it swaps in the
+ * whole story.
+ *
+ * The click target is the head, not a wrapping `<button>`: the head holds
+ * switches, inputs and links, and interactive content inside a button is
+ * neither valid nor navigable. The caret is the real control for the keyboard
+ * and for assistive tech; clicking the head is the mouse's shortcut to it.
+ */
+function ExpandRow({
+  open, onToggle, label, head, sub, actions, children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  /** What this row is, for the caret's accessible name. */
+  label: string;
+  /** The summary: pills, name, chips. */
+  head: ReactNode;
+  /** Anything that stays under the head in both states (a note, the last log line). */
+  sub?: ReactNode;
+  /** The controls, kept out of the click target. */
+  actions: ReactNode;
+  children: ReactNode;
+}) {
+  const panelId = useId();
+  return (
+    <div className={`list-row expandable ${open ? 'open' : ''}`}>
+      <div className="row-top" onClick={onToggle}>
+        <div className="list-head between">
+          <div className="row wrap-gap row-ident">
+            <button
+              className="caret-btn"
+              aria-expanded={open}
+              aria-controls={panelId}
+              aria-label={`${open ? 'Hide' : 'Show'} details for ${label}`}
+              onClick={(e) => { e.stopPropagation(); onToggle(); }}
+            >
+              <Caret open={open} />
+            </button>
+            {head}
+          </div>
+          {/* Clicks on a control are about the thing, not about the row. */}
+          <div className="row row-actions" onClick={(e) => e.stopPropagation()}>{actions}</div>
+        </div>
+        {sub}
+      </div>
+      {open && <RowDetail id={panelId}>{children}</RowDetail>}
+    </div>
+  );
+}
+
+/** The opened half of a row, brought into view when it lands below the fold. */
+function RowDetail({ id, children }: { id: string; children: ReactNode }) {
+  const reveal = useRevealOnMount<HTMLDivElement>();
+  return <div className="row-detail" id={id} ref={reveal}>{children}</div>;
+}
+
+/** One labelled section inside an opened row. */
+function Block({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return (
+    <section className="detail-block">
+      <div className="detail-label">{label}</div>
+      {children}
+    </section>
+  );
+}
+
+/**
+ * A server's stderr, tailed while the row is open.
+ *
+ * Follows the newest line the way a terminal does, but only while you are
+ * already at the bottom: scrolling up to read something is a decision, and a
+ * pane that yanks you back two seconds later is unusable.
+ */
+function LogPane({ lines }: { lines: string[] | null }) {
+  const ref = useRef<HTMLPreElement>(null);
+  const stick = useRef(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+  if (!lines) return <div className="small muted logs-note">Reading the log…</div>;
+  return (
+    <pre
+      className="logs"
+      ref={ref}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      }}
+    >
+      {lines.join('\n') || '(no output yet)'}
+    </pre>
+  );
+}
+
 function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClientInfo[]; onChange: () => void }) {
+  const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<string[] | null>(null);
-  const [showTools, setShowTools] = useState(false);
-  const [showAgents, setShowAgents] = useState(false);
   const [armed, setArmed] = useState(false);
   const allowedBy = agents.filter((a) => a.servers === '*' || a.servers.includes(s.id)).length;
   const busy = s.state === 'starting';
@@ -974,25 +1084,63 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
     openAuth(st?.authUrl);
     onChange();
   };
-  const toggleLogs = async () => {
-    if (logs) return setLogs(null);
-    setLogs((await api.logs(s.id).catch(() => ({ logs: [] }))).logs);
-  };
+
+  // Open rows tail the log. The list poll carries the last line for the
+  // collapsed rows, but a window onto the output is only worth opening if it
+  // keeps up with what the server is saying.
+  useEffect(() => {
+    if (!open) { setLogs(null); return; }
+    let live = true;
+    const pull = () => api.logs(s.id).then((r) => { if (live) setLogs(r.logs); }).catch(() => {});
+    void pull();
+    const t = setInterval(pull, 3000);
+    return () => { live = false; clearInterval(t); };
+  }, [open, s.id]);
+
   return (
-    <div className="list-row">
-      <div className="list-head between">
-        <div className="row wrap-gap">
+    <ExpandRow
+      open={open}
+      onToggle={() => setOpen((v) => !v)}
+      label={s.name}
+      head={
+        <>
           <span className={`pill ${STATE_PILL[s.state] ?? 'pill-stopped'}`}><span className="dot" />{s.state}</span>
           <span className="server-name">{s.name}</span>
           <span className="chip">{RUNTIME_CHIP[s.runtime] ?? '⚡ process'}</span>
           {isRemote && s.url && <span className="chip mono" title={s.url}>{new URL(s.url).host}</span>}
           <AccountChip s={s} />
-          {s.state === 'ready' && (
-            <button className="link-btn" onClick={() => setShowTools(!showTools)}>{s.tools.length} tools {showTools ? '▾' : '▸'}</button>
-          )}
+          {/* Counts are facts about the row, not buttons: the row itself is
+              what opens, and it opens onto both of these in full. */}
+          <span className="row-meta small muted">
+            {s.state === 'ready' && <span>{s.tools.length} tool{s.tools.length === 1 ? '' : 's'}</span>}
+            {agents.length > 0 && (
+              <span
+                style={allowedBy === 0 ? { color: 'var(--warning)' } : undefined}
+                title="Connected agents allowed to use this server through the gateway"
+              >
+                {allowedBy === 0 ? 'no agents' : `${allowedBy}/${agents.length} agents`}
+              </span>
+            )}
+          </span>
           {s.restarts > 0 && <span className="chip">{s.restarts} restarts</span>}
-        </div>
-        <div className="row">
+        </>
+      }
+      sub={
+        <>
+          {authorizing && (
+            <p className="small muted row-note">
+              Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.
+            </p>
+          )}
+          {s.error && !authorizing && <p className="small row-note" style={{ color: 'var(--danger)' }}>{s.error}</p>}
+          {/* What the server said last, where the Logs button used to be. An
+              errored row already carries the sentence that matters; the log
+              line under it would be the same news in a duller voice. */}
+          {!open && !s.error && s.lastLog && <div className="row-lastlog mono" title={s.lastLog}>{s.lastLog}</div>}
+        </>
+      }
+      actions={
+        <>
           {authorizing ? (
             <button className="btn sm btn-primary" onClick={() => void signIn()}>🔐 Sign in</button>
           ) : (
@@ -1014,16 +1162,6 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
           {!authorizing && (
             <IconBtn icon="restart" label={`Restart ${s.name}`} tone="warn" onClick={() => void act('restart')} disabled={busy} />
           )}
-          {agents.length > 0 && (
-            <button
-              className={`btn sm ${showAgents ? '' : allowedBy === 0 ? 'btn-warn' : ''}`}
-              onClick={() => setShowAgents(!showAgents)}
-              title="Which connected agents may use this server"
-            >
-              Agents {allowedBy}/{agents.length} {showAgents ? '▴' : '▾'}
-            </button>
-          )}
-          <button className="btn sm" onClick={() => void toggleLogs()}>Logs</button>
           {/* Remove takes the sign-in with it, so the trash asks once. Two
               clicks in the same spot, not a modal — the cost of a misclick is
               a re-authorization, not a lost afternoon. */}
@@ -1041,20 +1179,23 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
           ) : (
             <IconBtn icon="trash" label={`Remove ${s.name}`} tone="danger" onClick={() => setArmed(true)} />
           )}
-        </div>
-      </div>
-      {authorizing && (
-        <p className="small muted" style={{ margin: '8px 0 0' }}>
-          Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.
-        </p>
+        </>
+      }
+    >
+      {s.tools.length > 0 && (
+        <Block label={<>Tools <span className="dl-count">{s.tools.length}</span></>}>
+          <ToolList serverId={s.id} tools={s.toolDetails ?? s.tools.map((name) => ({ name }))} />
+        </Block>
       )}
-      {s.error && !authorizing && <p className="small" style={{ color: 'var(--danger)', margin: '8px 0 0' }}>{s.error}</p>}
-      {showAgents && <ServerAgents server={s} agents={agents} onChange={onChange} />}
-      {showTools && s.tools.length > 0 && (
-        <ToolList serverId={s.id} tools={s.toolDetails ?? s.tools.map((name) => ({ name }))} />
+      {agents.length > 0 && (
+        <Block label={<>Agents <span className="dl-count">{allowedBy}/{agents.length}</span></>}>
+          <ServerAgents server={s} agents={agents} onChange={onChange} />
+        </Block>
       )}
-      {logs && <pre className="logs">{logs.join('\n') || '(no output yet)'}</pre>}
-    </div>
+      <Block label={<>Logs {isRemote && <span className="dl-note">a remote server runs on its provider's machine, so it has no local output</span>}</>}>
+        <LogPane lines={logs} />
+      </Block>
+    </ExpandRow>
   );
 }
 
@@ -1133,7 +1274,7 @@ function ServerAgents({ server, agents, onChange }: { server: ServerStatus; agen
         return (
           <div key={a.id} className="perm-toggle-row">
             <div className="row" style={{ gap: 8, minWidth: 0 }}>
-              <span className="agent-dot" />
+              <AgentMark id={a.target} name={a.name} small />
               <span className="setting-label">{a.name}</span>
               {a.servers === '*' ? (
                 <span className="chip chip-accent">all servers</span>
@@ -1906,9 +2047,30 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
  * on this machine.
  */
 const METHOD_LABEL: Record<string, string> = {
-  config: 'config snippet',
-  manual: 'add it in-app',
+  config: 'Config file',
+  manual: 'In-app setup',
 };
+
+const AGENT_BRAND_PATH: Record<string, string> = {
+    'claude-code': 'm4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z',
+    cursor: 'M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23',
+    'gemini-cli': 'M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81',
+  vscode: 'M23.15 2.587 18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z',
+};
+
+function AgentMark({ id, name, small = false }: { id?: string; name?: string; small?: boolean }) {
+  const resolved = id ?? ({ 'Claude Code': 'claude-code', Cursor: 'cursor', Kotrain: 'kotrain', OpenClaw: 'openclaw', 'Gemini CLI': 'gemini-cli', Hermes: 'hermes', 'VS Code': 'vscode', '.mcp.json': 'mcp-json', Odysseus: 'odysseus', Devin: 'devin' }[name ?? '']);
+  const className = `ag-mark ag-mark-${resolved ?? 'custom'} ${small ? 'small' : ''}`;
+  const path = resolved ? AGENT_BRAND_PATH[resolved] : undefined;
+  if (path) return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24"><path d={path} /></svg></span>;
+  if (resolved === 'openclaw') return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 17c1-5 3-8 7-10m0 10c0-5 1-9 4-12m1 12c1-4 2-6 4-8M4 18c4 2 10 2 16 0" /></svg></span>;
+  if (resolved === 'hermes') return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7c4 0 6 2 7 5 1-3 3-5 7-5-1 4-3 6-7 6-4 0-6-2-7-6Zm7 6v7m-3-3h6" /></svg></span>;
+  if (resolved === 'mcp-json') return <span className={className} aria-hidden="true"><span className="ag-glyph">{'{ }'}</span></span>;
+  if (resolved === 'kotrain') return <span className={className} aria-hidden="true"><span className="ag-glyph">K</span></span>;
+  if (resolved === 'odysseus') return <span className={className} aria-hidden="true"><span className="ag-glyph">O</span></span>;
+  if (resolved === 'devin') return <span className={className} aria-hidden="true"><span className="ag-glyph">D</span></span>;
+  return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></span>;
+}
 
 /**
  * The agent catalog: which harness are you connecting?
@@ -1943,37 +2105,49 @@ function AgentPicker({
       </div>
       <div className="ag-grid">
         {targets.map((t) => {
-          const added = agents.some((a) => a.target === t.id);
+          const added = agents.some((a) => a.target === t.id || (!a.target && a.name === t.name));
           const detected = t.method === 'cli' && t.found;
+          const loading = busy === t.id;
+          const state = loading
+            ? 'Connecting…'
+            : added
+              ? 'Connected'
+              : detected
+                ? `Ready${t.version ? ` · v${t.version}` : ''}`
+                : t.method === 'cli'
+                  ? 'CLI not found'
+                  : METHOD_LABEL[t.method];
+          const tone = loading ? 'loading' : added ? 'connected' : detected ? 'ready' : t.method;
           return (
             <button
               key={t.id}
               className={`ag-card ${detected ? 'ag-found' : ''} ${added ? 'ag-added' : ''}`}
-              disabled={busy === t.id}
+              disabled={loading}
               title={added ? `${t.name} is already connected — opens its instructions again` : t.hint}
               onClick={() => onPick(t)}
             >
-              <span className="ag-name">
-                {t.name}
-                {added && <span className="ag-tick" title="Already added">✓</span>}
+              <AgentMark id={t.id} />
+              <span className="ag-copy">
+                <span className="ag-line">
+                  <span className="ag-name">{t.name}</span>
+                  <span className={`ag-state ${tone}`}><span className="ag-state-dot" />{state}</span>
+                </span>
+                <span className="ag-blurb small muted">{t.blurb ?? t.hint}</span>
               </span>
-              <span className="ag-blurb small muted">{t.blurb ?? t.hint}</span>
-              <span className="ag-state small">
-                {busy === t.id
-                  ? 'adding…'
-                  : detected
-                    ? `detected${t.version ? ` · v${t.version}` : ''}`
-                    : t.method === 'cli'
-                      ? 'not installed'
-                      : METHOD_LABEL[t.method]}
-              </span>
+              <span className="ag-go" aria-hidden="true">›</span>
             </button>
           );
         })}
         <button className="ag-card ag-custom" onClick={onCustom}>
-          <span className="ag-name">Custom agent</span>
-          <span className="ag-blurb small muted">Anything else that speaks MCP. You name it, and pick what it may reach.</span>
-          <span className="ag-state small">name it yourself</span>
+          <AgentMark />
+          <span className="ag-copy">
+            <span className="ag-line">
+              <span className="ag-name">Custom agent</span>
+              <span className="ag-state manual"><span className="ag-state-dot" />Custom setup</span>
+            </span>
+            <span className="ag-blurb small muted">Anything else that speaks MCP. You name it, and pick what it may reach.</span>
+          </span>
+          <span className="ag-go" aria-hidden="true">›</span>
         </button>
       </div>
       {error && <div className="small" style={{ color: 'var(--danger)', marginTop: 10 }}>{error}</div>}
@@ -2064,9 +2238,9 @@ function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInf
                   onChange={onChange}
                 />
               ))}
+              {picking && <PickerRow>{picker()}</PickerRow>}
             </div></div>
           )}
-          {picking && <PickerPanel>{picker(() => setPicking(false))}</PickerPanel>}
         </>
       )}
       {custom && (
@@ -2086,11 +2260,11 @@ function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInf
   );
 }
 
-/** The agent picker's panel, which scrolls itself into view when it opens. */
-function PickerPanel({ children }: { children: ReactNode }) {
+/** The agent picker's roster row, which scrolls itself into view when it opens. */
+function PickerRow({ children }: { children: ReactNode }) {
   const reveal = useRevealOnMount<HTMLDivElement>();
   return (
-    <div className="panel panel-scroll" style={{ marginTop: 12, padding: 16 }} ref={reveal}>
+    <div className="list-row agent-picker-row" ref={reveal}>
       {children}
     </div>
   );
@@ -2132,6 +2306,9 @@ function AgentName({ agent, onChange }: { agent: AgentClientInfo; onChange: () =
       aria-label="Agent name"
       title={failed ? 'That rename did not save — check the daemon logs' : 'Click to rename'}
       size={Math.max(6, value.length)}
+      // The row opens when you click it; clicking into the name is asking to
+      // type, not to open the row.
+      onClick={(e) => e.stopPropagation()}
       onChange={(e) => setValue(e.target.value)}
       onBlur={() => void commit()}
       onKeyDown={(e) => {
@@ -2154,27 +2331,40 @@ function AgentRow({
   const [copied, copy] = useCopy();
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  /** Opened by hand. A quick-connect from the picker opens it from outside. */
+  const [opened, setOpened] = useState(false);
+  const open = opened || !!connect;
   const all = agent.servers === '*';
   const ids = agent.servers === '*' ? [] : agent.servers;
   /** Ids the agent still lists but that no longer exist, shown so they can be cleared. */
   const orphaned = ids.filter((id) => !servers.some((s) => s.id === id));
+  const allowed = all ? servers.length : servers.filter((s) => ids.includes(s.id)).length;
   const [permErr, setPermErr] = useState<string | null>(null);
-  const flip = async (serverId: string, allowed: boolean) => {
+  const flip = async (serverId: string, allowedNow: boolean) => {
     setBusy(serverId);
     setPermErr(null);
     try {
-      await api.setAgentServer(agent.id, serverId, allowed);
+      await api.setAgentServer(agent.id, serverId, allowedNow);
     } catch {
       setPermErr('Could not change that permission. Check the daemon logs.');
     }
     setBusy(null);
     onChange();
   };
+  const toggle = () => {
+    // A row the picker opened is closed by clearing that, or it would spring
+    // straight back open on the next render.
+    if (connect) { onConnect(); setOpened(false); return; }
+    setOpened((v) => !v);
+  };
   return (
-    <div className="list-row">
-      <div className="list-head between">
-        <div className="row wrap-gap">
-          <span className="agent-dot" />
+    <ExpandRow
+      open={open}
+      onToggle={toggle}
+      label={agent.name}
+      head={
+        <>
+          <AgentMark id={agent.target} name={agent.name} small />
           {agent.target ? (
             <>
               <span className="server-name">{agent.name}</span>
@@ -2183,60 +2373,79 @@ function AgentRow({
           ) : (
             <AgentName agent={agent} onChange={onChange} />
           )}
-          <span className="tok mono">{show ? agent.token.slice(0, 16) + '…' : '••••••'}</span>
+          {/* What it may reach, as a fact. The chips that change it are inside. */}
+          {all ? (
+            <span className="chip chip-accent" title="Including any server added later">all servers</span>
+          ) : servers.length === 0 ? (
+            <span className="small muted">no servers configured yet</span>
+          ) : allowed === 0 ? (
+            <span className="chip" style={{ color: 'var(--danger)' }}>blocked, no servers</span>
+          ) : (
+            <span className="small muted">can use {allowed}/{servers.length} servers</span>
+          )}
+        </>
+      }
+      actions={
+        <>
+          <span className="small muted">{agent.lastUsed ? `used ${fmtRel(agent.lastUsed)}` : 'never used'}</span>
+          <IconBtn icon="trash" label={`Remove ${agent.name}`} tone="danger" onClick={() => { void api.removeClient(agent.id).then(onChange); }} />
+        </>
+      }
+    >
+      <Block label="Token">
+        <div className="row wrap-gap">
+          <span className="tok mono">{show ? agent.token : '••••••••••••••••'}</span>
           <button className="btn sm btn-ghost" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button>
           <button className="btn sm" onClick={() => copy(`tok-${agent.id}`, agent.token)}>{copied === `tok-${agent.id}` ? 'Copied!' : 'Copy token'}</button>
         </div>
-        <div className="row">
-          <span className="small muted">{agent.lastUsed ? `used ${fmtRel(agent.lastUsed)}` : 'never used'}</span>
-          <button className={`btn sm ${connect ? '' : 'btn-accent'}`} onClick={onConnect}>Connect {connect ? '▴' : '▾'}</button>
-          <IconBtn icon="trash" label={`Remove ${agent.name}`} tone="danger" onClick={() => { void api.removeClient(agent.id).then(onChange); }} />
-        </div>
-      </div>
+      </Block>
+
       {/* Permissions are editable right here: one click per server, no dialog.
           The chips are the state and the control at once, so "what may this
           agent reach" and "change it" are the same place. */}
-      <div className="perm-row">
-        <span className="small muted">can use</span>
-        {all && <span className="chip chip-accent" title="Including any server added later">all servers</span>}
-        {servers.length === 0 ? (
-          <span className="small muted">no servers configured yet</span>
-        ) : (
-          servers.map((s) => {
-            const on = all || ids.includes(s.id);
-            return (
-              <button
-                key={s.id}
-                className={`chip chip-toggle ${on ? 'on' : 'off'}`}
-                aria-pressed={on}
-                disabled={busy === s.id}
-                title={on ? `Click to block ${s.name} for ${agent.name}` : `Click to allow ${s.name} for ${agent.name}`}
-                onClick={() => void flip(s.id, !on)}
-              >
-                {on ? '✓' : '✕'} {s.name}
-              </button>
-            );
-          })
-        )}
-        {orphaned.map((id) => (
-          <button
-            key={id}
-            className="chip chip-toggle on"
-            aria-pressed
-            disabled={busy === id}
-            title="This server is no longer configured. Click to drop it from the list"
-            onClick={() => void flip(id, false)}
-          >
-            ✓ {id} <span className="muted">(gone)</span>
-          </button>
-        ))}
-        {!all && ids.length === 0 && (
-          <span className="chip" style={{ color: 'var(--danger)' }}>blocked, no servers</span>
-        )}
-        {permErr && <span className="small" style={{ color: 'var(--danger)' }}>{permErr}</span>}
-      </div>
-      {connect && <AgentConnect agent={agent} initialTarget={connect.target} autoRun={connect.run} />}
-    </div>
+      <Block label="Can use">
+        <div className="perm-row">
+          {all && <span className="chip chip-accent" title="Including any server added later">all servers</span>}
+          {servers.length === 0 ? (
+            <span className="small muted">no servers configured yet</span>
+          ) : (
+            servers.map((s) => {
+              const on = all || ids.includes(s.id);
+              return (
+                <button
+                  key={s.id}
+                  className={`chip chip-toggle ${on ? 'on' : 'off'}`}
+                  aria-pressed={on}
+                  disabled={busy === s.id}
+                  title={on ? `Click to block ${s.name} for ${agent.name}` : `Click to allow ${s.name} for ${agent.name}`}
+                  onClick={() => void flip(s.id, !on)}
+                >
+                  {on ? '✓' : '✕'} {s.name}
+                </button>
+              );
+            })
+          )}
+          {orphaned.map((id) => (
+            <button
+              key={id}
+              className="chip chip-toggle on"
+              aria-pressed
+              disabled={busy === id}
+              title="This server is no longer configured. Click to drop it from the list"
+              onClick={() => void flip(id, false)}
+            >
+              ✓ {id} <span className="muted">(gone)</span>
+            </button>
+          ))}
+          {!all && ids.length === 0 && (
+            <span className="chip" style={{ color: 'var(--danger)' }}>blocked, no servers</span>
+          )}
+          {permErr && <span className="small" style={{ color: 'var(--danger)' }}>{permErr}</span>}
+        </div>
+      </Block>
+
+      <AgentConnect agent={agent} initialTarget={connect?.target} autoRun={connect?.run} />
+    </ExpandRow>
   );
 }
 
