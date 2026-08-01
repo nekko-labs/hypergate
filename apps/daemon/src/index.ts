@@ -26,11 +26,14 @@ import {
   shellsFor,
   HypergateOAuthProvider,
   setServerAllowed,
+  assetsFromGithub,
+  assetsFromNpm,
   detectInstallChannel,
   isNewerVersion,
   latestFromGithub,
   latestFromNpm,
   releaseUrlFor,
+  shellPackageFor,
   updatePlan,
   GITHUB_FEED_URL,
   NPM_FEED_URL,
@@ -44,6 +47,7 @@ import {
 import { openStore } from './store.ts';
 import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
+import { Updater } from './updater.ts';
 import type {
   ManagedServerConfig,
   GatewayInfo,
@@ -65,6 +69,7 @@ import type {
   SetAgentServerRequest,
   ShutdownResponse,
   UpdateInfo,
+  UpdateAsset,
   ApplyUpdateResponse,
   InstallChannel,
   ServerAccount,
@@ -112,7 +117,7 @@ const OAUTH_DIR = join(DATA_DIR, 'oauth');
 // sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
-const VERSION = '0.14.0';
+const VERSION = '0.15.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -318,7 +323,12 @@ interface UpdateCache {
   source?: 'npm' | 'github';
   releaseUrl?: string;
   error?: string;
+  /** The files an update would pull, resolved during the check that found it. */
+  assets?: UpdateAsset[];
 }
+
+/** The one download job, watched by the UI and handed to the shell to install. */
+const updater = new Updater(DATA_DIR);
 const loadUpdateCache = (): UpdateCache | undefined => {
   try {
     if (existsSync(UPDATE_PATH)) return JSON.parse(readFileSync(UPDATE_PATH, 'utf8')) as UpdateCache;
@@ -354,22 +364,49 @@ const fetchJson = async (url: string, signal: AbortSignal): Promise<unknown | un
   return (await res.json()) as unknown;
 };
 
-/** Ask the feeds what the newest published version is. Never throws. */
+/** The platform shell package for this machine, on whichever registry we use. */
+const SHELL_PKG = shellPackageFor(process.platform, process.arch);
+const SHELL_NPM_URL = NPM_URL.replace(/\/[^/]+$/, `/${SHELL_PKG}`);
+
+/**
+ * Ask the feeds what the newest published version is, and (only when that turns
+ * out to be an upgrade) what downloading it would involve. Never throws.
+ *
+ * Resolving the assets is deferred behind `isNewerVersion` on purpose: the
+ * common answer is "you're current", and that must stay a single lookup.
+ */
 const fetchLatest = async (): Promise<UpdateCache> => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 8000);
+  const checkedAt = new Date().toISOString();
   try {
-    const fromNpm = latestFromNpm(await fetchJson(NPM_URL, ctrl.signal).catch(() => undefined));
-    if (fromNpm) return { checkedAt: new Date().toISOString(), latest: fromNpm, source: 'npm', releaseUrl: releaseUrlFor(fromNpm) };
-    const fromGithub = latestFromGithub(await fetchJson(GITHUB_URL, ctrl.signal).catch(() => undefined));
-    if (fromGithub)
-      return { checkedAt: new Date().toISOString(), latest: fromGithub, source: 'github', releaseUrl: releaseUrlFor(fromGithub) };
+    const npmDoc = await fetchJson(NPM_URL, ctrl.signal).catch(() => undefined);
+    const fromNpm = latestFromNpm(npmDoc);
+    if (fromNpm) {
+      const assets = isNewerVersion(fromNpm, VERSION)
+        ? assetsFromNpm(
+            { main: npmDoc, shell: await fetchJson(SHELL_NPM_URL, ctrl.signal).catch(() => undefined) },
+            fromNpm,
+            process.platform,
+            process.arch,
+          )
+        : [];
+      return { checkedAt, latest: fromNpm, source: 'npm', releaseUrl: releaseUrlFor(fromNpm), assets };
+    }
+    const ghDoc = await fetchJson(GITHUB_URL, ctrl.signal).catch(() => undefined);
+    const fromGithub = latestFromGithub(ghDoc);
+    if (fromGithub) {
+      // The release carries the same npm tarballs as attachments, which is what
+      // lets an update install before anything is published to npm at all.
+      const assets = isNewerVersion(fromGithub, VERSION) ? assetsFromGithub(ghDoc, fromGithub, process.platform, process.arch) : [];
+      return { checkedAt, latest: fromGithub, source: 'github', releaseUrl: releaseUrlFor(fromGithub), assets };
+    }
     // Neither feed has a release. Today that is simply the truth (nothing is
     // published yet), so it is recorded as a successful check with no version
     // rather than an error the UI has to apologise for.
-    return { checkedAt: new Date().toISOString() };
+    return { checkedAt };
   } catch (e) {
-    return { checkedAt: new Date().toISOString(), error: e instanceof Error ? e.message : 'could not reach the update feed' };
+    return { checkedAt, error: e instanceof Error ? e.message : 'could not reach the update feed' };
   } finally {
     clearTimeout(timer);
   }
@@ -383,6 +420,9 @@ const updateInfo = (cache = loadUpdateCache()): UpdateInfo => {
   // The plan names the version it would install, so it only mentions one when
   // that version is actually an upgrade.
   const plan = updatePlan(channel, available ? latest : undefined, process.platform);
+  const assets = available ? (cache?.assets ?? []) : [];
+  const staged = updater.staged();
+  const size = assets.reduce((n, a) => n + (a.size ?? 0), 0);
   return {
     current: VERSION,
     latest,
@@ -392,8 +432,19 @@ const updateInfo = (cache = loadUpdateCache()): UpdateInfo => {
     releaseUrl: cache?.releaseUrl,
     channel,
     error: cache?.error,
+    // A staged copy of a version we have since outgrown is not an offer.
+    staged: staged && isNewerVersion(staged.version, VERSION) ? staged.version : undefined,
+    skipped: loadSettings().skippedUpdate,
+    canDownload: assets.length > 0,
+    downloadSize: size || undefined,
     ...plan,
   };
+};
+
+/** The assets for a version, from the cache the last check filled in. */
+const updateAssets = (version: string): UpdateAsset[] => {
+  const cache = loadUpdateCache();
+  return cache?.latest === version ? (cache.assets ?? []) : [];
 };
 
 // ── CLI detection (local, shell-free; powers the CLIs section) ──────────────
@@ -536,6 +587,7 @@ const settingsInfo = (): SettingsInfo => {
     startupSupported: startupVia !== 'none',
     startupVia,
     startupCommand: autostart.startupCommand(),
+    skippedUpdate: s.skippedUpdate,
   };
 };
 
@@ -1277,6 +1329,10 @@ if (STDIO_MODE) {
         const cur = loadSettings();
         if (typeof b.startMinimized === 'boolean') cur.startMinimized = b.startMinimized;
         if (b.closeAction === 'ask' || b.closeAction === 'tray' || b.closeAction === 'quit') cur.closeAction = b.closeAction;
+        // Skipping is per version, and `null` un-skips: the Settings page can
+        // always hand back a version the topbar was told to stop offering.
+        if (b.skippedUpdate === null) delete cur.skippedUpdate;
+        else if (typeof b.skippedUpdate === 'string' && /^[\w.+-]{1,64}$/.test(b.skippedUpdate)) cur.skippedUpdate = b.skippedUpdate;
         if (typeof b.runOnStartup === 'boolean') {
           // Let the OS error surface: "could not write the Run key" is a far
           // better answer than a toggle that silently springs back.
@@ -1298,6 +1354,15 @@ if (STDIO_MODE) {
     if (pathname === '/api/update/check' && req.method === 'POST') {
       const cached = loadUpdateCache();
       const force = url.searchParams.get('force') === '1';
+      // Pressing the button means "tell me": a version skipped earlier is being
+      // asked about again, so the skip is spent.
+      if (force) {
+        const s = loadSettings();
+        if (s.skippedUpdate) {
+          delete s.skippedUpdate;
+          saveSettings(s);
+        }
+      }
       const fresh = cached && !cached.error && Date.now() - new Date(cached.checkedAt).getTime() < UPDATE_TTL;
       if (fresh && !force) return json(res, 200, updateInfo(cached));
       const result = await fetchLatest();
@@ -1306,22 +1371,71 @@ if (STDIO_MODE) {
       saveUpdateCache(result);
       return json(res, 200, updateInfo(result));
     }
+    // How far along a download or install is. Free, offline, and polled while a
+    // job runs, so it stays a plain read of in-memory state.
+    if (pathname === '/api/update/progress' && req.method === 'GET') return json(res, 200, updater.progress());
+    // The outcome of the update that brought this daemon up, reported exactly
+    // once: without it, a successful update looks identical to a crash-restart.
+    if (pathname === '/api/update/result' && req.method === 'GET')
+      return json(res, 200, updater.takeLastResult() ?? { ok: false, version: '', finishedAt: '', error: 'none' });
+
+    // Download without installing. The daemon can do this itself and stay up:
+    // nothing it is running from is touched until the install, which is why
+    // "download only" is a real option and not just a delayed apply.
+    if (pathname === '/api/update/download' && req.method === 'POST') {
+      if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const info = updateInfo();
+      if (!info.updateAvailable || !info.latest) return json(res, 409, { ok: false, error: 'no update available' });
+      // Downloading a package this install could never be replaced with would
+      // be busywork, so the same guard that stops the install stops the fetch.
+      if (!info.canApply) return json(res, 400, { ok: false, error: info.note ?? 'this install cannot be updated in place' });
+      const assets = updateAssets(info.latest);
+      if (assets.length === 0)
+        return json(res, 400, { ok: false, error: 'the release does not carry an installable package for this platform' });
+      // Fire and forget: the caller watches /api/update/progress. A rejection
+      // is recorded in that state, so nothing is swallowed.
+      void updater.download(info.latest, assets).catch(() => {});
+      return json(res, 202, { ok: true, version: info.latest, total: info.downloadSize });
+    }
+
     // Apply it: same guards as /api/shutdown, since this stops the daemon (and
-    // the tray) so their files can be replaced. The work belongs to the shell,
-    // which outlives both and puts them back afterwards.
+    // the tray) so their files can be replaced. The download happens here (we
+    // can report it); the install belongs to the shell, which outlives both the
+    // daemon and the tray and puts them back afterwards.
     if (pathname === '/api/update/apply' && req.method === 'POST') {
       if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
       if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
       const info = updateInfo();
-      if (!info.updateAvailable) return json(res, 409, { ok: false, error: 'no update available' } as ApplyUpdateResponse);
+      if (!info.updateAvailable || !info.latest) return json(res, 409, { ok: false, error: 'no update available' } as ApplyUpdateResponse);
       if (!info.canApply)
         return json(res, 400, { ok: false, error: info.note ?? 'this install cannot be updated in place' } as ApplyUpdateResponse);
-      if (!shell.startUpdate())
+      if (!shell.hasShell())
         return json(res, 500, {
           ok: false,
           error: 'the hypergate shell binary is not available to run the update',
         } as ApplyUpdateResponse);
-      return json(res, 200, { ok: true, command: info.command } as ApplyUpdateResponse);
+
+      const assets = updateAssets(info.latest);
+      const version = info.latest;
+      // Answer now, work after. A download can take a minute, and the caller
+      // watching /api/update/progress learns more than a held-open request
+      // would tell it. Nothing staged and nothing to fetch is not an error:
+      // the shell falls back to a registry install.
+      const go = async (): Promise<void> => {
+        if (info.staged !== version && assets.length > 0) await updater.download(version, assets);
+        // From here the daemon is on borrowed time: the shell stops it so its
+        // files can be replaced.
+        updater.installing(version);
+        if (!shell.startUpdate()) throw new Error('the hypergate shell binary would not start');
+      };
+      void go().catch((e: unknown) => {
+        // A download failure already sits in the progress state; a shell that
+        // refused to start does not, and an install that never begins must not
+        // leave the UI spinning on "installing".
+        updater.failed(version, e instanceof Error ? e.message : 'the update could not be started');
+      });
+      return json(res, 202, { ok: true, command: info.command } as ApplyUpdateResponse);
     }
 
     // ── stop the daemon (the manager UI's Stop button) ───────────────────────

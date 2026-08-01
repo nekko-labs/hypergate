@@ -46,7 +46,7 @@ hypergate update                # what you have, what's out
 hypergate update --apply        # install it and restart Hypergate
 ```
 
-`--apply` stops Hypergate, runs `npm install -g hypergated@<version>`, starts it again, and logs the lot to `~/.hypergate/update.log`. `hypergate status` and the manager's topbar both tell you when there's something to take.
+`--apply` stops Hypergate, installs the new packages, starts it again, and logs the lot to `~/.hypergate/update.log`. `hypergate status` says when there's something to take, and so does the manager: the version in the topbar turns into **Check for updates** on hover, then into the offer, with **Download & install**, **Download only** or **Skip** and a progress bar for the download.
 
 Point an agent at the gateway:
 

@@ -1,11 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
+  assetsFromGithub,
+  assetsFromNpm,
   compareVersions,
   detectInstallChannel,
   isNewerVersion,
   latestFromGithub,
+  downloadableUrl,
   latestFromNpm,
   releaseUrlFor,
+  shellPackageFor,
   updatePlan,
 } from './update.js';
 
@@ -115,5 +119,95 @@ describe('feed parsing', () => {
 
   it('points release notes at the tag', () => {
     expect(releaseUrlFor('0.12.0')).toBe('https://github.com/nekko-labs/hypergate/releases/tag/v0.12.0');
+  });
+});
+
+describe('resolving what an update would download', () => {
+  const npmDocs = {
+    main: {
+      versions: {
+        '0.15.0': {
+          dist: { tarball: 'https://registry.npmjs.org/hypergated/-/hypergated-0.15.0.tgz', integrity: 'sha512-abc', shasum: 'deadbeef' },
+        },
+      },
+    },
+    shell: {
+      versions: {
+        '0.15.0': { dist: { tarball: 'https://registry.npmjs.org/hypergate-shell-win32-x64/-/hypergate-shell-win32-x64-0.15.0.tgz' } },
+      },
+    },
+  };
+
+  it('names the platform package the way the publisher does', () => {
+    expect(shellPackageFor('win32', 'x64')).toBe('hypergate-shell-win32-x64');
+    expect(shellPackageFor('darwin', 'arm64')).toBe('hypergate-shell-darwin-arm64');
+  });
+
+  it('takes both tarballs from npm, shell first, with its integrity hash', () => {
+    const assets = assetsFromNpm(npmDocs, '0.15.0', 'win32', 'x64');
+    expect(assets.map((a) => a.name)).toEqual(['hypergate-shell-win32-x64-0.15.0.tgz', 'hypergated-0.15.0.tgz']);
+    expect(assets[1].integrity).toBe('sha512-abc');
+    expect(assets[1].shasum).toBe('deadbeef');
+  });
+
+  it('is still an update when the platform has no shell build, but never shell-only', () => {
+    expect(assetsFromNpm({ main: npmDocs.main }, '0.15.0', 'sunos', 'x64')).toHaveLength(1);
+    expect(assetsFromNpm({ main: undefined, shell: npmDocs.shell }, '0.15.0', 'win32', 'x64')).toEqual([]);
+  });
+
+  it('resolves nothing for a version the feed does not carry', () => {
+    expect(assetsFromNpm(npmDocs, '0.16.0', 'win32', 'x64')).toEqual([]);
+  });
+
+  it('takes the same two tarballs off a GitHub release, by exact name', () => {
+    const doc = {
+      assets: [
+        { name: 'Hypergate-0.15.0-setup.exe', browser_download_url: 'https://github.com/x/setup.exe', size: 9 },
+        { name: 'hypergated-0.15.0.tgz', browser_download_url: 'https://github.com/x/hypergated-0.15.0.tgz', size: 2_000_000 },
+        {
+          name: 'hypergate-shell-win32-x64-0.15.0.tgz',
+          browser_download_url: 'https://github.com/x/hypergate-shell-win32-x64-0.15.0.tgz',
+          size: 1_500_000,
+        },
+        { name: 'hypergate-shell-linux-x64-0.15.0.tgz', browser_download_url: 'https://github.com/x/linux.tgz', size: 1 },
+      ],
+    };
+    const assets = assetsFromGithub(doc, '0.15.0', 'win32', 'x64');
+    expect(assets.map((a) => a.name)).toEqual(['hypergate-shell-win32-x64-0.15.0.tgz', 'hypergated-0.15.0.tgz']);
+    // The size is what makes the progress bar real rather than a guess.
+    expect(assets.reduce((n, a) => n + (a.size ?? 0), 0)).toBe(3_500_000);
+    // Another architecture's build is not "close enough".
+    expect(assetsFromGithub(doc, '0.15.0', 'darwin', 'arm64').map((a) => a.name)).toEqual(['hypergated-0.15.0.tgz']);
+  });
+
+  it('accepts https anywhere, and plaintext only on loopback', () => {
+    expect(downloadableUrl('https://github.com/x/y.tgz')).toBe(true);
+    expect(downloadableUrl('http://localhost:7921/tarball/x.tgz')).toBe(true);
+    expect(downloadableUrl('http://127.0.0.1:7921/x.tgz')).toBe(true);
+    expect(downloadableUrl('http://registry.internal/x.tgz')).toBe(false);
+    expect(downloadableUrl('file:///etc/passwd')).toBe(false);
+    expect(downloadableUrl('not a url')).toBe(false);
+    expect(downloadableUrl(undefined)).toBe(false);
+  });
+
+  it('refuses a release that carries no packages, and any URL that is not fetchable', () => {
+    expect(assetsFromGithub({ assets: [] }, '0.15.0', 'win32', 'x64')).toEqual([]);
+    expect(assetsFromGithub({ message: 'Not Found' }, '0.15.0', 'win32', 'x64')).toEqual([]);
+    expect(
+      assetsFromGithub(
+        { assets: [{ name: 'hypergated-0.15.0.tgz', browser_download_url: 'http://evil.example/x.tgz' }] },
+        '0.15.0',
+        'win32',
+        'x64',
+      ),
+    ).toEqual([]);
+    expect(
+      assetsFromNpm(
+        { main: { versions: { '0.15.0': { dist: { tarball: 'http://evil.example/x.tgz' } } } } },
+        '0.15.0',
+        'win32',
+        'x64',
+      ),
+    ).toEqual([]);
   });
 });

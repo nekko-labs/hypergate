@@ -1,4 +1,4 @@
-import type { InstallChannel, UpdatePlan } from '@hypergate/shared';
+import type { InstallChannel, UpdateAsset, UpdatePlan } from '@hypergate/shared';
 
 /**
  * Update logic: is there a newer version, how did this copy get installed, and
@@ -141,6 +141,88 @@ export function updatePlan(channel: InstallChannel, latest?: string, platform: s
         note: "Couldn't tell how this copy was installed, so it won't try to replace it. Update it the way you installed it.",
       };
   }
+}
+
+/**
+ * The npm package that carries the native binary for a platform. `hypergated`
+ * lists all six as optional dependencies, so an install needs exactly one.
+ */
+export const shellPackageFor = (platform: string, arch: string): string => `hypergate-shell-${platform}-${arch}`;
+
+/**
+ * Is this somewhere we are willing to fetch an update payload from?
+ *
+ * TLS, or a loopback address. The integrity hash in the same document is what
+ * proves the bytes are the right ones, so this rule is about transport: a feed
+ * must not be able to talk us into fetching our own replacement over plaintext
+ * from somewhere on the network. Loopback is exempt because those bytes never
+ * leave the machine, which is what makes a local mirror (and this repo's own
+ * update smoke test) possible.
+ */
+export function downloadableUrl(url: unknown): url is string {
+  if (typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'https:') return true;
+    return u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]', '::1'].includes(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The two files an update is made of, in install order: the platform shell
+ * first, then the daemon package that depends on it.
+ *
+ * Both feeds can answer. npm gives a tarball URL per version with an integrity
+ * hash; a GitHub release gives the same tarballs as attached assets, which is
+ * what makes an update possible before anything is on npm at all.
+ */
+export function assetsFromNpm(
+  docs: { main: unknown; shell?: unknown },
+  version: string,
+  platform: string,
+  arch: string,
+): UpdateAsset[] {
+  const out: UpdateAsset[] = [];
+  const shell = distAsset(docs.shell, version, `${shellPackageFor(platform, arch)}-${version}.tgz`);
+  if (shell) out.push(shell);
+  const main = distAsset(docs.main, version, `${UPDATE_PACKAGE}-${version}.tgz`);
+  if (main) out.push(main);
+  // The daemon package is the point of the exercise; without it there is no
+  // update, and a shell binary on its own would be a version skew.
+  return main ? out : [];
+}
+
+/** One version's `dist` block out of an npm packument. */
+function distAsset(doc: unknown, version: string, name: string): UpdateAsset | undefined {
+  const v = (doc as { versions?: Record<string, { dist?: { tarball?: string; integrity?: string; shasum?: string; unpackedSize?: number } }> } | null)
+    ?.versions?.[version]?.dist;
+  if (!downloadableUrl(v?.tarball)) return undefined;
+  return { name, url: v.tarball as string, integrity: v?.integrity, shasum: v?.shasum };
+}
+
+/**
+ * The same two tarballs, attached to a GitHub release.
+ *
+ * Matched by exact file name rather than by pattern: the release also carries
+ * installers, bare binaries and checksums, and picking "something .tgz-ish"
+ * out of that list is how you end up installing the wrong architecture.
+ */
+export function assetsFromGithub(doc: unknown, version: string, platform: string, arch: string): UpdateAsset[] {
+  const assets = (doc as { assets?: { name?: string; browser_download_url?: string; size?: number }[] } | null)?.assets;
+  if (!Array.isArray(assets)) return [];
+  const pick = (name: string): UpdateAsset | undefined => {
+    const a = assets.find((x) => x.name === name);
+    if (!downloadableUrl(a?.browser_download_url)) return undefined;
+    return { name, url: a?.browser_download_url as string, size: typeof a?.size === 'number' ? a.size : undefined };
+  };
+  const out: UpdateAsset[] = [];
+  const shell = pick(`${shellPackageFor(platform, arch)}-${version}.tgz`);
+  if (shell) out.push(shell);
+  const main = pick(`${UPDATE_PACKAGE}-${version}.tgz`);
+  if (main) out.push(main);
+  return main ? out : [];
 }
 
 /** Pull `dist-tags.latest` out of an npm registry document. */
