@@ -52,6 +52,21 @@ function useCopy(): [string | null, (key: string, text: string) => void] {
   return [copied, copy];
 }
 
+/**
+ * Bring a panel that has just appeared into the view's scroll window. The view
+ * only scrolls when the panels have run out of height to give up, but when it
+ * does, a form opened by a button press must not land below the fold.
+ */
+function useRevealOnMount<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    // `nearest`, and not smooth: scroll the least that works, in one frame. A
+    // window that isn't on screen never runs a smooth scroll to completion.
+    ref.current?.scrollIntoView({ block: 'nearest' });
+  }, []);
+  return ref;
+}
+
 const fmtNum = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : `${n}`);
 const fmtBytes = (n: number): string => {
   if (n < 1024) return `${n} B`;
@@ -357,7 +372,7 @@ export function App() {
   }, [quickAddOAuth]);
 
   return (
-    <>
+    <div className="app">
       <CloseChoice />
       <header className="topbar">
         <div className="topbar-in">
@@ -388,63 +403,65 @@ export function App() {
           </div>
         )}
 
-        {view === 'servers' ? (
-          <>
-            <div className="pagehead">
-              <div>
-                <h1>Every MCP server. <span className="grad-text">One endpoint.</span></h1>
-                <p>Run servers in sandboxed processes or Docker, supervise them, and connect any agent through a single gateway URL — with full local visibility into every call.</p>
+        <main className="view">
+          {view === 'servers' ? (
+            <>
+              <div className="pagehead">
+                <div>
+                  <h1>Every MCP server. <span className="grad-text">One endpoint.</span></h1>
+                  <p>Run servers in sandboxed processes or Docker, supervise them, and connect any agent through a single gateway URL — with full local visibility into every call.</p>
+                </div>
+                <div className="summary">
+                  <b>{servers?.length ?? '–'}</b> servers<span className="sep">·</span>
+                  <b>{running}</b> running<span className="sep">·</span>
+                  <b>{tools}</b> tools
+                </div>
               </div>
-              <div className="summary">
-                <b>{servers?.length ?? '–'}</b> servers<span className="sep">·</span>
-                <b>{running}</b> running<span className="sep">·</span>
-                <b>{tools}</b> tools
+
+              {gateway && <GatewayBar gateway={gateway} />}
+
+              <div className="section-title">
+                Active servers
+                <span className="rt">
+                  <button className={`btn sm ${showCatalog ? '' : 'btn-accent'}`} onClick={() => { setShowCatalog((v) => !v); setAdding(null); }}>
+                    {showCatalog ? 'Close' : '+ Add server'}
+                  </button>
+                </span>
               </div>
-            </div>
 
-            {gateway && <GatewayBar gateway={gateway} />}
+              {servers && servers.length === 0 && !showCatalog ? (
+                <div className="panel"><div className="empty">
+                  <div className="cat">🐈</div>
+                  <b>No servers yet.</b>
+                  <div className="small" style={{ marginTop: 4 }}>Add one — its tools join the gateway instantly.</div>
+                  <div style={{ marginTop: 14 }}><button className="btn btn-primary" onClick={() => setShowCatalog(true)}>+ Add your first server</button></div>
+                </div></div>
+              ) : servers && servers.length > 0 ? (
+                <div className="panel"><div className="list">
+                  {servers.map((s) => <ServerRow key={s.id} s={s} agents={agents} onChange={refresh} />)}
+                </div></div>
+              ) : null}
 
-            <div className="section-title">
-              Active servers
-              <span className="rt">
-                <button className={`btn sm ${showCatalog ? '' : 'btn-accent'}`} onClick={() => { setShowCatalog((v) => !v); setAdding(null); }}>
-                  {showCatalog ? 'Close' : '+ Add server'}
-                </button>
-              </span>
-            </div>
+              <ConnectedAgents agents={agents} servers={servers ?? []} onChange={refreshAgents} />
 
-            {servers && servers.length === 0 && !showCatalog ? (
-              <div className="panel"><div className="empty">
-                <div className="cat">🐈</div>
-                <b>No servers yet.</b>
-                <div className="small" style={{ marginTop: 4 }}>Add one — its tools join the gateway instantly.</div>
-                <div style={{ marginTop: 14 }}><button className="btn btn-primary" onClick={() => setShowCatalog(true)}>+ Add your first server</button></div>
-              </div></div>
-            ) : servers && servers.length > 0 ? (
-              <div className="panel"><div className="list">
-                {servers.map((s) => <ServerRow key={s.id} s={s} agents={agents} onChange={refresh} />)}
-              </div></div>
-            ) : null}
+              <CliSection />
 
-            <ConnectedAgents agents={agents} servers={servers ?? []} onChange={refreshAgents} />
+              {showCatalog && <AddCatalog curated={registry} onPick={handlePick} />}
 
-            <CliSection />
-
-            {showCatalog && <AddCatalog curated={registry} onPick={handlePick} />}
-
-            {adding && (
-              <AddServer
-                entry={adding === 'custom' ? null : adding}
-                onClose={() => setAdding(null)}
-                onAdded={() => { setAdding(null); setShowCatalog(false); void refresh(); }}
-              />
-            )}
-          </>
-        ) : view === 'analytics' ? (
-          <AnalyticsView stats={stats} />
-        ) : (
-          <SettingsView gateway={gateway} version={version} u={updater} />
-        )}
+              {adding && (
+                <AddServer
+                  entry={adding === 'custom' ? null : adding}
+                  onClose={() => setAdding(null)}
+                  onAdded={() => { setAdding(null); setShowCatalog(false); void refresh(); }}
+                />
+              )}
+            </>
+          ) : view === 'analytics' ? (
+            <AnalyticsView stats={stats} />
+          ) : (
+            <SettingsView gateway={gateway} version={version} u={updater} />
+          )}
+        </main>
 
         <div className="footer">
           <span>
@@ -463,7 +480,7 @@ export function App() {
           </a>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -1262,7 +1279,7 @@ function SettingsView({ gateway, version, u }: { gateway: GatewayInfo | null; ve
         <UpdateRow u={u} version={version} />
       </div></div>
 
-      <div className="section-title" style={{ marginTop: 24 }}>Startup &amp; desktop</div>
+      <div className="section-title">Startup &amp; desktop</div>
       <div className="panel">
         {!s ? (
           <div className="list-row small muted">Loading…</div>
@@ -1305,7 +1322,7 @@ function SettingsView({ gateway, version, u }: { gateway: GatewayInfo | null; ve
         and double-click it to open the app.
       </p>
 
-      <div className="section-title" style={{ marginTop: 24 }}>
+      <div className="section-title">
         This daemon
         {version && <span className="rt"><span className="chip">v{version}</span></span>}
       </div>
@@ -1516,13 +1533,17 @@ function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
         {stats && <div className="summary">since <b>{fmtRel(stats.since)}</b></div>}
       </div>
 
-      <div className="callout">
-        <span className="ic">🔎</span>
-        <div>
-          <div className="t">Why route through Hypergate? You get an audit trail for free.</div>
-          <div className="d">Point agents at one gateway and Hypergate records every call — per server, per client, per byte — so you can see exactly what your tools are doing. No dashboards to wire up, no data leaving localhost.</div>
+      {/* The pitch belongs to the empty state: once the numbers are there they
+          make the case themselves, and the height is worth more to the lists. */}
+      {!hasData && (
+        <div className="callout">
+          <span className="ic">🔎</span>
+          <div>
+            <div className="t">Why route through Hypergate? You get an audit trail for free.</div>
+            <div className="d">Point agents at one gateway and Hypergate records every call — per server, per client, per byte — so you can see exactly what your tools are doing. No dashboards to wire up, no data leaving localhost.</div>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="metricbar">
         <div className="metric accent"><div className="m-val">{fmtNum(stats?.totalCalls ?? 0)}</div><div className="m-label">tool calls</div></div>
@@ -1549,47 +1570,56 @@ function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
             <div className="spark-axis"><span>24h ago</span><span>now</span></div>
           </div>
 
-          <div className="section-title" style={{ marginTop: 24 }}>Usage by server</div>
-          <div className="panel"><div className="list">
-            {stats!.servers.map((s) => (
-              <div key={s.serverId} className="list-row">
-                <div className="row between wrap-gap">
-                  <div><span className="server-name">{s.name}</span> <span className="small muted">{s.serverId}</span></div>
-                  <div className="u-metrics">
-                    <span><b>{fmtNum(s.calls)}</b> calls</span>
-                    <span><b>{s.avgMs}</b>ms avg</span>
-                    <span style={{ color: s.errors ? 'var(--danger)' : undefined }}><b>{s.errors}</b> err</span>
-                    <span><b>{fmtBytes(s.bytesIn)}</b> in</span>
-                    <span><b>{fmtBytes(s.bytesOut)}</b> out</span>
+          {/* Two peer breakdowns, side by side while the window is wide enough:
+              the dashboard spends the width it has so the height stays for the
+              lists. Below ~860px they stack again (see `.duo`). */}
+          <div className="duo">
+            <section>
+              <div className="section-title">Usage by server</div>
+              <div className="panel"><div className="list">
+                {stats!.servers.map((s) => (
+                  <div key={s.serverId} className="list-row">
+                    <div className="row between wrap-gap">
+                      <div><span className="server-name">{s.name}</span> <span className="small muted">{s.serverId}</span></div>
+                      <div className="u-metrics">
+                        <span><b>{fmtNum(s.calls)}</b> calls</span>
+                        <span><b>{s.avgMs}</b>ms avg</span>
+                        <span style={{ color: s.errors ? 'var(--danger)' : undefined }}><b>{s.errors}</b> err</span>
+                        <span><b>{fmtBytes(s.bytesIn)}</b> in</span>
+                        <span><b>{fmtBytes(s.bytesOut)}</b> out</span>
+                      </div>
+                    </div>
+                    <div className="bar-track" style={{ marginTop: 9 }}><div className="bar-fill" style={{ width: `${(s.calls / maxServer) * 100}%` }} /></div>
+                    <div className="u-sub">
+                      {s.tools.slice(0, 6).map((t) => <span key={t.tool} className="chip mono">{t.tool} ·{t.calls}</span>)}
+                      <span style={{ marginLeft: 'auto' }}>{s.clients.length} client{s.clients.length === 1 ? '' : 's'} · last {fmtRel(s.lastUsed)}</span>
+                    </div>
                   </div>
-                </div>
-                <div className="bar-track" style={{ marginTop: 9 }}><div className="bar-fill" style={{ width: `${(s.calls / maxServer) * 100}%` }} /></div>
-                <div className="u-sub">
-                  {s.tools.slice(0, 6).map((t) => <span key={t.tool} className="chip mono">{t.tool} ·{t.calls}</span>)}
-                  <span style={{ marginLeft: 'auto' }}>{s.clients.length} client{s.clients.length === 1 ? '' : 's'} · last {fmtRel(s.lastUsed)}</span>
-                </div>
-              </div>
-            ))}
-          </div></div>
+                ))}
+              </div></div>
+            </section>
 
-          <div className="section-title" style={{ marginTop: 24 }}>Who's calling</div>
-          <div className="panel"><div className="list">
-            {stats!.clients.map((c) => (
-              <div key={c.client} className="list-row">
-                <div className="row between wrap-gap">
-                  <div className="server-name">{c.client}</div>
-                  <div className="u-metrics">
-                    <span><b>{fmtNum(c.calls)}</b> calls</span>
-                    <span><b>{fmtBytes(c.bytesIn + c.bytesOut)}</b> data</span>
-                    <span className="muted">{fmtRel(c.lastUsed)}</span>
+            <section>
+              <div className="section-title">Who's calling</div>
+              <div className="panel"><div className="list">
+                {stats!.clients.map((c) => (
+                  <div key={c.client} className="list-row">
+                    <div className="row between wrap-gap">
+                      <div className="server-name">{c.client}</div>
+                      <div className="u-metrics">
+                        <span><b>{fmtNum(c.calls)}</b> calls</span>
+                        <span><b>{fmtBytes(c.bytesIn + c.bytesOut)}</b> data</span>
+                        <span className="muted">{fmtRel(c.lastUsed)}</span>
+                      </div>
+                    </div>
+                    <div className="bar-track" style={{ marginTop: 9 }}><div className="bar-fill" style={{ width: `${(c.calls / maxClient) * 100}%` }} /></div>
                   </div>
-                </div>
-                <div className="bar-track" style={{ marginTop: 9 }}><div className="bar-fill" style={{ width: `${(c.calls / maxClient) * 100}%` }} /></div>
-              </div>
-            ))}
-          </div></div>
+                ))}
+              </div></div>
+            </section>
+          </div>
 
-          <div className="section-title" style={{ marginTop: 24 }}>Recent calls</div>
+          <div className="section-title">Recent calls</div>
           <div className="panel"><div className="feed">
             {stats!.recent.map((e, i) => (
               <div key={i} className="feed-row">
@@ -1617,6 +1647,7 @@ function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
 }
 
 function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; onClose: () => void; onAdded: () => void }) {
+  const reveal = useRevealOnMount<HTMLElement>();
   const [runtime, setRuntime] = useState<RuntimeKind>(entry?.runtime ?? 'process');
   const [name, setName] = useState(entry?.name ?? '');
   const [command, setCommand] = useState(entry?.command ?? '');
@@ -1655,7 +1686,7 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
   };
 
   return (
-    <section className="panel" style={{ marginTop: 14, padding: 18 }}>
+    <section className="panel panel-scroll" style={{ marginTop: 14, padding: 18 }} ref={reveal}>
       <div className="row between">
         <b>{entry ? `Add ${entry.name}` : 'Add a custom server'}</b>
         <button className="btn sm btn-ghost" onClick={onClose}>✕</button>
@@ -1745,6 +1776,7 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
   const [results, setResults] = useState<RegistryEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const seq = useRef(0);
+  const reveal = useRevealOnMount<HTMLDivElement>();
 
   // Popularity is fetched here — i.e. only when the catalog is opened — so the
   // daemon never reaches out on boot. The recommended set shows first instantly
@@ -1775,8 +1807,8 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
   const searchingLive = q.trim().length > 0;
   return (
     <>
-      <div className="section-title" style={{ marginTop: 22 }}>Add a server</div>
-      <div className="panel">
+      <div className="section-title">Add a server</div>
+      <div className="panel" ref={reveal}>
         <div className="catalog-search">
           <span className="cs-ic">🔎</span>
           <input
@@ -1949,7 +1981,7 @@ function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInf
 
   return (
     <>
-      <div className="section-title" id="agents" style={{ marginTop: 22 }}>
+      <div className="section-title" id="agents">
         Connected agents
         <span className="rt">
           <button
@@ -1982,7 +2014,7 @@ function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInf
               ))}
             </div></div>
           )}
-          {picking && <div className="panel" style={{ marginTop: 12, padding: 16 }}>{picker(() => setPicking(false))}</div>}
+          {picking && <PickerPanel>{picker(() => setPicking(false))}</PickerPanel>}
         </>
       )}
       {custom && (
@@ -1999,6 +2031,16 @@ function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInf
         />
       )}
     </>
+  );
+}
+
+/** The agent picker's panel, which scrolls itself into view when it opens. */
+function PickerPanel({ children }: { children: ReactNode }) {
+  const reveal = useRevealOnMount<HTMLDivElement>();
+  return (
+    <div className="panel panel-scroll" style={{ marginTop: 12, padding: 16 }} ref={reveal}>
+      {children}
+    </div>
   );
 }
 
@@ -2336,6 +2378,7 @@ function AgentEditor({
   /** `created` is true for a brand-new agent, which still needs connecting. */
   onSaved: (saved: AgentClientInfo, created: boolean) => void;
 }) {
+  const reveal = useRevealOnMount<HTMLElement>();
   const [name, setName] = useState(agent?.name ?? '');
   const [all, setAll] = useState(agent ? agent.servers === '*' : true);
   const [sel, setSel] = useState<Set<string>>(new Set(agent && agent.servers !== '*' ? agent.servers : []));
@@ -2367,7 +2410,7 @@ function AgentEditor({
   };
 
   return (
-    <section className="panel" style={{ marginTop: 14, padding: 18 }}>
+    <section className="panel panel-scroll" style={{ marginTop: 14, padding: 18 }} ref={reveal}>
       <div className="row between">
         <b>{agent ? `Edit ${agent.name}` : 'Add a custom agent'}</b>
         <button className="btn sm btn-ghost" onClick={onClose}>✕</button>

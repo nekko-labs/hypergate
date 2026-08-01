@@ -62,8 +62,11 @@
 }
 
 * { box-sizing: border-box; }
+html, body, #root { height: 100%; }
 body {
   margin: 0;
+  /* The window is the app: the page itself never scrolls (see `.app`). */
+  overflow: hidden;
   font-family: Inter, -apple-system, 'Segoe UI', system-ui, sans-serif;
   background: var(--paper);
   color: var(--ink);
@@ -75,13 +78,80 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace; }
 
-.wrap { max-width: 1000px; margin: 0 auto; padding: 22px 24px 96px; }
+/* ── app shell ──────────────────────────────────────────────────────────
+   A desktop window, not a web page. The topbar and the footer are rails
+   that never move; the view between them takes whatever height is left.
+   Inside a view the headings, the gateway bar and the section titles keep
+   their natural height, and the panels give up height (proportionally to
+   how tall they are, so a one-row panel barely gives up anything) and
+   scroll their own list instead. Resizing the window therefore re-sizes
+   the lists rather than lengthening the page. */
+.app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.wrap {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  width: 100%; max-width: 1000px; margin: 0 auto; padding: 0 24px;
+}
+.view {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  padding: 18px 0 2px;
+  /* Last resort only: at very short window heights the panels bottom out at
+     their floor and the view scrolls so nothing becomes unreachable. */
+  overflow-y: auto;
+}
+/* Chrome (headings, the gateway bar, section titles) keeps its natural height … */
+.view > *,
+.view > .duo > section > * { flex: none; }
+/* … panels share out what is left over and scroll inside. */
+.view > .panel,
+.view > .duo > section > .panel { flex: 0 1 auto; min-height: 64px; display: flex; flex-direction: column; }
+/* How far a panel may be squeezed: a one- or two-row panel keeps its natural
+   height (a floor would only pad it out), while a list long enough to be worth
+   scrolling holds on to a row before the view itself gives way. Keep these
+   floors mean: a floor high enough to overflow the view costs every panel the
+   height it would otherwise have shared out. */
+.view .panel:has(.list-row:nth-child(3)),
+.view .panel:has(.feed-row:nth-child(6)) { min-height: 96px; }
+/* The scrolling surface inside a panel: its list, its feed, or its empty state. */
+.view > .panel > .list,
+.view > .panel > .feed,
+.view > .panel > .empty,
+.view > .duo > section > .panel > .list { overflow-y: auto; min-height: 0; }
+/* An empty state is a pitch and a button, not a list, so it keeps its height and
+   lets the view scroll instead. There is little else on screen when one shows. */
+.view > .panel:has(> .empty) { flex: none; }
+.view > .panel > .catalog-search { flex: none; }
+/* A panel that holds no list (an add/edit form, the agent picker) scrolls whole,
+   and holds on to more height than a list would: it is only on screen because
+   it was asked for, so it is the thing being worked on. */
+.view > .panel-scroll { overflow-y: auto; min-height: 220px; }
+
+/* Two sections that sit side by side while the window is wide enough to take
+   them (analytics). Both columns are the height of the pair, so they shrink
+   together and each list keeps scrolling inside its own panel. The pair carries
+   its columns' floor (a section title, 53px with its margins, on top of the
+   panel floors above) so a column is never squeezed past what it can show and
+   spilled over the section below it. */
+.view > .duo { flex: 0 1 auto; display: flex; gap: 0 16px; min-height: 117px; }
+.view > .duo > section { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.view > .duo:has(.list-row:nth-child(3)) { min-height: 149px; }
+@media (max-width: 860px) {
+  /* Too narrow for two columns: the pair dissolves and its sections take their
+     chances in the view like every other section. */
+  .view > .duo { display: contents; }
+  .view > .duo > section { min-height: 117px; }
+  .view > .duo > section:has(.list-row:nth-child(3)) { min-height: 149px; }
+}
+
+/* Scrollbars sized for an app, not a document. */
+.view, .view .list, .view .feed, .view .empty, .view .panel-scroll, .perm-list, pre.logs {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
 
 /* ── header ─────────────────────────────────────────────────────────────── */
 .topbar {
-  position: sticky; top: 0; z-index: 10;
-  backdrop-filter: blur(12px);
-  background: color-mix(in srgb, var(--paper) 80%, transparent);
+  flex: none; z-index: 10;
+  background: var(--paper);
   border-bottom: 1px solid var(--line);
 }
 .topbar-in { max-width: 1000px; margin: 0 auto; padding: 11px 24px; display: flex; align-items: center; gap: 12px; }
@@ -444,7 +514,8 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .empty b { color: var(--ink-2); }
 
 /* ── banner ─────────────────────────────────────────────────────────────── */
-.banner { border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--card)); border-radius: 12px; padding: 12px 14px; margin: 4px 0 16px; }
+/* Sits between the topbar and the view, so it owns the gap above it only. */
+.banner { flex: none; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--card)); border-radius: 12px; padding: 12px 14px; margin: 14px 0 0; }
 
 /* ── analytics ──────────────────────────────────────────────────────────── */
 .metricbar { display: flex; flex-wrap: wrap; background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
@@ -490,8 +561,8 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .callout .t { font-weight: 700; font-size: 13.5px; margin-bottom: 2px; }
 .callout .d { color: var(--ink-2); font-size: 12.5px; }
 
-/* footer */
-.footer { margin-top: 52px; padding-top: 16px; border-top: 1px solid var(--line); display: flex; gap: 14px; align-items: center; color: var(--ink-3); font-size: 12.5px; }
+/* footer: the bottom rail of the shell, always in view */
+.footer { flex: none; padding: 11px 0; border-top: 1px solid var(--line); display: flex; gap: 14px; align-items: center; color: var(--ink-3); font-size: 12.5px; }
 .footer .heart { color: #e2555f; vertical-align: -1px; margin: 0 1px; }
 /* The mark carries the link on its own: quiet at rest, inked and lifted on hover. */
 .foot-gh { display: inline-flex; align-items: center; color: var(--ink-3); transition: color .15s ease, transform .15s ease; }
@@ -524,6 +595,19 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .choice:disabled { opacity: .6; cursor: default; }
 .choice .choice-t { font-weight: 600; font-size: 13.5px; color: var(--ink); }
 .choice-warn:hover { border-color: var(--danger); }
+
+/* A short window spends its height on lists, not on prose: the page intro
+   loses its paragraph and the section titles their generous margins, so the
+   panels keep something worth scrolling. */
+@media (max-height: 660px) {
+  .view { padding-top: 12px; }
+  .pagehead { margin: 0 0 12px; }
+  /* The gateway's footnote points at the Connected agents section, which is
+     on screen anyway; the endpoint itself stays. */
+  .pagehead p, .callout, .gwbar-note { display: none; }
+  .section-title { margin: 15px 0 8px; }
+  .empty { padding: 22px; }
+}
 
 @media (max-width: 640px) {
   .pagehead h1 { font-size: 19px; }
