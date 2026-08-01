@@ -4,7 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Supervisor } from './supervisor.js';
 import { createGateway, NS } from './gateway.js';
-import type { ManagedServerConfig } from '@nekko-mcp/shared';
+import type { ManagedServerConfig } from '@hypergate/shared';
 
 const echoPath = fileURLToPath(new URL('./fixtures/echo-server.mjs', import.meta.url));
 const echoConfig: ManagedServerConfig = {
@@ -46,14 +46,69 @@ describe('Supervisor + Gateway (end-to-end via process runtime)', () => {
     await client.close();
   });
 
+  it('records the call in usage analytics (server, tool, client, bytes)', async () => {
+    const gateway = createGateway(supervisor, { name: 'gw', version: '0' }, { caller: 'test-harness 1.0' });
+    const [gwSide, clientSide] = InMemoryTransport.createLinkedPair();
+    await gateway.connect(gwSide);
+    const client = new Client({ name: 'test', version: '0' }, { capabilities: {} });
+    await client.connect(clientSide);
+    await client.callTool({ name: `echo${NS}echo`, arguments: { text: 'measure me' } });
+    await client.close();
+
+    const a = supervisor.analytics();
+    expect(a.totalCalls).toBeGreaterThan(0);
+    const echo = a.servers.find((s) => s.serverId === 'echo');
+    expect(echo?.tools.some((t) => t.tool === 'echo')).toBe(true);
+    expect(echo!.bytesIn).toBeGreaterThan(0);
+    expect(a.clients.some((c) => c.client === 'test-harness 1.0')).toBe(true);
+  });
+
+  it('scopes an agent: a denied server is hidden from tools/list and refused on tools/call', async () => {
+    // allowServer denies everything → echo's tool must not appear and must be refused.
+    const gateway = createGateway(supervisor, { name: 'gw', version: '0' }, { caller: 'scoped-agent', allowServer: () => false });
+    const [gwSide, clientSide] = InMemoryTransport.createLinkedPair();
+    await gateway.connect(gwSide);
+    const client = new Client({ name: 'test', version: '0' }, { capabilities: {} });
+    await client.connect(clientSide);
+
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name)).not.toContain(`echo${NS}echo`);
+
+    await expect(client.callTool({ name: `echo${NS}echo`, arguments: { text: 'blocked' } })).rejects.toThrow(/not permitted/i);
+    await client.close();
+  });
+
+  it('seats a stopped server in the roster with register(), and can still start it', async () => {
+    // A server the user stopped must survive a daemon restart: the daemon seats
+    // disabled configs so /api/servers (which is list()) still shows them.
+    const disabled: ManagedServerConfig = { ...echoConfig, id: 'echo-off', name: 'Echo (off)', enabled: false };
+    const seated = supervisor.register(disabled);
+    expect(seated.state).toBe('stopped');
+    expect(seated.tools).toEqual([]);
+    expect(supervisor.list().map((s) => s.id)).toContain('echo-off');
+    // Nothing was spawned, so the gateway has no client for it yet.
+    expect(supervisor.client('echo-off')).toBeUndefined();
+
+    // Registering twice must not reset a running server or duplicate the entry.
+    const before = supervisor.list().length;
+    supervisor.register(disabled);
+    expect(supervisor.list().length).toBe(before);
+
+    const started = await supervisor.start({ ...disabled, enabled: true });
+    expect(started.state).toBe('ready');
+    expect(started.tools).toContain('echo');
+    await supervisor.stop('echo-off');
+    expect(supervisor.status('echo-off')?.state).toBe('stopped');
+  });
+
   it('does not leak the host env into the sandboxed child', async () => {
     // The supervisor only forwards an allow-listed base env + declared vars,
     // so an ambient secret set in this process must not reach the child.
-    process.env.NEKKO_SECRET_LEAK_TEST = 'should-not-pass';
+    process.env.HYPERGATE_SECRET_LEAK_TEST = 'should-not-pass';
     // (echo server doesn't expose env, but the runtime spec is what we assert)
     const { ProcessRuntime } = await import('./runtime.js');
     const spec = new ProcessRuntime().spawnSpec(echoConfig);
-    expect(spec.env.NEKKO_SECRET_LEAK_TEST).toBeUndefined();
-    delete process.env.NEKKO_SECRET_LEAK_TEST;
+    expect(spec.env.HYPERGATE_SECRET_LEAK_TEST).toBeUndefined();
+    delete process.env.HYPERGATE_SECRET_LEAK_TEST;
   });
 });

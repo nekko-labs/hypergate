@@ -1,5 +1,5 @@
 {
-  "name": "@nekko-mcp/core",
+  "name": "@hypergate/core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -17,8 +17,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@hypergate/shared": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@nekko-mcp/shared": "*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -13,13 +13,26 @@ export const NS = '__';
  */
 export function createGateway(
   supervisor: Supervisor,
-  info: { name: string; version: string } = { name: 'nekko-mcp-gateway', version: '0.1.0' },
+  info: { name: string; version: string } = { name: 'hypergate-gateway', version: '0.1.0' },
+  opts: { caller?: string; allowServer?: (serverId: string) => boolean } = {},
 ): Server {
   const server = new Server(info, { capabilities: { tools: {} } });
+  const caller = opts.caller ?? 'unknown client';
+  // Per-agent scoping: when provided, a server the caller isn't allowed to see
+  // is hidden from tools/list and its tools/call is refused. Default = allow all.
+  const allowed = (id: string): boolean => (opts.allowServer ? opts.allowServer(id) : true);
+  const bytes = (v: unknown): number => {
+    try {
+      return Buffer.byteLength(JSON.stringify(v ?? {}));
+    } catch {
+      return 0;
+    }
+  };
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const tools: { name: string; description?: string; inputSchema: unknown }[] = [];
     for (const id of supervisor.ids()) {
+      if (!allowed(id)) continue;
       const client = supervisor.client(id);
       if (!client) continue;
       try {
@@ -44,9 +57,36 @@ export function createGateway(
     if (idx < 0) throw new Error(`Unknown tool "${full}" — expected "<server>${NS}<tool>".`);
     const id = full.slice(0, idx);
     const name = full.slice(idx + NS.length);
+    if (!allowed(id)) throw new Error(`Not permitted: this client may not call server "${id}".`);
     const client = supervisor.client(id);
     if (!client) throw new Error(`Server "${id}" is not ready.`);
-    return (await client.callTool({ name, arguments: req.params.arguments ?? {} })) as never;
+
+    const args = req.params.arguments ?? {};
+    const startedAt = Date.now();
+    const record = (ok: boolean, bytesOut: number, error?: string): void =>
+      supervisor.record({
+        at: new Date().toISOString(),
+        serverId: id,
+        server: supervisor.status(id)?.name ?? id,
+        tool: name,
+        client: caller,
+        ok,
+        ms: Date.now() - startedAt,
+        bytesIn: bytes(args),
+        bytesOut,
+        error,
+      });
+
+    try {
+      const res = await client.callTool({ name, arguments: args });
+      const isErr = !!(res && typeof res === 'object' && (res as { isError?: boolean }).isError);
+      record(!isErr, bytes(res), isErr ? 'tool reported an error' : undefined);
+      return res as never;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      record(false, 0, msg);
+      throw e;
+    }
   });
 
   return server;

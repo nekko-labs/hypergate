@@ -1,24 +1,28 @@
 {
-  "name": "@nekko-mcp/daemon",
-  "version": "0.2.0",
+  "name": "@hypergate/daemon",
+  "version": "0.17.0",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
-  "bin": { "nekko-mcpd": "dist/index.js" },
+  "bin": {
+    "hypergated": "dist/index.js"
+  },
   "scripts": {
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "dev:bun": "bun run --watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@nekko-mcp/core": "*",
-    "@nekko-mcp/shared": "*",
+    "@hypergate/core": "*",
+    "@hypergate/shared": "*",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
   }
 }

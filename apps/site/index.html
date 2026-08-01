@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hypergate — every MCP server, one gate</title>
+  <meta name="description" content="Hypergate runs your MCP servers on your machine: sandboxed, supervised, and aggregated behind one gateway endpoint any agent can use. Local-first, open source, MIT." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="canonical" href="https://hypergate.app/" />
+  <meta property="og:title" content="Hypergate — every MCP server, one gate" />
+  <meta property="og:description" content="A local-first runtime and manager for MCP servers. Run them securely, watch every call, connect any agent through a single gateway." />
+  <meta property="og:image" content="https://hypergate.app/og.png" />
+  <meta property="og:image:width" content="2560" />
+  <meta property="og:image:height" content="1200" />
+  <meta property="og:image:alt" content="Hypergate: run MCP servers securely, one gateway for every agent" />
+  <meta property="og:url" content="https://hypergate.app/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Hypergate" />
+  <meta property="og:locale" content="en_US" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Hypergate — every MCP server, one gate" />
+  <meta name="twitter:description" content="A local-first runtime and manager for MCP servers. Run them securely, watch every call, connect any agent through a single gateway." />
+  <meta name="twitter:image" content="https://hypergate.app/og.png" />
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/styles.css" />
+  <!-- Structured data: so search and answer engines describe Hypergate accurately -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://nekkolabs.com/#organization",
+        "name": "Nekko Labs",
+        "url": "https://nekkolabs.com/"
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://hypergate.app/#website",
+        "url": "https://hypergate.app/",
+        "name": "Hypergate",
+        "description": "Local-first runtime and manager for MCP servers: sandboxed, supervised, and aggregated behind one gateway endpoint any agent can use.",
+        "inLanguage": "en",
+        "publisher": { "@id": "https://nekkolabs.com/#organization" }
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://hypergate.app/#app",
+        "name": "Hypergate",
+        "url": "https://hypergate.app/",
+        "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "MCP server runtime and gateway",
+        "operatingSystem": "Windows, macOS, Linux",
+        "image": "https://hypergate.app/og.png",
+        "description": "Hypergate runs your MCP servers on your machine: sandboxed, supervised, and aggregated behind one gateway endpoint any agent harness can use. Add servers from a curated catalog, pick how each is isolated (process sandbox, Docker, or remote), and paste one URL into your agent.",
+        "license": "https://opensource.org/licenses/MIT",
+        "isAccessibleForFree": true,
+        "softwareRequirements": "No dependencies for the installers; Node 20+ (22.5+ recommended) for the npm install",
+        "downloadUrl": "https://github.com/nekko-labs/hypergate/releases",
+        "codeRepository": "https://github.com/nekko-labs/hypergate",
+        "featureList": [
+          "Aggregating MCP gateway: every server's tools behind one endpoint, over streamable HTTP or stdio",
+          "Per-server isolation: process sandbox (default), Docker container, or remote hosted endpoint",
+          "Curated catalog of first-party MCP servers with verified launch configs and trust chips",
+          "One-click OAuth for remote first-party servers, no tokens to paste",
+          "Search over the official MCP registry",
+          "Durable usage history, logs, and an audit trail of every tool call",
+          "Tool inspector showing descriptions and typed parameters from the live schema",
+          "Command-line tools radar that detects the CLIs your servers depend on"
+        ],
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "publisher": { "@id": "https://nekkolabs.com/#organization" }
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <canvas id="stars" aria-hidden="true"></canvas>
+
+  <header class="nav" id="nav">
+    <a class="nav-brand" href="#top" data-scroll>
+      <svg class="nav-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="11" fill="none" stroke="url(#nvG)" stroke-width="4.5"/>
+        <circle cx="16" cy="16" r="4.5" fill="#a5f3fc"/>
+        <defs><linearGradient id="nvG" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#6d5efc"/><stop offset="1" stop-color="#22d3ee"/>
+        </linearGradient></defs>
+      </svg>
+      <span>Hypergate</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#features" data-scroll>Features</a>
+      <a href="#isolation" data-scroll>Security</a>
+      <a href="#analytics" data-scroll>Analytics</a>
+      <a href="/release-notes.html">Release notes</a>
+      <a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">GitHub ↗</a>
+    </nav>
+    <span data-download-group>
+      <a class="nav-cta" href="https://github.com/nekko-labs/hypergate/releases/latest" data-download-primary>
+        <span data-download-label>Download</span>
+      </a>
+    </span>
+  </header>
+
+  <main id="top">
+
+    <!-- ═══════════ HERO ═══════════ -->
+    <section class="hero">
+      <canvas id="gate" aria-hidden="true"></canvas>
+      <div class="hero-in">
+        <p class="hero-kicker reveal">Local-first MCP runtime &amp; manager · open source · MIT</p>
+        <h1 class="hero-h1">
+          <span class="line reveal">Every MCP server.</span>
+          <span class="line grad reveal" data-delay="90">One gate.</span>
+        </h1>
+        <p class="hero-sub reveal" data-delay="180">
+          Hypergate runs your MCP servers on your own machine: sandboxed, supervised,
+          and aggregated behind a single gateway endpoint. Point Claude Code, Cursor,
+          Open Paw, or any agent at one URL and jump.
+        </p>
+        <div class="hero-ctas reveal" data-delay="260">
+          <div class="download-control" data-download-group>
+            <a class="btn btn-primary download-primary" href="https://github.com/nekko-labs/hypergate/releases/latest" data-download-primary>
+              <span data-download-label>Download Hypergate</span>
+              <small data-download-version>latest</small>
+            </a>
+            <details class="download-picker" data-linux-picker hidden>
+              <summary aria-label="Choose a Linux package"><span aria-hidden="true">⌄</span></summary>
+              <div class="download-menu">
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="deb">DEB <small>Debian / Ubuntu</small></a>
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="rpm">RPM <small>Fedora / RHEL</small></a>
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="tar.gz">Tarball <small>Other distributions</small></a>
+              </div>
+            </details>
+          </div>
+          <a class="btn btn-ghost repo-cta" href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">View GitHub repo ↗</a>
+        </div>
+        <div class="hero-snippet reveal" data-delay="340" data-install-command>
+          <span class="install-shell" data-install-shell>Terminal</span>
+          <code><span class="c-dim">$</span> <span data-install-command-text>Detecting the right install command…</span></code>
+          <button type="button" data-copy-install aria-label="Copy install command">Copy</button>
+        </div>
+      </div>
+      <div class="hero-stats reveal" data-delay="420">
+        <div><strong>1</strong><span>gateway URL for every agent</span></div>
+        <div><strong>3</strong><span>isolation modes, your choice</span></div>
+        <div><strong>0</strong><span>bytes leave your machine</span></div>
+      </div>
+    </section>
+
+    <!-- ═══════════ ORBIT STRIP ═══════════ -->
+    <section class="strip">
+      <p>Speaks standard MCP, so every harness already knows the way in</p>
+      <div class="strip-row">
+        <span>Claude Code</span><i>✦</i><span>Cursor</span><i>✦</i><span>Open Paw</span><i>✦</i><span>Codex</span><i>✦</i><span>VS Code</span>
+      </div>
+    </section>
+
+    <!-- ═══════════ FEATURES ═══════════ -->
+    <section id="features" class="features">
+
+      <article class="feat">
+        <div class="feat-copy reveal">
+          <p class="feat-k">The gateway</p>
+          <h2>One endpoint, every agent</h2>
+          <p>Run six servers or sixty: your agents see a single MCP endpoint with every
+             tool namespaced behind it. Copy a ready-made snippet for Claude Code,
+             <code>.mcp.json</code>, stdio, or Open Paw, and hand scoped tokens to each
+             agent with per-server allow-lists.</p>
+          <ul>
+            <li>Streamable HTTP and stdio transports</li>
+            <li>Bearer-token auth, generated and enforced by default</li>
+            <li>Scoped tokens per connected agent</li>
+          </ul>
+        </div>
+        <figure class="shot reveal" data-parallax="0.05" data-title="Connect an agent">
+          <img src="/demos/gateway.png" alt="Hypergate gateway bar with connect snippets for Claude Code, .mcp.json, stdio, and Open Paw" width="1360" height="850" loading="lazy" />
+        </figure>
+      </article>
+
+      <article class="feat flip">
+        <div class="feat-copy reveal">
+          <p class="feat-k">The runtime</p>
+          <h2>Sandboxed, supervised, yours</h2>
+          <p>Hypergate is a real server runtime, not a connector list. It launches each
+             server in its own sandbox, injects secrets at spawn, watches health,
+             captures logs, and restarts what falls over. Toggle, inspect, and stop
+             everything from one calm list.</p>
+          <ul>
+            <li>Scrubbed env, injected secrets, restricted CWD, resource limits</li>
+            <li>Status, structured logs, and restart per server</li>
+            <li>Remote OAuth servers sit alongside local ones</li>
+          </ul>
+        </div>
+        <figure class="shot reveal" data-parallax="0.05" data-title="Servers">
+          <img src="/demos/servers.png" alt="Hypergate servers view: Fly.io process server, Context7 remote server, GitHub awaiting sign-in, and scoped connected agents" width="1360" height="850" loading="lazy" />
+        </figure>
+      </article>
+
+      <article class="feat" id="analytics">
+        <div class="feat-copy reveal">
+          <p class="feat-k">Analytics</p>
+          <h2>An audit trail for free</h2>
+          <p>Because every call fans through the gate, you get observability without
+             wiring anything: which tool, called by which agent, how long it took, how
+             many bytes each way. All of it stays on localhost.</p>
+          <ul>
+            <li>Per-server, per-tool, and per-agent breakdowns</li>
+            <li>24-hour call sparkline and a live recent-calls feed</li>
+            <li>Persists across daemon restarts</li>
+          </ul>
+        </div>
+        <figure class="shot reveal" data-parallax="0.05" data-title="Analytics">
+          <img src="/demos/analytics.png" alt="Hypergate analytics: 26 tool calls at 100 percent success across 4 clients, usage by server and a who's-calling breakdown" width="1360" height="850" loading="lazy" />
+        </figure>
+      </article>
+
+      <article class="feat flip">
+        <div class="feat-copy reveal">
+          <p class="feat-k">The catalog</p>
+          <h2>A catalog that signs you in</h2>
+          <p>Curated first-party servers, ranked by real npm and GitHub popularity, with
+             trust chips so you can tell official from community at a glance. OAuth
+             servers add with one click: the browser opens, you approve, Hypergate
+             connects. The whole official MCP registry is a search box away.</p>
+          <ul>
+            <li>✓ Official and Community trust chips</li>
+            <li>One-click OAuth: Context7, Supabase, Linear, Figma, GitHub</li>
+            <li>Registry search mapped straight into add-ready entries</li>
+          </ul>
+        </div>
+        <figure class="shot reveal" data-parallax="0.05" data-title="Add a server">
+          <img src="/demos/catalog.png" alt="Hypergate catalog with official trust chips and one-click OAuth sign-in-and-add buttons for Context7, Supabase, Linear, and Figma" width="1360" height="850" loading="lazy" />
+        </figure>
+      </article>
+
+      <article class="feat">
+        <div class="feat-copy reveal">
+          <p class="feat-k">The inspector</p>
+          <h2>X-ray every tool</h2>
+          <p>Expand any server into its full tool list, then open a tool to see its
+             description and typed parameters, parsed from the live schema. Know exactly
+             what your agent can reach before it reaches.</p>
+          <ul>
+            <li>Live tool schemas straight from the server</li>
+            <li>Required flags and types at a glance</li>
+            <li>Namespaced names match what agents actually call</li>
+          </ul>
+        </div>
+        <figure class="shot reveal" data-parallax="0.05" data-title="Tool inspector">
+          <img src="/demos/tools.png" alt="Hypergate tool inspector showing Fly.io tools with typed parameters and required flags" width="1360" height="850" loading="lazy" />
+        </figure>
+      </article>
+
+      <article class="feat flip">
+        <div class="feat-copy reveal">
+          <p class="feat-k">CLI radar</p>
+          <h2>Knows what your machine can run</h2>
+          <p>MCP servers lean on CLIs: node, uvx, docker, cloud tools. Hypergate detects
+             what's installed, shows versions and paths, points at install docs for
+             what's missing, and lets you check any command on PATH. Fully local, no
+             shell, injection-guarded.</p>
+          <ul>
+            <li>22 known CLIs probed with version and path</li>
+            <li>Install hints for anything missing</li>
+            <li>Ad-hoc search for any command</li>
+          </ul>
+        </div>
+        <figure class="shot reveal" data-parallax="0.05" data-title="Command-line tools">
+          <img src="/demos/clis.png" alt="Hypergate CLI detection: Node.js, npx, npm, Bun installed with versions and paths, Deno missing with an install hint" width="1360" height="850" loading="lazy" />
+        </figure>
+      </article>
+    </section>
+
+    <!-- ═══════════ ISOLATION ═══════════ -->
+    <section id="isolation" class="isolation">
+      <div class="iso-head reveal">
+        <p class="feat-k">Secure by choice</p>
+        <h2>Pick your shielding</h2>
+        <p>Isolation is a tradeoff, so Hypergate makes it explicit instead of forcing a
+           dependency. Choose at setup, override per server.</p>
+      </div>
+      <div class="iso-grid">
+        <div class="iso-card reveal">
+          <h3>Process sandbox <em>default</em></h3>
+          <p>Servers run as sandboxed child processes: allow-listed env, injected
+             secrets only, restricted working directory, resource limits, no shell.</p>
+          <p class="iso-fine">Zero dependencies, instant start, cross-platform. The honest
+             caveat: it shares your kernel, so it's a lighter boundary than a container.</p>
+        </div>
+        <div class="iso-card reveal" data-delay="90">
+          <h3>Docker <em>opt-in</em></h3>
+          <p>Container per server: pinned image, dropped capabilities, no-new-privileges,
+             CPU and memory limits. ToolHive-grade isolation for untrusted community
+             servers.</p>
+          <p class="iso-fine">Requires Docker and a slower cold start. Never mandatory.</p>
+        </div>
+        <div class="iso-card reveal" data-delay="180">
+          <h3>Remote <em>hosted</em></h3>
+          <p>No local process at all: the gateway connects to a provider's hosted MCP
+             endpoint over OAuth. One browser approval, tokens stored locally.</p>
+          <p class="iso-fine">First-party servers like GitHub and Context7. Trust shifts to
+             the provider, and nothing phones home from your machine.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ QUICK START ═══════════ -->
+    <section id="start" class="start">
+      <div class="start-in reveal">
+        <p class="feat-k">Quick start</p>
+        <h2>Open the gate</h2>
+        <div class="term" data-title="terminal">
+<pre><code><span class="c-dim">$</span> git clone https://github.com/nekko-labs/hypergate && cd hypergate
+<span class="c-dim">$</span> npm install && npm run build
+<span class="c-dim">$</span> npm run daemon
+<span class="c-out">hypergated listening on http://localhost:7777</span>
+<span class="c-out">gateway → http://localhost:7777/mcp</span></code></pre>
+        </div>
+        <p class="start-note">Then open <code>localhost:7777</code>, add servers from the
+           catalog, and paste the gateway snippet into your agent. That's the whole
+           setup.</p>
+        <div class="hero-ctas">
+          <div class="download-control" data-download-group>
+            <a class="btn btn-primary download-primary" href="https://github.com/nekko-labs/hypergate/releases/latest" data-download-primary>
+              <span data-download-label>Download Hypergate</span>
+              <small data-download-version>latest</small>
+            </a>
+            <details class="download-picker" data-linux-picker hidden>
+              <summary aria-label="Choose a Linux package"><span aria-hidden="true">⌄</span></summary>
+              <div class="download-menu download-menu-up">
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="deb">DEB <small>Debian / Ubuntu</small></a>
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="rpm">RPM <small>Fedora / RHEL</small></a>
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="tar.gz">Tarball <small>Other distributions</small></a>
+              </div>
+            </details>
+          </div>
+          <a class="btn btn-ghost repo-cta" href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">View GitHub repo ↗</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-in">
+      <span>Hypergate · local-first · MIT</span>
+      <span class="foot-dim">Built by <a href="https://github.com/nekko-labs" target="_blank" rel="noopener">Nekko Labs</a></span>
+      <span class="foot-links"><a href="/release-notes.html">Release notes</a><a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">GitHub</a></span>
+    </div>
+  </footer>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

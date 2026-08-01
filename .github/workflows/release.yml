@@ -1,0 +1,162 @@
+name: Release
+
+# Cut a release by tagging: `git tag v0.9.0 && git push --tags`.
+# The tag must match the version in package.json, which the publish job checks.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write # npm provenance
+
+jobs:
+  # Every binary and installer, for all six platform/architecture pairs. Shared
+  # with the on-demand build so a release and a test build are the same thing.
+  build:
+    uses: ./.github/workflows/build-artifacts.yml
+    # The signing secrets (docs/signing.md). With none configured the build
+    # runs unsigned, exactly as before.
+    secrets: inherit
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    # The `secrets` context is not available in a step-level `if`, so the token
+    # is mapped to an env var here and the publish step tests that instead.
+    # (Using `secrets.*` in an `if` doesn't just skip the step — it makes the
+    # whole workflow file invalid, and no release gets cut at all.)
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "tag $tag does not match package.json version $version" >&2
+            exit 1
+          fi
+
+      - run: npm run build
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble the npm packages
+        run: |
+          set -euo pipefail
+          for name in win32-x64 win32-arm64 darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            binary=$(find "artifacts/shell-$name" -type f \( -name 'hypergate' -o -name 'hypergate.exe' \) | head -1)
+            [ -n "$binary" ] || { echo "no binary for $name" >&2; exit 1; }
+            chmod +x "$binary"
+            node scripts/build-npm.mjs --shell-only --target "$name" --binary "$binary"
+          done
+          node scripts/build-npm.mjs --skip-build --no-shell
+
+      # Pack every package, whether or not it gets published. The tarballs are
+      # release assets in their own right: the in-app updater downloads them
+      # from the release, which is what lets Hypergate update itself before
+      # anything is on npm at all.
+      - name: Pack the npm packages
+        run: |
+          set -euo pipefail
+          mkdir -p npm-tarballs
+          for dir in dist-npm/hypergate-shell-*/ dist-npm/hypergated/; do
+            npm pack "$dir" --pack-destination npm-tarballs
+          done
+          ls -la npm-tarballs
+
+      # Only when a token is configured. Publishing is not what makes a release
+      # work — the attached tarballs are — so a missing NPM_TOKEN must not take
+      # the whole job down with it and leave no release at all.
+      - name: Publish to npm
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Platform packages first: the main package lists them as optional
+          # dependencies at an exact version, and publishing it first would
+          # briefly point users at versions that don't exist yet.
+          for dir in dist-npm/hypergate-shell-*/; do
+            npm publish "$dir" --access public --provenance
+          done
+          npm publish dist-npm/hypergated --access public --provenance
+
+      - name: Say so when npm was skipped
+        if: env.NPM_TOKEN == ''
+        run: echo "NPM_TOKEN is not configured, so nothing was published to npm. The release still carries the npm tarballs, which is what the in-app updater installs from."
+
+      - name: Attach the installers and binaries to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          # Installers keep their versioned names for traceability. Stable aliases
+          # make /releases/latest/download links permanent for the site and README.
+          find artifacts -path '*/installer-*/*' -type f -exec cp {} release-assets/ \;
+          version="${GITHUB_REF_NAME#v}"
+          cp "release-assets/hypergate-${version}-windows-x64-setup.exe" "release-assets/hypergate-windows-x64-setup.exe"
+          cp "release-assets/hypergate-${version}-windows-arm64-setup.exe" "release-assets/hypergate-windows-arm64-setup.exe"
+          cp "release-assets/hypergate-${version}-macos-x64.pkg" "release-assets/hypergate-macos-x64.pkg"
+          cp "release-assets/hypergate-${version}-macos-arm64.pkg" "release-assets/hypergate-macos-arm64.pkg"
+          cp "release-assets/hypergate_${version}_amd64.deb" "release-assets/hypergate-linux-x64.deb"
+          cp "release-assets/hypergate_${version}_arm64.deb" "release-assets/hypergate-linux-arm64.deb"
+          cp "release-assets/hypergate-${version}-linux-amd64.tar.gz" "release-assets/hypergate-linux-x64.tar.gz"
+          cp "release-assets/hypergate-${version}-linux-arm64.tar.gz" "release-assets/hypergate-linux-arm64.tar.gz"
+          rpm_x64=$(find release-assets -maxdepth 1 -name '*.x86_64.rpm' -print -quit)
+          rpm_arm64=$(find release-assets -maxdepth 1 -name '*.aarch64.rpm' -print -quit)
+          [ -z "$rpm_x64" ] || cp "$rpm_x64" "release-assets/hypergate-linux-x64.rpm"
+          [ -z "$rpm_arm64" ] || cp "$rpm_arm64" "release-assets/hypergate-linux-arm64.rpm"
+          # The npm packages. `hypergated-<v>.tgz` and one
+          # `hypergate-shell-<os>-<arch>-<v>.tgz` per platform: these are what
+          # the in-app updater downloads and installs, matched by exact name
+          # (see assetsFromGithub in packages/core/src/update.ts), so renaming
+          # them here would silently break updating.
+          cp npm-tarballs/*.tgz release-assets/
+          # The bare binaries, for anyone scripting an install themselves.
+          for name in win32-x64 win32-arm64 darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            binary=$(find "artifacts/shell-$name" -type f | head -1)
+            case "$name" in
+              win32-*) cp "$binary" "release-assets/hypergate-$name.exe" ;;
+              *) cp "$binary" "release-assets/hypergate-$name" ;;
+            esac
+          done
+          # Checksums always; a GPG signature over them when the release key is
+          # configured. Linux has no OS-level code signing, so a signed checksum
+          # file is how .deb/.rpm/tarball users verify what they downloaded
+          # (public key: docs/release-signing-key.asc).
+          (cd release-assets && sha256sum -- * > SHA256SUMS)
+          if [ -n "$GPG_PRIVATE_KEY" ]; then
+            printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+            gpg --batch --yes --armor --detach-sign release-assets/SHA256SUMS
+          fi
+          ls -la release-assets
+          # The npm line depends on whether we actually published. Promising
+          # `npm install -g hypergated` on a release where nothing was published
+          # sends people to a 404, so say what is true for this release.
+          version="${GITHUB_REF_NAME#v}"
+          if [ -n "$NPM_TOKEN" ]; then
+            npm_line="or \`npm install -g hypergated\`"
+          else
+            npm_line="or from the npm tarballs attached here: \`npm install -g hypergate-shell-<os>-<arch>-${version}.tgz hypergated-${version}.tgz\` (\`hypergated\` is not on the public registry yet; these are the same packages, and they are what the in-app updater installs)"
+          fi
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Install with an installer below (no Node needed), ${npm_line}. Bare \`hypergate\` CLI binaries are attached too, and \`SHA256SUMS\` is GPG-signed with the key at \`docs/release-signing-key.asc\`." \
+            || gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
