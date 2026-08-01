@@ -32,9 +32,11 @@ hypergate update           # what you have, what's out, and what updating takes 
 hypergate update --apply   # install it and restart Hypergate
 ```
 
-`hypergate status` reports the same thing, and the manager's topbar carries a **↑ v0.13.0** button when there is one, so you don't have to remember to ask.
+Or from the manager, without the terminal. The version in the topbar **is** the control: hover it to get **Check for updates**, and when there is one it becomes **↑ Update available v‹x›** with three choices — **Download & install**, **Download only** (take it now, install it whenever), and **Skip**. You get a real progress bar for the download and a note when the new version comes up.
 
-`--apply` is for npm installs, which are the ones a per-user agent can safely replace: it writes an updater to the temp directory, stops Hypergate so nothing being replaced is still running, runs `npm install -g hypergated@<version>`, starts the app again, and logs every step to `~/.hypergate/update.log`. Installed from a `.exe`/`.pkg`/`.deb` instead, or running from a checkout? Then `hypergate update` prints the exact command for that channel rather than half-doing it — the native installers aren't code-signed yet ([docs/signing.md](docs/signing.md)) and the Linux packages need root.
+`--apply` is for npm installs, which are the ones a per-user agent can safely replace: it writes an updater to the temp directory, stops Hypergate so nothing being replaced is still running, installs the new packages, starts the app again, and logs every step to `~/.hypergate/update.log`. Installed from a `.exe`/`.pkg`/`.deb` instead, or running from a checkout? Then `hypergate update` prints the exact command for that channel rather than half-doing it — the native installers aren't code-signed yet ([docs/signing.md](docs/signing.md)) and the Linux packages need root.
+
+The packages come from npm when they're published there, and **from the release's own attached tarballs when they aren't** — every release carries `hypergated-<version>.tgz` plus one `hypergate-shell-<os>-<arch>-<version>.tgz`. Whatever is downloaded is checked against the hash the feed published before anything is installed.
 
 ## Why
 Kotrain and Claude Code are MCP *clients*. Hypergate is the piece they need: a secure local *server runtime/manager*, a supervisor plus an aggregating gateway. Add servers from a catalog (or custom), pick how they're isolated, start them, and paste one URL/command into your agent.

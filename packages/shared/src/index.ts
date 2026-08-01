@@ -566,6 +566,12 @@ export interface DaemonSettings {
   startMinimized: boolean;
   /** What the manager window's close button does. Defaults to `ask` (first run). */
   closeAction: CloseAction;
+  /**
+   * A version the user pressed Skip on. It stays available in Settings and a
+   * forced check clears it: skipping means "stop offering this one", not
+   * "never update again".
+   */
+  skippedUpdate?: string;
 }
 
 /** `/api/settings` payload: the settings plus what this platform can actually do. */
@@ -589,6 +595,8 @@ export interface UpdateSettingsRequest {
   runOnStartup?: boolean;
   startMinimized?: boolean;
   closeAction?: CloseAction;
+  /** A version to stop being offered, or `null` to start being offered it again. */
+  skippedUpdate?: string | null;
 }
 
 /**
@@ -635,6 +643,18 @@ export interface UpdateInfo extends UpdatePlan {
   channel: InstallChannel;
   /** Set when the last check could not reach a feed, so the UI can say why. */
   error?: string;
+  /** A version already downloaded and sitting ready to install. */
+  staged?: string;
+  /** The version the user pressed Skip on (see `DaemonSettings.skippedUpdate`). */
+  skipped?: string;
+  /** Bytes the download will pull, when the feed says how big the payload is. */
+  downloadSize?: number;
+  /**
+   * Whether the payload can be fetched here, i.e. the feed named the packages
+   * to download. `canApply` says the channel *may* be replaced in place;
+   * this says we know *what* to replace it with.
+   */
+  canDownload?: boolean;
 }
 
 /** `POST /api/update/apply`: the update was handed to the shell, which restarts Hypergate. */
@@ -642,6 +662,61 @@ export interface ApplyUpdateResponse {
   ok: boolean;
   /** The command the updater will run, echoed back for the UI's progress copy. */
   command?: string;
+  error?: string;
+}
+
+/**
+ * One file the update is made of: the daemon package, plus the native shell
+ * build for this platform. Resolved from whichever feed answered (an npm
+ * packument's `dist`, or a GitHub release's assets).
+ */
+export interface UpdateAsset {
+  /** File name it is stored under in the staging directory. */
+  name: string;
+  url: string;
+  /** Bytes, when the feed says. */
+  size?: number;
+  /** npm's `dist.integrity` (`sha512-…`), checked after download when present. */
+  integrity?: string;
+  /** npm's `dist.shasum` (sha1 hex), the older integrity field. */
+  shasum?: string;
+}
+
+/**
+ * How far along a download or install is.
+ *
+ * `downloading` is real: bytes received out of the payload size. `installing`
+ * cannot be, because the install replaces the files the daemon is running from,
+ * so the daemon is gone for the duration — the UI shows the phase and waits for
+ * the new version to answer.
+ */
+export type UpdateStage = 'idle' | 'downloading' | 'staged' | 'installing' | 'error';
+
+export interface UpdateProgress {
+  stage: UpdateStage;
+  /** The version being downloaded or installed. */
+  version?: string;
+  received: number;
+  /** Total bytes, when every asset declared a size. */
+  total?: number;
+  /** 0..1, only when `total` is known. */
+  fraction?: number;
+  /** Which file is in flight, so a two-file download can say so. */
+  file?: string;
+  error?: string;
+  startedAt?: string;
+}
+
+/**
+ * What the last completed update did, written by the updater and read once by
+ * the UI that comes back up. Without it a successful update is indistinguishable
+ * from a crash-and-restart.
+ */
+export interface UpdateResult {
+  ok: boolean;
+  /** The version that was installed (or attempted). */
+  version: string;
+  finishedAt: string;
   error?: string;
 }
 

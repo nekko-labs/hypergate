@@ -16,6 +16,8 @@ import type {
   ConnectResult,
   ShutdownResponse,
   UpdateInfo,
+  UpdateProgress,
+  UpdateResult,
   ApplyUpdateResponse,
 } from '@hypergate/shared';
 
@@ -82,6 +84,18 @@ export const api = {
   // when the manager opens costs nothing), and `force` skips that cache.
   update: () => j<UpdateInfo>('/api/update'),
   checkUpdate: (force = false) => j<UpdateInfo>(`/api/update/check${force ? '?force=1' : ''}`, { method: 'POST' }),
+  // Download without installing: the daemon fetches the packages and stays up,
+  // which is what makes "download only" a real choice. Both this and
+  // `applyUpdate` answer immediately; `updateProgress()` is where the story is.
+  downloadUpdate: (token: string) =>
+    j<{ ok: boolean; version?: string; total?: number }>('/api/update/download', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    }),
   applyUpdate: (token: string) =>
     j<ApplyUpdateResponse>('/api/update/apply', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }),
+  updateProgress: () => j<UpdateProgress>('/api/update/progress'),
+  // Read once: the daemon clears it, so the version that just came up reports
+  // the update that produced it exactly one time.
+  updateResult: () => j<UpdateResult>('/api/update/result'),
 };

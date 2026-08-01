@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import type { ReactNode } from 'react';
 import type {
   ServerStatus,
   RegistryEntry,
@@ -19,6 +20,7 @@ import type {
   AgentConnectInfo,
   ConnectResult,
   UpdateInfo,
+  UpdateProgress,
   InstallChannel,
   CloseAction,
 } from '@hypergate/shared';
@@ -77,6 +79,169 @@ const openAuth = (authUrl?: string): void => {
 
 const RUNTIME_CHIP: Record<string, string> = { docker: '🐳 docker', remote: '🌐 remote', process: '⚡ process' };
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Every state the update flow can be in, as one word. The topbar and the
+ * Settings row render the same value, so they can never disagree about whether
+ * something is downloading.
+ */
+type UpdateStageUi =
+  | 'unknown'      // haven't asked yet
+  | 'idle'         // nothing on offer
+  | 'checking'
+  | 'available'    // there is one, not downloaded
+  | 'downloading'
+  | 'staged'       // downloaded, waiting to be installed
+  | 'installing'
+  | 'installed'    // this session came up out of an update
+  | 'failed';
+
+export interface Updater {
+  info: UpdateInfo | null;
+  stage: UpdateStageUi;
+  progress: UpdateProgress | null;
+  error: string | null;
+  check: (force?: boolean) => Promise<void>;
+  download: () => Promise<void>;
+  install: () => Promise<void>;
+  skip: () => Promise<void>;
+  unskip: () => Promise<void>;
+  dismissResult: () => void;
+}
+
+/**
+ * The update flow, in one place.
+ *
+ * Two things here are worth knowing. First, **the check never flashes**: a
+ * cached answer comes back in a few milliseconds, and a spinner that appears
+ * and vanishes inside one frame reads as a glitch rather than as work, so the
+ * checking state is held for a beat whatever the daemon does.
+ *
+ * Second, **the install outlives the daemon reporting it**. The updater has to
+ * stop the daemon to replace its files, so progress polling starts failing
+ * mid-install by design; that is treated as "still installing" rather than as
+ * an error, and the answer arrives when a daemon comes back and says which
+ * version it is.
+ */
+function useUpdater(gateway: GatewayInfo | null): Updater {
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [progress, setProgress] = useState<UpdateProgress | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [installed, setInstalled] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // A skip pressed a moment ago, so the offer goes away before the daemon has
+  // finished writing the setting down.
+  const [skippedNow, setSkippedNow] = useState<string | null>(null);
+
+  const check = useCallback(async (force = false) => {
+    setChecking(true);
+    setError(null);
+    // The floor, not a delay: whichever finishes last wins, so a slow daemon is
+    // never made slower and a fast one is still legible.
+    const [next] = await Promise.all([api.checkUpdate(force).catch(() => null), sleep(500)]);
+    if (next) setInfo(next);
+    if (force) setSkippedNow(null);
+    setChecking(false);
+  }, []);
+
+  // What the last update did, asked once. The daemon clears it on read, so a
+  // reload doesn't keep congratulating you for the same update.
+  useEffect(() => {
+    void api
+      .updateResult()
+      .then((r) => {
+        if (r.ok && r.version) setInstalled(r.version);
+        else if (r.version && r.error) setError(r.error);
+      })
+      .catch(() => {});
+    void api.updateProgress().then(setProgress).catch(() => {});
+  }, []);
+
+  // Watch a running job. Polling stops when nothing is happening, so the idle
+  // manager makes no requests it doesn't need.
+  const active = progress?.stage === 'downloading' || progress?.stage === 'installing';
+  useEffect(() => {
+    if (!active) return;
+    let live = true;
+    const tick = async (): Promise<void> => {
+      try {
+        const p = await api.updateProgress();
+        if (!live) return;
+        setProgress(p);
+        if (p.stage === 'staged') void api.update().then(setInfo).catch(() => {});
+        if (p.stage === 'error') setError(p.error ?? 'the update failed');
+      } catch {
+        // The daemon going quiet mid-install is the install working. Ask
+        // /health instead, and when a daemon answers, see what it turned into.
+        if (!live) return;
+        const h = await api.health().catch(() => null);
+        if (!live || !h) return;
+        if (progress?.stage === 'installing' && h.version !== progress.version) return;
+        if (h.version && progress?.version && h.version === progress.version) {
+          // The new version is serving: reload so the UI matches the daemon.
+          window.location.reload();
+        }
+      }
+    };
+    const t = setInterval(() => void tick(), 400);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [active, progress?.stage, progress?.version]);
+
+  const token = gateway?.token;
+  const guard = async (fn: (t: string) => Promise<unknown>): Promise<void> => {
+    if (!token) {
+      setError('No gateway token — reload the page and try again.');
+      return;
+    }
+    setError(null);
+    try {
+      await fn(token);
+      setProgress(await api.updateProgress().catch(() => null));
+    } catch {
+      setError('The daemon would not start the update. Check ~/.hypergate/update.log for what it saw.');
+    }
+  };
+
+  const download = useCallback(() => guard((t) => api.downloadUpdate(t)), [token]);
+  const install = useCallback(() => guard((t) => api.applyUpdate(t)), [token]);
+
+  const skip = useCallback(async () => {
+    const v = info?.latest;
+    if (!v) return;
+    setSkippedNow(v);
+    setInfo(await api.updateSettings({ skippedUpdate: v }).then(() => api.update()).catch(() => info));
+  }, [info]);
+
+  const unskip = useCallback(async () => {
+    setSkippedNow(null);
+    setInfo(await api.updateSettings({ skippedUpdate: null }).then(() => api.update()).catch(() => info));
+  }, [info]);
+
+  const stage: UpdateStageUi = checking
+    ? 'checking'
+    : installed
+      ? 'installed'
+      : progress?.stage === 'downloading'
+        ? 'downloading'
+        : progress?.stage === 'installing'
+          ? 'installing'
+          : progress?.stage === 'error' || (error && info?.updateAvailable)
+            ? 'failed'
+            : !info
+              ? 'unknown'
+              : info.updateAvailable && info.skipped !== info.latest && skippedNow !== info.latest
+                ? info.staged === info.latest
+                  ? 'staged'
+                  : 'available'
+                : 'idle';
+
+  return { info, stage, progress, error, check, download, install, skip, unskip, dismissResult: () => setInstalled(null) };
+}
+
 /**
  * Order the catalog like the daemon's sortRegistry, but client-side (we don't
  * bundle @hypergate/core into the browser): recommended entries first — keeping
@@ -111,24 +276,15 @@ export function App() {
   const [adding, setAdding] = useState<RegistryEntry | 'custom' | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
   const [version, setVersion] = useState('');
-  const [update, setUpdate] = useState<UpdateInfo | null>(null);
-  const [checking, setChecking] = useState(false);
 
   const refreshAgents = useCallback(() => {
     void api.clients().then(setAgents).catch(() => {});
   }, []);
 
-  /**
-   * Ask the daemon about updates. Cheap by default: the daemon caches the answer
-   * for a day, so calling it whenever the manager opens is what makes the version
-   * chip aware without the daemon ever reaching out on its own. `force` is the
-   * explicit "check now" the user pressed.
-   */
-  const checkUpdate = useCallback(async (force = false) => {
-    setChecking(true);
-    setUpdate(await api.checkUpdate(force).catch(() => null));
-    setChecking(false);
-  }, []);
+  // The whole update flow: state, the buttons' actions, and the polling that
+  // watches a running one. Shared, so the topbar and Settings can't disagree.
+  const updater = useUpdater(gateway);
+  const { check: checkUpdate } = updater;
 
   const refresh = useCallback(async () => {
     try {
@@ -188,13 +344,7 @@ export function App() {
         <div className="topbar-in">
           <div className="logo-tile"><img src="/favicon.svg" alt="" width="22" height="22" /></div>
           <span className="wordmark">Hypergate</span>
-          <VersionBox
-            version={version}
-            update={update}
-            checking={checking}
-            onCheck={() => void checkUpdate(true)}
-            onOpenUpdates={() => setView('settings')}
-          />
+          <VersionBox version={version} u={updater} onOpenUpdates={() => setView('settings')} />
           <nav className="nav">
             <button className={view === 'servers' ? 'active' : ''} onClick={() => setView('servers')}>Servers</button>
             <button className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}>
@@ -274,13 +424,7 @@ export function App() {
         ) : view === 'analytics' ? (
           <AnalyticsView stats={stats} />
         ) : (
-          <SettingsView
-            gateway={gateway}
-            version={version}
-            updateInfo={update}
-            checking={checking}
-            onCheck={() => void checkUpdate(true)}
-          />
+          <SettingsView gateway={gateway} version={version} u={updater} />
         )}
 
         <div className="footer">
@@ -408,42 +552,172 @@ function GitHubMark() {
 }
 
 /**
- * The version, and everything you'd want next to it: whether a newer Hypergate
- * exists, and a way to ask again.
+ * The version, and everything the update flow ever needs to say, in the one
+ * element that was already showing the version.
  *
- * The update state sits immediately right of the version, because that is where
- * you look to answer "am I current?". When you are, it says so quietly ("latest")
- * rather than showing nothing, since silence reads as "hasn't checked". The check
- * button appears on hover so the chrome stays calm, and on a touch screen (where
- * there is no hover) it is simply always there.
+ * This is deliberately not a chip plus a button plus a settings page: the whole
+ * conversation ("what am I running" → "is there more" → "get it" → "installing")
+ * happens in place, in the slot you were already looking at. Hovering the version
+ * turns it into **Check for updates**, checking turns it into a spinner, a result
+ * turns it into the offer, and taking the offer turns it into a progress bar.
+ * Nothing moves, nothing opens, and the topbar never grows a second control.
  */
-function VersionBox({
-  version, update, checking, onCheck, onOpenUpdates,
-}: {
-  version: string;
-  update: UpdateInfo | null;
-  checking: boolean;
-  onCheck: () => void;
-  onOpenUpdates: () => void;
-}) {
+function VersionBox({ version, u, onOpenUpdates }: { version: string; u: Updater; onOpenUpdates: () => void }) {
+  const [hover, setHover] = useState(false);
+  const { info, stage, progress } = u;
   if (!version) return null;
-  return (
-    <span className="verbox">
-      <span className="chip">v{version}</span>
-      {update?.updateAvailable ? (
-        <button
-          className="chip chip-update"
-          onClick={onOpenUpdates}
-          title={`Hypergate ${update.latest} is available. Open Settings to install it`}
-        >
-          ↑ v{update.latest}
+
+  const latest = info?.latest ?? progress?.version ?? '';
+  const wrap = (children: ReactNode, extra = ''): ReactNode => (
+    <span
+      className={`verbox ${extra}`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      {children}
+    </span>
+  );
+
+  if (stage === 'checking') {
+    return wrap(
+      <span className="chip vb-busy" role="status" aria-live="polite">
+        <Spinner /> Checking…
+      </span>,
+    );
+  }
+
+  if (stage === 'downloading') {
+    const pct = progress?.fraction != null ? Math.round(progress.fraction * 100) : undefined;
+    return wrap(
+      <span className="chip vb-busy vb-progress" role="status" aria-live="polite">
+        <Spinner /> Downloading v{latest}
+        <ProgressBar fraction={progress?.fraction} />
+        <b className="vb-pct">{pct != null ? `${pct}%` : fmtBytes(progress?.received ?? 0)}</b>
+      </span>,
+    );
+  }
+
+  if (stage === 'installing') {
+    return wrap(
+      <span className="chip vb-busy vb-progress" role="status" aria-live="polite">
+        <Spinner /> Installing v{latest}
+        <ProgressBar />
+        <span className="vb-pct muted">restarting</span>
+      </span>,
+    );
+  }
+
+  if (stage === 'installed') {
+    return wrap(
+      <button className="chip chip-done" onClick={() => u.dismissResult()} title="Dismiss">
+        ✓ Updated to v{version}
+      </button>,
+    );
+  }
+
+  if (stage === 'failed') {
+    return wrap(
+      <>
+        <span className="chip chip-bad" title={u.error ?? 'The update failed'}>Update failed</span>
+        <button className="btn sm vb-act" onClick={() => void u.install()}>Retry</button>
+        <button className="btn sm btn-ghost vb-act" onClick={onOpenUpdates}>Details</button>
+      </>,
+    );
+  }
+
+  // The offer. A staged version has already been downloaded, so it asks for one
+  // decision (install it) rather than the three an un-downloaded one does.
+  if (stage === 'available' || stage === 'staged') {
+    const ready = stage === 'staged';
+    const chip = (
+      <span className="chip chip-update" title={info?.releaseUrl ? `Release notes: ${info.releaseUrl}` : undefined}>
+        ↑ {ready ? 'Ready to install' : 'Update available'} v{latest}
+      </span>
+    );
+    // A channel we must not replace in place (an unsigned installer, a system
+    // package, a checkout) gets pointed at the instructions instead of a button
+    // that would refuse. Offering it here and refusing it in Settings would be
+    // the same lie told twice.
+    if (!info?.canApply) {
+      return wrap(
+        <>
+          {chip}
+          <button className="btn sm vb-act" onClick={onOpenUpdates} title={info?.note ?? 'How to update this install'}>
+            How to update
+          </button>
+          <button className="btn sm btn-ghost vb-act" onClick={() => void u.skip()} title={`Stop offering v${latest}`}>
+            Skip
+          </button>
+        </>,
+      );
+    }
+    return wrap(
+      <>
+        {chip}
+        {ready ? (
+          <button className="btn sm btn-primary vb-act" onClick={() => void u.install()}>Install &amp; restart</button>
+        ) : (
+          <>
+            <button className="btn sm btn-primary vb-act" onClick={() => void u.install()}>
+              Download &amp; install
+            </button>
+            <button className="btn sm vb-act" onClick={() => void u.download()} disabled={!info.canDownload}
+              title={info.canDownload
+                ? `Fetch it now${info.downloadSize ? ` (${fmtBytes(info.downloadSize)})` : ''} and install it later`
+                : 'This release has no downloadable package for this platform'}>
+              Download only
+            </button>
+          </>
+        )}
+        <button className="btn sm btn-ghost vb-act" onClick={() => void u.skip()} title={`Stop offering v${latest}`}>
+          Skip
         </button>
-      ) : update?.latest ? (
-        <span className="small muted vb-latest" title={`Checked ${fmtRel(update.checkedAt)}`}>latest</span>
-      ) : null}
-      <button className="btn sm btn-ghost vb-check" onClick={onCheck} disabled={checking}>
-        {checking ? 'Checking…' : 'Check for updates'}
-      </button>
+      </>,
+    );
+  }
+
+  // Nothing to offer: the version, which becomes the check when you reach for
+  // it. "latest" stays visible after a check, because silence reads as
+  // "hasn't looked" rather than "you're current".
+  const checked = info?.latest && !info.updateAvailable;
+  return wrap(
+    <button
+      className="chip vb-ver"
+      onClick={() => void u.check(true)}
+      title={info?.checkedAt ? `Last checked ${fmtRel(info.checkedAt)}. Click to check again` : 'Check for updates'}
+    >
+      {hover ? 'Check for updates' : <>v{version}{checked && <span className="vb-latest"> · latest</span>}</>}
+    </button>,
+    'verbox-idle',
+  );
+}
+
+/** A small indeterminate spinner, for the states that are genuinely waiting. */
+function Spinner() {
+  return (
+    <svg className="spin" viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" focusable="false">
+      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeOpacity=".25" strokeWidth="2.5" />
+      <path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/**
+ * The bar. Determinate while bytes are arriving, indeterminate once the install
+ * starts, because at that point the daemon reporting progress is the thing being
+ * replaced — a percentage there would be invented.
+ */
+function ProgressBar({ fraction }: { fraction?: number }) {
+  const known = fraction != null;
+  return (
+    <span
+      className={`vb-bar${known ? '' : ' indet'}`}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={known ? Math.round(fraction * 100) : undefined}
+    >
+      <span className="vb-bar-fill" style={known ? { width: `${Math.max(3, fraction * 100)}%` } : undefined} />
     </span>
   );
 }
@@ -926,15 +1200,9 @@ function CloseActionRow({ value, busy, onChange }: { value: CloseAction; busy: b
 }
 
 /** Updates, service/desktop options (run at login, start minimized), stop the daemon. */
-function SettingsView({
-  gateway, version, updateInfo, checking, onCheck,
-}: {
-  gateway: GatewayInfo | null;
-  version: string;
-  updateInfo: UpdateInfo | null;
-  checking: boolean;
-  onCheck: () => void;
-}) {
+function SettingsView({ gateway, version, u }: { gateway: GatewayInfo | null; version: string; u: Updater }) {
+  const checking = u.stage === 'checking';
+  const onCheck = (): void => void u.check(true);
   const [s, setS] = useState<SettingsInfo | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -972,7 +1240,7 @@ function SettingsView({
         </span>
       </div>
       <div className="panel"><div className="list">
-        <UpdateRow info={updateInfo} gateway={gateway} version={version} />
+        <UpdateRow u={u} version={version} />
       </div></div>
 
       <div className="section-title" style={{ marginTop: 24 }}>Startup &amp; desktop</div>
@@ -1045,43 +1313,39 @@ const CHANNEL_LABEL: Record<InstallChannel, string> = {
  * unsigned installer unattended would be worse than pointing you at the release.
  * Every channel still shows the exact command, so nothing is hidden.
  */
-function UpdateRow({ info, gateway, version }: { info: UpdateInfo | null; gateway: GatewayInfo | null; version: string }) {
-  const [busy, setBusy] = useState(false);
-  const [started, setStarted] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+function UpdateRow({ u, version }: { u: Updater; version: string }) {
   const [copied, copy] = useCopy();
-
-  const apply = async () => {
-    if (!gateway?.token) {
-      setErr('No gateway token available. Reload the page and try again.');
-      return;
-    }
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api.applyUpdate(gateway.token);
-      setStarted(r.command ?? 'the update');
-    } catch {
-      setErr('The daemon would not start the update. Check ~/.hypergate/update.log, or run the command below yourself.');
-    }
-    setBusy(false);
-  };
+  const { info, stage, progress } = u;
 
   if (!info) {
     return <div className="list-row small muted">Checking for updates…</div>;
   }
 
+  const busy = stage === 'downloading' || stage === 'installing';
+  const skipped = info.skipped && info.skipped === info.latest;
+
+  const headline = busy
+    ? `${stage === 'downloading' ? 'Downloading' : 'Installing'} Hypergate ${progress?.version ?? info.latest}`
+    : stage === 'installed'
+      ? `Updated to Hypergate ${version}`
+      : stage === 'staged'
+        ? `Hypergate ${info.latest} is downloaded and ready to install`
+        : info.updateAvailable
+          ? `Hypergate ${info.latest} is available`
+          : info.latest
+            ? "You're on the latest version"
+            : 'Update check';
+
   return (
     <div className="list-row setting-row">
       <div className="setting-text">
-        <div className="setting-label">
-          {info.updateAvailable ? `Hypergate ${info.latest} is available` : info.latest ? "You're on the latest version" : 'Update check'}
-        </div>
+        <div className="setting-label">{headline}</div>
         <div className="small muted">
           Running <b>v{info.current || version}</b>
           {info.latest && !info.updateAvailable && <> · latest is <b>v{info.latest}</b></>}
           {' · '}
           {CHANNEL_LABEL[info.channel]}
+          {info.downloadSize && info.updateAvailable && <> · {fmtBytes(info.downloadSize)} download</>}
           {info.checkedAt && <> · checked {fmtRel(info.checkedAt)}</>}
         </div>
         {!info.latest && (
@@ -1092,14 +1356,31 @@ function UpdateRow({ info, gateway, version }: { info: UpdateInfo | null; gatewa
           </div>
         )}
         {info.updateAvailable && info.note && <div className="small muted" style={{ marginTop: 4 }}>{info.note}</div>}
-        {started && (
-          <div className="small" style={{ marginTop: 6, color: 'var(--success)' }}>
-            Updating now. Hypergate will stop, install <code>{started}</code>, and start again on its own. This page
-            reconnects when it's back; progress is logged to <code>~/.hypergate/update.log</code>.
+        {busy && (
+          <div style={{ marginTop: 8, maxWidth: 340 }}>
+            <ProgressBar fraction={stage === 'downloading' ? progress?.fraction : undefined} />
+            <div className="small muted" style={{ marginTop: 5 }}>
+              {stage === 'downloading' ? (
+                <>
+                  {progress?.file ?? 'package'} · {fmtBytes(progress?.received ?? 0)}
+                  {progress?.total ? ` of ${fmtBytes(progress.total)}` : ''}
+                </>
+              ) : (
+                <>
+                  Hypergate is stopping, installing, and starting again on its own. This page reconnects when it's back;
+                  every step is logged to <code>~/.hypergate/update.log</code>.
+                </>
+              )}
+            </div>
           </div>
         )}
-        {err && <div className="small" style={{ color: 'var(--danger)', marginTop: 6 }}>{err}</div>}
-        {info.updateAvailable && info.command && !started && (
+        {skipped && !busy && (
+          <div className="small muted" style={{ marginTop: 6 }}>
+            You skipped this version. It stays here, and checking again brings it back to the topbar.
+          </div>
+        )}
+        {u.error && <div className="small" style={{ color: 'var(--danger)', marginTop: 6 }}>{u.error}</div>}
+        {info.updateAvailable && info.command && !busy && (
           <div className="row wrap-gap" style={{ marginTop: 8 }}>
             <code className="path">{info.command}</code>
             <button className="btn sm" onClick={() => copy('cmd', info.command ?? '')}>{copied === 'cmd' ? 'Copied!' : 'Copy'}</button>
@@ -1110,10 +1391,20 @@ function UpdateRow({ info, gateway, version }: { info: UpdateInfo | null; gatewa
         {info.releaseUrl && info.updateAvailable && (
           <a className="btn sm" href={info.releaseUrl} target="_blank" rel="noreferrer">Release notes</a>
         )}
-        {info.updateAvailable && info.canApply && !started && (
-          <button className="btn btn-primary" onClick={() => void apply()} disabled={busy}>
-            {busy ? 'Starting…' : 'Update now'}
-          </button>
+        {info.updateAvailable && info.canApply && !busy && (
+          <>
+            {stage !== 'staged' && info.canDownload && (
+              <button className="btn sm" onClick={() => void u.download()}>Download only</button>
+            )}
+            {skipped ? (
+              <button className="btn sm" onClick={() => void u.unskip()}>Un-skip</button>
+            ) : (
+              <button className="btn sm btn-ghost" onClick={() => void u.skip()}>Skip</button>
+            )}
+            <button className="btn btn-primary" onClick={() => void u.install()}>
+              {stage === 'staged' ? 'Install & restart' : 'Download & install'}
+            </button>
+          </>
         )}
       </div>
     </div>
