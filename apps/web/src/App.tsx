@@ -133,6 +133,9 @@ function useUpdater(gateway: GatewayInfo | null): Updater {
   // A skip pressed a moment ago, so the offer goes away before the daemon has
   // finished writing the setting down.
   const [skippedNow, setSkippedNow] = useState<string | null>(null);
+  // The version that was serving when this page loaded. An install ends when
+  // something else answers, and that is the only thing to compare against.
+  const bootVersion = useRef<string | undefined>(undefined);
 
   const check = useCallback(async (force = false) => {
     setChecking(true);
@@ -148,6 +151,7 @@ function useUpdater(gateway: GatewayInfo | null): Updater {
   // What the last update did, asked once. The daemon clears it on read, so a
   // reload doesn't keep congratulating you for the same update.
   useEffect(() => {
+    void api.health().then((h) => { bootVersion.current = h.version; }).catch(() => {});
     void api
       .updateResult()
       .then((r) => {
@@ -161,27 +165,42 @@ function useUpdater(gateway: GatewayInfo | null): Updater {
   // Watch a running job. Polling stops when nothing is happening, so the idle
   // manager makes no requests it doesn't need.
   const active = progress?.stage === 'downloading' || progress?.stage === 'installing';
+  const installing = progress?.stage === 'installing';
   useEffect(() => {
     if (!active) return;
     let live = true;
+
+    /**
+     * Has a *different* daemon come up in place of the one we were talking to?
+     *
+     * This is the only reliable end to an install, because the install replaces
+     * the daemon reporting it: the request may fail (it's down), or succeed
+     * against the new build (which knows nothing about the job). Either way the
+     * answer is the same question — what version is serving now.
+     */
+    const replaced = async (): Promise<boolean> => {
+      const h = await api.health().catch(() => null);
+      return !!h?.version && h.version !== bootVersion.current;
+    };
+
     const tick = async (): Promise<void> => {
       try {
         const p = await api.updateProgress();
+        if (!live) return;
+        // A new daemon answers happily and reports an idle job, so a successful
+        // poll is not proof the install is still running.
+        if (installing && (await replaced())) {
+          if (live) window.location.reload();
+          return;
+        }
         if (!live) return;
         setProgress(p);
         if (p.stage === 'staged') void api.update().then(setInfo).catch(() => {});
         if (p.stage === 'error') setError(p.error ?? 'the update failed');
       } catch {
-        // The daemon going quiet mid-install is the install working. Ask
-        // /health instead, and when a daemon answers, see what it turned into.
-        if (!live) return;
-        const h = await api.health().catch(() => null);
-        if (!live || !h) return;
-        if (progress?.stage === 'installing' && h.version !== progress.version) return;
-        if (h.version && progress?.version && h.version === progress.version) {
-          // The new version is serving: reload so the UI matches the daemon.
-          window.location.reload();
-        }
+        // Gone quiet mid-install is the install working. Keep showing the
+        // installing state and wait for whatever comes back.
+        if (live && installing && (await replaced()) && live) window.location.reload();
       }
     };
     const t = setInterval(() => void tick(), 400);
@@ -189,7 +208,7 @@ function useUpdater(gateway: GatewayInfo | null): Updater {
       live = false;
       clearInterval(t);
     };
-  }, [active, progress?.stage, progress?.version]);
+  }, [active, installing]);
 
   const token = gateway?.token;
   const guard = async (fn: (t: string) => Promise<unknown>): Promise<void> => {
@@ -202,7 +221,7 @@ function useUpdater(gateway: GatewayInfo | null): Updater {
       await fn(token);
       setProgress(await api.updateProgress().catch(() => null));
     } catch {
-      setError('The daemon would not start the update. Check ~/.hypergate/update.log for what it saw.');
+      setError('The daemon refused the request. Check ~/.hypergate/update.log for what it saw.');
     }
   };
 
