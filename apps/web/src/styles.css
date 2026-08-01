@@ -237,7 +237,11 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
    spinner; an answer turns it into the offer; taking the offer turns it into a
    progress bar. One element, so the topbar never grows a second control and
    nothing around it moves when the state changes. */
-.verbox { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; }
+.verbox { display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 24px; white-space: nowrap; }
+.verbox-offer {
+  flex: none; gap: 2px; padding: 3px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 10px; background: color-mix(in srgb, var(--accent) 7%, var(--paper-2));
+}
 /* The version, which is also the check button. The min-width is the width of
    "Check for updates": the label swaps on hover, and the nav beside it must not
    twitch when it does. */
@@ -247,15 +251,23 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
   min-width: 112px; transition: color .12s, border-color .12s, background .12s;
 }
 .verbox .vb-ver:hover { color: var(--ink); border-color: var(--ink-3); background: var(--card-2); }
+.verbox button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
 .verbox .vb-latest { opacity: .65; }
 .verbox .chip-update {
-  font-family: inherit; font-weight: 600;
-  color: #fff; background: var(--grad); border-color: transparent;
+  height: 28px; padding: 0 8px 0 3px; display: inline-flex; align-items: center; gap: 6px;
+  font-family: inherit; font-weight: 550; color: var(--ink); background: transparent;
+  border: 0; border-radius: 7px; white-space: nowrap;
 }
+.verbox .vb-update-icon {
+  width: 21px; height: 21px; display: inline-grid; place-items: center; border-radius: 6px;
+  background: var(--grad); color: #fff; font-size: 13px; font-weight: 750; line-height: 1;
+}
+.verbox .vb-update-label { color: var(--ink-2); }
+.verbox .vb-update-version { color: var(--ink); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .verbox .chip-done { cursor: pointer; font-family: inherit; font-weight: 600; color: var(--success); border-color: color-mix(in srgb, var(--success) 32%, transparent); background: color-mix(in srgb, var(--success) 13%, var(--card-2)); }
 .verbox .chip-bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 32%, transparent); background: color-mix(in srgb, var(--danger) 12%, var(--card-2)); }
 /* The offer's buttons. Small, because they sit in the chrome, not in the page. */
-.verbox .vb-act { padding: 2px 8px; font-size: 11.5px; white-space: nowrap; }
+.verbox .vb-act { min-height: 28px; padding: 0 9px; border-radius: 7px; font-size: 11.5px; white-space: nowrap; }
 .verbox .vb-busy { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-2); }
 .verbox .vb-progress { min-width: 236px; }
 .verbox .vb-pct { font-variant-numeric: tabular-nums; font-size: 10.5px; min-width: 34px; text-align: right; }
@@ -772,6 +784,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
   .pagehead-meta { align-items: stretch; }
   .pagehead-meta .summary { align-self: flex-end; }
   .ag-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .verbox-offer .vb-update-label { display: none; }
 }
 
 @media (max-width: 760px) {
@@ -780,6 +793,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
   .nav > .nav-group > button { justify-content: center; padding: 10px; }
   .nav-label, .nav .n-badge, .section-nav { display: none; }
   .wrap { padding: 0 18px; }
+  .verbox-offer .vb-secondary { display: none; }
 }
 
 @media (max-width: 640px) {
@@ -793,5 +807,6 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
      stays in its compact rail, so it can remain one line at the shell minimum. */
   .topbar-in { padding: 10px 16px; }
   .wordmark { display: none; }
+  .verbox-offer .vb-tertiary { display: none; }
   .footer > span { display: none; }
 }

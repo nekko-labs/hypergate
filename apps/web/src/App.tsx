@@ -806,8 +806,15 @@ function VersionBox({ version, u, onOpenUpdates }: { version: string; u: Updater
   if (stage === 'available' || stage === 'staged') {
     const ready = stage === 'staged';
     const chip = (
-      <span className="chip chip-update" title={info?.releaseUrl ? `Release notes: ${info.releaseUrl}` : undefined}>
-        ↑ {ready ? 'Ready to install' : 'Update available'} v{latest}
+      <span
+        className="chip chip-update"
+        role="status"
+        aria-label={`${ready ? 'Ready to install' : 'Update available'} v${latest}`}
+        title={info?.releaseUrl ? `Release notes: ${info.releaseUrl}` : undefined}
+      >
+        <span className="vb-update-icon" aria-hidden="true">↑</span>
+        <span className="vb-update-label">{ready ? 'Ready to install' : 'Update available'}</span>
+        <b className="vb-update-version">v{latest}</b>
       </span>
     );
     // A channel we must not replace in place (an unsigned installer, a system
@@ -818,13 +825,14 @@ function VersionBox({ version, u, onOpenUpdates }: { version: string; u: Updater
       return wrap(
         <>
           {chip}
-          <button className="btn sm vb-act" onClick={onOpenUpdates} title={info?.note ?? 'How to update this install'}>
+          <button className="btn sm btn-accent vb-act" onClick={onOpenUpdates} title={info?.note ?? 'How to update this install'}>
             How to update
           </button>
-          <button className="btn sm btn-ghost vb-act" onClick={() => void u.skip()} title={`Stop offering v${latest}`}>
+          <button className="btn sm btn-ghost vb-act vb-tertiary" onClick={() => void u.skip()} title={`Stop offering v${latest}`}>
             Skip
           </button>
         </>,
+        'verbox-offer',
       );
     }
     return wrap(
@@ -837,7 +845,7 @@ function VersionBox({ version, u, onOpenUpdates }: { version: string; u: Updater
             <button className="btn sm btn-primary vb-act" onClick={() => void u.install()}>
               Download &amp; install
             </button>
-            <button className="btn sm vb-act" onClick={() => void u.download()} disabled={!info.canDownload}
+            <button className="btn sm vb-act vb-secondary" onClick={() => void u.download()} disabled={!info.canDownload}
               title={info.canDownload
                 ? `Fetch it now${info.downloadSize ? ` (${fmtBytes(info.downloadSize)})` : ''} and install it later`
                 : 'This release has no downloadable package for this platform'}>
@@ -845,10 +853,11 @@ function VersionBox({ version, u, onOpenUpdates }: { version: string; u: Updater
             </button>
           </>
         )}
-        <button className="btn sm btn-ghost vb-act" onClick={() => void u.skip()} title={`Stop offering v${latest}`}>
+        <button className="btn sm btn-ghost vb-act vb-tertiary" onClick={() => void u.skip()} title={`Stop offering v${latest}`}>
           Skip
         </button>
       </>,
+      'verbox-offer',
     );
   }
 
