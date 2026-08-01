@@ -149,7 +149,8 @@ void main(){
   float ang = atan(uv.y, uv.x);
 
   // liquid domain warp swirling around the ring
-  vec2 p = vec2(ang * 1.59155, r * 3.4);
+  vec2 orbit = vec2(cos(ang), sin(ang));
+  vec2 p = mix(uv * 4.0, orbit * (1.0 + r * 1.8), smoothstep(0.12, 0.28, r));
   float w1 = fbm(p * 2.2 + vec2(t * 2.4, -t * 1.1));
   float w2 = fbm(p * 3.6 - vec2(t * 1.7, t * 2.2) + w1 * 1.8);
   float liquid = fbm(p * 2.8 + vec2(w2 * 2.2, w1 * 1.6) + vec2(0.0, -t * 3.0));
