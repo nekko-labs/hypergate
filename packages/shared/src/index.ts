@@ -233,6 +233,22 @@ export interface RegistryEntry {
   popularity?: number;
 }
 
+export function mergeCatalogSearch(curated: RegistryEntry[], searched: RegistryEntry[], query: string): RegistryEntry[] {
+  const needle = query.trim().toLowerCase();
+  const matchingCurated = needle
+    ? curated.filter((entry) => [entry.name, entry.id, entry.description, entry.homepage].some((value) => value?.toLowerCase().includes(needle)))
+    : [];
+  const ids = new Set<string>();
+  const urls = new Set<string>();
+  return [...matchingCurated, ...searched].filter((entry) => {
+    const url = entry.url?.toLowerCase().replace(/\/+$/, '');
+    if (ids.has(entry.id) || (url && urls.has(url))) return false;
+    ids.add(entry.id);
+    if (url) urls.add(url);
+    return true;
+  });
+}
+
 /**
  * Popularity scores keyed by catalog entry id — npm monthly downloads when the
  * entry is an npm package, otherwise GitHub stars. Fetched lazily by the daemon

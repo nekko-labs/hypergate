@@ -24,6 +24,7 @@ import type {
   InstallChannel,
   CloseAction,
 } from '@hypergate/shared';
+import { mergeCatalogSearch } from '@hypergate/shared';
 import { api } from './api';
 
 type View = 'servers' | 'analytics' | 'settings';
@@ -103,11 +104,26 @@ const fmtClock = (iso: string): string => new Date(iso).toLocaleTimeString([], {
  * option: the manager stays visible behind it and closing the popup is
  * obviously the way back.
  */
-const openAuth = (authUrl?: string): void => {
-  if (!authUrl) return;
+const reserveAuthWindow = (): Window | null => {
+  if ((window as HypergateWindow).ipc) return null;
+  const popup = window.open('', 'hypergate-oauth', 'width=600,height=760');
+  if (popup) popup.opener = null;
+  return popup;
+};
+
+const openAuth = (authUrl?: string, popup?: Window | null): void => {
+  if (!authUrl) {
+    popup?.close();
+    return;
+  }
   const ipc = (window as HypergateWindow).ipc;
   if (ipc) {
     ipc.postMessage(`open:${authUrl}`);
+    return;
+  }
+  if (popup && !popup.closed) {
+    popup.location.assign(authUrl);
+    popup.focus();
     return;
   }
   window.open(authUrl, 'hypergate-oauth', 'width=600,height=760,noopener');
@@ -373,6 +389,7 @@ export function App() {
   // no token to paste — the whole point of the feature. Falls back to /authorize
   // if the server was already added (e.g. a half-finished earlier attempt).
   const quickAddOAuth = useCallback(async (e: RegistryEntry) => {
+    const popup = reserveAuthWindow();
     setShowCatalog(false);
     setAdding(null);
     try {
@@ -380,11 +397,11 @@ export function App() {
         id: e.id, name: e.name, runtime: 'remote', command: '',
         url: e.url, transport: e.transport ?? 'http', auth: 'oauth', enabled: true,
       });
-      openAuth(status.authUrl);
+      openAuth(status.authUrl, popup);
     } catch {
       // Already added (409) or a transient error — (re)start the login instead.
       const status = await api.authorize(e.id).catch(() => null);
-      openAuth(status?.authUrl);
+      openAuth(status?.authUrl, popup);
     }
     void refresh();
   }, [refresh]);
@@ -1166,8 +1183,9 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
     onChange();
   };
   const signIn = async () => {
+    const popup = reserveAuthWindow();
     const st = await api.authorize(s.id).catch(() => null);
-    openAuth(st?.authUrl);
+    openAuth(st?.authUrl, popup);
     onChange();
   };
 
@@ -2040,7 +2058,7 @@ function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry
         </div>
         <div className="row">
           {e.homepage && <a className="small muted" href={e.homepage} target="_blank" rel="noreferrer">docs</a>}
-          <button className={`btn ${oauth ? 'btn-primary' : ''}`} onClick={() => onPick(e)} disabled={!runnable} title={runnable ? '' : e.note ?? 'Not locally runnable'}>
+          <button className={`btn btn-catalog-add ${oauth ? 'btn-primary' : ''}`} onClick={() => onPick(e)} disabled={!runnable} title={runnable ? '' : e.note ?? 'Not locally runnable'}>
             {oauth ? '🔐 Sign in & add' : '+ Add'}
           </button>
         </div>
@@ -2084,6 +2102,10 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
   }, [q]);
 
   const searchingLive = q.trim().length > 0;
+  const visibleResults = useMemo(
+    () => (results ? mergeCatalogSearch(sortedCurated, results, q) : null),
+    [q, results, sortedCurated],
+  );
   return (
     <>
       <div className="section-title">Add a server</div>
@@ -2100,8 +2122,8 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
         </div>
         <div className="list">
           {searchingLive ? (
-            results && results.length > 0 ? (
-              results.map((e) => <CatalogRow key={e.id} e={e} onPick={onPick} />)
+            visibleResults && visibleResults.length > 0 ? (
+              visibleResults.map((e) => <CatalogRow key={e.id} e={e} onPick={onPick} />)
             ) : !searching ? (
               <div className="list-row small muted">No servers found in the registry for “{q.trim()}”.</div>
             ) : (

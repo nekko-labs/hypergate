@@ -79,6 +79,18 @@ export const REGISTRY: RegistryEntry[] = [
 
   // ── Other first-party servers ─────────────────────────────────────────────
   {
+    id: 'vercel',
+    name: 'Vercel',
+    description: 'Manage Vercel projects and deployments, inspect logs and errors, query analytics, and search Vercel documentation. Browser sign-in.',
+    runtime: 'remote',
+    command: '',
+    url: 'https://mcp.vercel.com',
+    transport: 'http',
+    auth: 'oauth',
+    official: true,
+    homepage: 'https://vercel.com/docs/agent-resources/vercel-mcp',
+  },
+  {
     id: 'github',
     name: 'GitHub',
     description: 'Official remote GitHub MCP server: repos, issues, PRs, code, Actions. Browser sign-in — no token to paste.',
