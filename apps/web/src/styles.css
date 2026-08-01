@@ -25,6 +25,11 @@
   --accent-soft: color-mix(in srgb, var(--accent) 20%, transparent);
   --ring: color-mix(in srgb, var(--accent) 45%, transparent);
   --shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 10px 30px -18px rgb(0 0 0 / 0.55);
+
+  /* Semantic surfaces shared across themes (overridable below). */
+  --on-accent: #fff;
+  --overlay: rgba(6, 8, 14, 0.55);
+  --overlay-shadow: 0 24px 64px -24px rgb(0 0 0 / 0.7);
   color-scheme: dark;
 }
 
@@ -39,6 +44,7 @@
   --line: #222839;
   --line-2: #2e3549;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -12px rgb(0 0 0 / 0.5);
+  --overlay: rgba(3, 4, 9, 0.62);
   color-scheme: dark;
 }
 
@@ -58,6 +64,8 @@
   --danger: #dc2626;
   --warning: #d97706;
   --shadow: 0 1px 2px rgb(23 26 38 / 0.05), 0 8px 24px -14px rgb(23 26 38 / 0.18);
+  --overlay: rgba(23, 26, 38, 0.4);
+  --overlay-shadow: 0 24px 64px -24px rgb(23 26 38 / 0.35);
   color-scheme: light;
 }
 
@@ -422,8 +430,8 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .btn:active { transform: translateY(1px); }
 .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
 .btn:disabled { opacity: .5; cursor: default; }
-.btn-primary { background: var(--grad); color: #fff; border: none; font-weight: 600; }
-.btn-primary:hover { color: #fff; filter: brightness(1.08); }
+.btn-primary { background: var(--grad); color: var(--on-accent); border: none; font-weight: 600; }
+.btn-primary:hover { color: var(--on-accent); filter: brightness(1.08); }
 .btn-catalog-add {
   border: 1px solid transparent;
   background:
@@ -666,7 +674,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
   background: var(--ink-3); box-shadow: 0 1px 2px rgb(0 0 0 / .3); transition: transform .15s, background .15s;
 }
 .toggle.on { background: var(--grad); border-color: transparent; }
-.toggle.on .knob { transform: translateX(17px); background: #fff; }
+.toggle.on .knob { transform: translateX(17px); background: var(--on-accent); }
 .toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
 .toggle:disabled { opacity: .5; cursor: default; }
 /* Inline in a list-row action bar, next to `.btn.sm` — smaller, and green when
@@ -737,21 +745,28 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .foot-gh:hover { color: var(--ink); text-decoration: none; transform: translateY(-1px); }
 
 /* ── modal (the first-run "what should closing do?" question) ───────────── */
-.modal-veil {
+.modal-veil, .modal-overlay {
   position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px;
-  background: color-mix(in srgb, #05070d 62%, transparent); backdrop-filter: blur(3px);
+  background: var(--overlay); backdrop-filter: blur(3px); overflow-y: auto;
   animation: veil-in .14s ease-out;
 }
 @keyframes veil-in { from { opacity: 0 } to { opacity: 1 } }
 .modal {
-  width: min(520px, 100%); background: var(--paper); border: 1px solid var(--line-2);
-  border-radius: 16px; padding: 22px 24px 18px; box-shadow: 0 24px 60px rgba(0, 0, 0, .38);
+  width: 100%; background: var(--paper); border: 1px solid var(--line-2); outline: none;
+  border-radius: 16px; padding: 22px 24px 18px; box-shadow: var(--overlay-shadow);
   animation: modal-in .16s cubic-bezier(.2, .8, .3, 1);
 }
+.modal:focus-visible { box-shadow: var(--overlay-shadow), 0 0 0 3px var(--ring); }
 @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.985) } to { opacity: 1; transform: none } }
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .modal-mark { font-size: 26px; line-height: 1; }
-.modal-title { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; margin: 9px 0 6px; }
-.modal-choices { display: flex; flex-direction: column; gap: 9px; margin-top: 16px; }
+.modal-title { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; letter-spacing: -0.3px; margin: 0; }
+.modal-x { flex: none; }
+.modal-desc { margin: 8px 0 0; }
+.modal-body { margin-top: 12px; }
+.modal-body .panel { box-shadow: none; }
+.catalog-scroll { max-height: min(52vh, 460px); overflow-y: auto; }
+.modal-choices { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
 .choice {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
   border: 1px solid var(--line-2); background: var(--card-2); border-radius: 12px;
@@ -763,6 +778,78 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .choice:disabled { opacity: .6; cursor: default; }
 .choice .choice-t { font-weight: 600; font-size: 13.5px; color: var(--ink); }
 .choice-warn:hover { border-color: var(--danger); }
+@media (prefers-reduced-motion: reduce) {
+  .modal-veil, .modal-overlay, .modal { animation: none; }
+}
+
+/* ── toasts (shared async feedback) ─────────────────────────────────────── */
+.toast-viewport {
+  position: fixed; z-index: 70; right: 16px; bottom: 16px;
+  display: flex; flex-direction: column; gap: 8px; max-width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto; display: flex; align-items: center; gap: 10px;
+  background: var(--card); border: 1px solid var(--line-2); border-left-width: 3px;
+  border-radius: 11px; box-shadow: var(--shadow); padding: 10px 12px; font-size: 13px; color: var(--ink);
+  animation: toast-in .16s ease-out;
+}
+.toast .toast-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--ink-3); }
+.toast .toast-msg { flex: 1; }
+.toast .toast-close {
+  flex: none; border: none; background: none; color: var(--ink-3); cursor: pointer;
+  font-size: 12px; padding: 2px 4px; border-radius: 6px; font-family: inherit;
+}
+.toast .toast-close:hover { color: var(--ink); background: var(--card-2); }
+.toast .toast-close:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+.toast-success { border-left-color: var(--success); }
+.toast-success .toast-dot { background: var(--success); }
+.toast-error { border-left-color: var(--danger); }
+.toast-error .toast-dot { background: var(--danger); }
+.toast-info { border-left-color: var(--accent); }
+.toast-info .toast-dot { background: var(--accent); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+/* ── log console (Brainless-style surface) ──────────────────────────────── */
+.console {
+  margin-top: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background: var(--paper); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 40%, transparent);
+}
+.console-bar {
+  display: flex; align-items: center; gap: 10px; padding: 7px 11px;
+  background: var(--paper-2); border-bottom: 1px solid var(--line);
+}
+.console-dots { display: inline-flex; gap: 5px; }
+.console-dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--line-2); display: inline-block; }
+.console-title { font-size: 11.5px; color: var(--ink-3); letter-spacing: .3px; }
+.console-count { margin-left: auto; }
+.console-scroll { max-height: 240px; overflow-y: auto; padding: 6px 0; }
+.console-empty { padding: 10px 13px; }
+.console-inner { position: relative; }
+.console-line {
+  display: flex; align-items: center; gap: 8px; padding: 0 12px;
+  font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 12px; line-height: 19px; white-space: pre; color: var(--ink-2);
+}
+.console-gutter { flex: none; width: 34px; text-align: right; color: var(--ink-3); opacity: .55; user-select: none; }
+.console-glyph { flex: none; width: 12px; text-align: center; color: var(--ink-3); }
+.console-text { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.console-line.k-error { color: var(--danger); }
+.console-line.k-error .console-glyph { color: var(--danger); }
+.console-line.k-warn { color: var(--warning); }
+.console-line.k-warn .console-glyph { color: var(--warning); }
+.console-line.k-tool .console-glyph { color: var(--info); }
+.console-line.k-tool .console-text { color: var(--ink); }
+.console-line.k-result .console-glyph { color: var(--success); }
+
+/* ── error boundary ─────────────────────────────────────────────────────── */
+.error-boundary { margin-top: 12px; }
+
+/* loading glyph pulse (empty/loading states) */
+.empty .cat.is-loading { animation: cat-pulse 1.3s ease-in-out infinite; }
+@keyframes cat-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .empty .cat.is-loading { animation: none; } }
 
 /* A short window spends its height on lists, not on prose: the page intro
    loses its paragraph and the section titles their generous margins, so the

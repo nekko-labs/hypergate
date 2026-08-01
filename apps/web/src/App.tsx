@@ -26,6 +26,11 @@ import type {
 } from '@hypergate/shared';
 import { mergeCatalogSearch } from '@hypergate/shared';
 import { api } from './api';
+import { Dialog } from './components/Dialog';
+import { EmptyState } from './components/EmptyState';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { LogConsole } from './components/LogConsole';
+import { useToast } from './toast';
 
 type View = 'servers' | 'analytics' | 'settings';
 type ServerSection = 'agents' | 'mcp-servers' | 'cli';
@@ -52,11 +57,15 @@ interface HypergateWindow extends Window {
 
 function useCopy(): [string | null, (key: string, text: string) => void] {
   const [copied, setCopied] = useState<string | null>(null);
+  const toast = useToast();
   const copy = useCallback((key: string, text: string) => {
-    void navigator.clipboard.writeText(text);
+    void navigator.clipboard.writeText(text).then(
+      () => toast.show('Copied to clipboard', 'success'),
+      () => toast.show('Could not copy to clipboard', 'error'),
+    );
     setCopied(key);
     setTimeout(() => setCopied(null), 1200);
-  }, []);
+  }, [toast]);
   return [copied, copy];
 }
 
@@ -337,6 +346,7 @@ function sortCatalog(entries: RegistryEntry[], pop: PopularityMap): RegistryEntr
 }
 
 export function App() {
+  const toast = useToast();
   const [view, setView] = useState<View>('servers');
   const [servers, setServers] = useState<ServerStatus[] | null>(null);
   const [registry, setRegistry] = useState<RegistryEntry[]>([]);
@@ -398,13 +408,15 @@ export function App() {
         url: e.url, transport: e.transport ?? 'http', auth: 'oauth', enabled: true,
       });
       openAuth(status.authUrl, popup);
+      toast.show(`Added ${e.name} — finish signing in to connect`, 'success');
     } catch {
       // Already added (409) or a transient error — (re)start the login instead.
       const status = await api.authorize(e.id).catch(() => null);
       openAuth(status?.authUrl, popup);
+      if (!status?.authUrl) toast.show(`Could not start sign-in for ${e.name}`, 'error');
     }
     void refresh();
-  }, [refresh]);
+  }, [refresh, toast]);
 
   const handlePick = useCallback((e: RegistryEntry | 'custom') => {
     if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'oauth') { void quickAddOAuth(e); return; }
@@ -504,8 +516,9 @@ export function App() {
           )}
 
           <main ref={viewRef} className={`view ${view === 'servers' ? 'servers-view' : ''}`}>
-            {view === 'servers' ? (
-              <>
+            <ErrorBoundary key={view} surface={`${view} view`}>
+              {view === 'servers' ? (
+                <>
                 <div className="pagehead">
                   <div className="pagehead-copy">
                     <h1>Every MCP server. <span className="grad-text">One endpoint.</span></h1>
@@ -535,13 +548,18 @@ export function App() {
                     </span>
                   </div>
 
-                  {servers && servers.length === 0 && !showCatalog ? (
-                    <div className="panel"><div className="empty">
-                      <div className="cat">🐈</div>
-                      <b>No servers yet.</b>
-                      <div className="small" style={{ marginTop: 4 }}>Add one. Its tools join the gateway instantly.</div>
-                      <div style={{ marginTop: 14 }}><button className="btn btn-primary" onClick={() => setShowCatalog(true)}>+ Add your first server</button></div>
-                    </div></div>
+                  {servers === null && !showCatalog ? (
+                    <EmptyState glyph="🐈" title="Loading servers…" loading>
+                      Talking to the daemon.
+                    </EmptyState>
+                  ) : servers?.length === 0 && !showCatalog ? (
+                    <EmptyState
+                      glyph="🐈"
+                      title="No servers yet."
+                      action={<button className="btn btn-primary" onClick={() => setShowCatalog(true)}>+ Add your first server</button>}
+                    >
+                      Add one. Its tools join the gateway instantly.
+                    </EmptyState>
                   ) : servers && servers.length > 0 ? (
                     <div className="panel"><div className="list">
                       {servers.map((s) => <ServerRow key={s.id} s={s} agents={agents} onChange={refresh} />)}
@@ -562,12 +580,13 @@ export function App() {
                 <section id="cli" className="dashboard-section">
                   <CliSection />
                 </section>
-              </>
-            ) : view === 'analytics' ? (
-              <AnalyticsView stats={stats} />
-            ) : (
-              <SettingsView gateway={gateway} version={version} u={updater} />
-            )}
+                </>
+              ) : view === 'analytics' ? (
+                <AnalyticsView stats={stats} />
+              ) : (
+                <SettingsView gateway={gateway} version={version} u={updater} />
+              )}
+            </ErrorBoundary>
           </main>
 
           <div className="footer">
@@ -639,38 +658,28 @@ function CloseChoice() {
     reply('close:cancel');
   };
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancel(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
-
   if (!open) return null;
   return (
-    <div className="modal-veil" role="dialog" aria-modal="true" aria-labelledby="closechoice-t">
-      <div className="modal">
-        <div className="modal-mark">🐾</div>
-        <h2 id="closechoice-t" className="modal-title">When you close this window…</h2>
-        <p className="small muted">
-          Hypergate can stay in the tray with the gateway running, so your agents keep their tools — or shut down
-          completely. We'll remember which you pick; you can change it in <b>Settings → Startup &amp; desktop</b>.
-        </p>
-        <div className="modal-choices">
-          <button className="choice" disabled={busy} onClick={() => void decide('tray')}>
-            <span className="choice-t">Keep running in the tray</span>
-            <span className="choice-d small muted">The window closes. The gateway and every managed server stay up.</span>
-          </button>
-          <button className="choice choice-warn" disabled={busy} onClick={() => void decide('quit')}>
-            <span className="choice-t">Quit and stop the server</span>
-            <span className="choice-d small muted">Closes the window, stops the gateway, and stops every managed server.</span>
-          </button>
-        </div>
-        <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
-          <button className="btn sm btn-ghost" onClick={cancel} disabled={busy}>Don't close</button>
-        </div>
+    <Dialog
+      title={<><span className="modal-mark" aria-hidden="true">🐾</span>When you close this window…</>}
+      onClose={cancel}
+      width={520}
+      description={<>Hypergate can stay in the tray with the gateway running, so your agents keep their tools — or shut down completely. We'll remember which you pick; you can change it in <b>Settings → Startup &amp; desktop</b>.</>}
+    >
+      <div className="modal-choices">
+        <button className="choice" disabled={busy} onClick={() => void decide('tray')}>
+          <span className="choice-t">Keep running in the tray</span>
+          <span className="choice-d small muted">The window closes. The gateway and every managed server stay up.</span>
+        </button>
+        <button className="choice choice-warn" disabled={busy} onClick={() => void decide('quit')}>
+          <span className="choice-t">Quit and stop the server</span>
+          <span className="choice-d small muted">Closes the window, stops the gateway, and stops every managed server.</span>
+        </button>
       </div>
-    </div>
+      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
+        <button className="btn sm btn-ghost" onClick={cancel} disabled={busy}>Don't close</button>
+      </div>
+    </Dialog>
   );
 }
 
@@ -1157,44 +1166,34 @@ function Block({ label, children }: { label: ReactNode; children: ReactNode }) {
  * pane that yanks you back two seconds later is unusable.
  */
 function LogPane({ lines }: { lines: string[] | null }) {
-  const ref = useRef<HTMLPreElement>(null);
-  const stick = useRef(true);
-  useEffect(() => {
-    const el = ref.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [lines]);
-  if (!lines) return <div className="small muted logs-note">Reading the log…</div>;
-  return (
-    <pre
-      className="logs"
-      ref={ref}
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      }}
-    >
-      {lines.join('\n') || '(no output yet)'}
-    </pre>
-  );
+  if (!lines) return <div className="small muted logs-note" role="status">Reading the log…</div>;
+  return <LogConsole lines={lines} />;
 }
 
 function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClientInfo[]; onChange: () => void }) {
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<string[] | null>(null);
   const [armed, setArmed] = useState(false);
+  const toast = useToast();
   const allowedBy = agents.filter((a) => a.servers === '*' || a.servers.includes(s.id)).length;
   const busy = s.state === 'starting';
   const running = s.state === 'ready' || s.state === 'starting';
   const isRemote = s.runtime === 'remote';
   const authorizing = s.state === 'authorizing';
   const act = async (action: 'start' | 'stop' | 'restart') => {
-    await api.action(s.id, action).catch(() => {});
+    try {
+      await api.action(s.id, action);
+      toast.show(`${action === 'stop' ? 'Stopped' : action === 'restart' ? 'Restarted' : 'Started'} ${s.name}`, 'success');
+    } catch {
+      toast.show(`Could not ${action} ${s.name}`, 'error');
+    }
     onChange();
   };
   const signIn = async () => {
     const popup = reserveAuthWindow();
     const st = await api.authorize(s.id).catch(() => null);
     openAuth(st?.authUrl, popup);
+    if (!st?.authUrl) toast.show(`Could not start sign-in for ${s.name}`, 'error');
     onChange();
   };
 
@@ -1282,7 +1281,12 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
             <>
               <button
                 className="btn sm btn-danger"
-                onClick={() => { void api.remove(s.id).then(onChange); }}
+                onClick={() => {
+                  void api.remove(s.id).then(
+                    () => { toast.show(`Removed ${s.name}`, 'success'); onChange(); },
+                    () => toast.show(`Could not remove ${s.name}`, 'error'),
+                  );
+                }}
                 title={`Remove ${s.name}${isRemote ? ' and delete its stored sign-in' : ''}`}
               >
                 {isRemote ? 'Remove & sign out' : 'Remove'}
@@ -1939,14 +1943,14 @@ function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
             ))}
           </div></div>
         </>
+      ) : stats === null ? (
+        <EmptyState glyph="📡" title="Loading analytics…" loading>
+          Reading the gateway's local call log. This stays on your machine.
+        </EmptyState>
       ) : (
-        <div className="panel" style={{ marginTop: 12 }}><div className="empty">
-          <div className="cat">📡</div>
-          <b>No calls yet.</b>
-          <div className="small" style={{ marginTop: 4, maxWidth: 380, marginInline: 'auto' }}>
-            Connect an agent to the gateway and start a server. Every tool call it makes will appear here — with the caller, latency, and data volume.
-          </div>
-        </div></div>
+        <EmptyState glyph="📡" title="No calls yet.">
+          Connect an agent to the gateway and start a server. Every tool call it makes will appear here — with the caller, latency, and data volume.
+        </EmptyState>
       )}
     </>
   );
@@ -1962,6 +1966,7 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
   const [env, setEnv] = useState((entry?.requires ?? []).map((k) => `${k}=`).join('\n'));
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
 
   const submit = async () => {
     setErr(null);
@@ -1984,9 +1989,11 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
     };
     try {
       await api.add(cfg);
+      toast.show(`Added ${cfg.name} — starting…`, 'success');
       onAdded();
     } catch (e) {
       setErr(e instanceof Error && e.message === '409' ? 'A server with that id already exists.' : 'Could not add the server, check the daemon logs.');
+      toast.show(`Could not add ${cfg.name}`, 'error');
     }
     setBusy(false);
   };
