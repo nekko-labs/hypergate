@@ -107,9 +107,22 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          # Installers keep the names their build scripts chose; those already
-          # carry the version, platform and architecture.
+          # Installers keep their versioned names for traceability. Stable aliases
+          # make /releases/latest/download links permanent for the site and README.
           find artifacts -path '*/installer-*/*' -type f -exec cp {} release-assets/ \;
+          version="${GITHUB_REF_NAME#v}"
+          cp "release-assets/hypergate-${version}-windows-x64-setup.exe" "release-assets/hypergate-windows-x64-setup.exe"
+          cp "release-assets/hypergate-${version}-windows-arm64-setup.exe" "release-assets/hypergate-windows-arm64-setup.exe"
+          cp "release-assets/hypergate-${version}-macos-x64.pkg" "release-assets/hypergate-macos-x64.pkg"
+          cp "release-assets/hypergate-${version}-macos-arm64.pkg" "release-assets/hypergate-macos-arm64.pkg"
+          cp "release-assets/hypergate_${version}_amd64.deb" "release-assets/hypergate-linux-x64.deb"
+          cp "release-assets/hypergate_${version}_arm64.deb" "release-assets/hypergate-linux-arm64.deb"
+          cp "release-assets/hypergate-${version}-linux-amd64.tar.gz" "release-assets/hypergate-linux-x64.tar.gz"
+          cp "release-assets/hypergate-${version}-linux-arm64.tar.gz" "release-assets/hypergate-linux-arm64.tar.gz"
+          rpm_x64=$(find release-assets -maxdepth 1 -name '*.x86_64.rpm' -print -quit)
+          rpm_arm64=$(find release-assets -maxdepth 1 -name '*.aarch64.rpm' -print -quit)
+          [ -z "$rpm_x64" ] || cp "$rpm_x64" "release-assets/hypergate-linux-x64.rpm"
+          [ -z "$rpm_arm64" ] || cp "$rpm_arm64" "release-assets/hypergate-linux-arm64.rpm"
           # The npm packages. `hypergated-<v>.tgz` and one
           # `hypergate-shell-<os>-<arch>-<v>.tgz` per platform: these are what
           # the in-app updater downloads and installs, matched by exact name

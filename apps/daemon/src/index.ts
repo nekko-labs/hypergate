@@ -117,7 +117,7 @@ const OAUTH_DIR = join(DATA_DIR, 'oauth');
 // sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
-const VERSION = '0.16.1';
+const VERSION = '0.17.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -877,6 +877,17 @@ const withAccounts = (list: ServerStatus[]): ServerStatus[] =>
     return { ...s, signedIn };
   });
 
+/**
+ * Fill in the last log line for a server whose in-memory ring is empty.
+ *
+ * The supervisor's ring starts empty on every boot, but the durable rows do
+ * not, so without this the collapsed rows would go blank after a restart and
+ * fill back in one server at a time as each said something. One indexed
+ * `LIMIT 1` per server per poll, and only for the servers that need it.
+ */
+const withLastLog = (list: ServerStatus[]): ServerStatus[] =>
+  list.map((s) => (s.lastLog || !store ? s : { ...s, lastLog: store.logs(s.id, 1)[0]?.line }));
+
 // Set to a debounced store writer in HTTP mode; stays a no-op in stdio mode so a
 // transient `--stdio` spawn never clobbers the resident daemon's aggregates.
 let persistAnalytics: () => void = () => {};
@@ -1618,7 +1629,7 @@ if (STDIO_MODE) {
       return json(res, 200, { ok: true });
     }
 
-    if (pathname === '/api/servers' && req.method === 'GET') return json(res, 200, withAccounts(supervisor.list()));
+    if (pathname === '/api/servers' && req.method === 'GET') return json(res, 200, withLastLog(withAccounts(supervisor.list())));
 
     // add a server (custom config, or a registry entry merged with overrides)
     if (pathname === '/api/servers' && req.method === 'POST') {

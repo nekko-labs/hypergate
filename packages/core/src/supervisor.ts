@@ -71,6 +71,7 @@ const toStatus = (i: Instance): ServerStatus => ({
   startedAt: i.startedAt,
   restarts: i.restarts,
   url: i.config.url,
+  lastLog: i.logs[i.logs.length - 1],
 });
 
 /** Heuristic: does this connect error look like an auth challenge (401/unauthorized)? */

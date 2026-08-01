@@ -166,6 +166,7 @@ jobs:
         env:
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
           MACOS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
+          HYPERGATE_BUILD_TARGET: ${{ matrix.target }}
         run: node scripts/build-installers.mjs --skip-payload
 
       # ── Signing, part 3: the installers themselves. ──────────────────────────
