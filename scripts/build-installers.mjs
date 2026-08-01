@@ -27,7 +27,8 @@ const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).ver
 const run = (cmd, cmdArgs, opts = {}) => execFileSync(cmd, cmdArgs, { cwd: ROOT, stdio: 'inherit', ...opts });
 
 /** npm's `arch` vocabulary, which is what the release assets are named with. */
-const ARCH = process.arch === 'arm64' ? 'arm64' : 'x64';
+const buildTarget = process.env.HYPERGATE_BUILD_TARGET;
+const ARCH = buildTarget ? (buildTarget.includes('aarch64') ? 'arm64' : 'x64') : process.arch === 'arm64' ? 'arm64' : 'x64';
 
 if (!flag('skip-payload')) {
   run(process.execPath, [join(ROOT, 'scripts', 'build-standalone.mjs'), ...(flag('skip-build') ? ['--skip-build'] : [])]);

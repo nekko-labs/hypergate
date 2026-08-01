@@ -87,17 +87,26 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
    scroll their own list instead. Resizing the window therefore re-sizes
    the lists rather than lengthening the page. */
 .app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.app-main {
+  flex: 1; min-height: 0; display: grid; grid-template-columns: 188px minmax(0, 1fr);
+  width: 100%; max-width: 1360px; margin: 0 auto;
+}
+.side-rail { min-height: 0; padding: 26px 16px 18px 24px; }
 .wrap {
-  flex: 1; min-height: 0; display: flex; flex-direction: column;
-  width: 100%; max-width: 1000px; margin: 0 auto; padding: 0 24px;
+  min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 32px;
 }
 .view {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 18px 0 2px;
+  padding: 22px 0 2px;
   /* Last resort only: at very short window heights the panels bottom out at
      their floor and the view scrolls so nothing becomes unreachable. */
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
 }
+.view::-webkit-scrollbar { display: none; }
+.view.servers-view { scroll-behavior: smooth; scroll-snap-type: y proximity; }
 /* Chrome (headings, the gateway bar, section titles) keeps its natural height … */
 .view > *,
 .view > .duo > section > * { flex: none; }
@@ -120,6 +129,19 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
    lets the view scroll instead. There is little else on screen when one shows. */
 .view > .panel:has(> .empty) { flex: none; }
 .view > .panel > .catalog-search { flex: none; }
+.dashboard-section {
+  flex: none; min-height: max(320px, calc(100% - 72px));
+  padding: 18px 0 64px; scroll-snap-align: start; scroll-margin-top: 18px;
+}
+.dashboard-section:last-child { min-height: max(320px, calc(100% - 24px)); }
+.servers-view > .pagehead { scroll-snap-align: start; }
+.dashboard-section > .section-title:first-child { margin-top: 0; }
+.dashboard-section .ag-grid { border-top: 0; gap: 6px 22px; }
+.dashboard-section .ag-card { border-bottom: 0; border-radius: 10px; }
+.dashboard-section > .panel { min-height: 0; overflow: visible; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+.dashboard-section > .panel > .list { overflow: visible; gap: 4px; }
+.dashboard-section > .panel > .list > .list-row { border: 0; border-radius: 12px; padding: 14px 10px; }
+.dashboard-section > .panel:has(> .catalog-search) { padding: 8px; border-radius: 14px; background: var(--card); }
 /* A panel that holds no list (an add/edit form, the agent picker) scrolls whole,
    and holds on to more height than a list would: it is only on screen because
    it was asked for, so it is the thing being worked on. */
@@ -144,17 +166,18 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 
 /* Scrollbars sized for an app, not a document. */
 .view, .view .list, .view .feed, .view .empty, .view .panel-scroll, .perm-list, pre.logs, .row-detail .tool-list {
-  scrollbar-width: thin;
-  scrollbar-color: var(--line-2) transparent;
+  scrollbar-width: none;
 }
+.view::-webkit-scrollbar, .view .list::-webkit-scrollbar, .view .feed::-webkit-scrollbar,
+.view .empty::-webkit-scrollbar, .view .panel-scroll::-webkit-scrollbar,
+.perm-list::-webkit-scrollbar, pre.logs::-webkit-scrollbar, .row-detail .tool-list::-webkit-scrollbar { display: none; }
 
 /* ── header ─────────────────────────────────────────────────────────────── */
 .topbar {
   flex: none; z-index: 10;
   background: var(--paper);
-  border-bottom: 1px solid var(--line);
 }
-.topbar-in { max-width: 1000px; margin: 0 auto; padding: 11px 24px; display: flex; align-items: center; gap: 12px; }
+.topbar-in { max-width: 1360px; margin: 0 auto; padding: 14px 28px; display: flex; align-items: center; gap: 12px; }
 /* The gate mark: the hero shader's ring, rebuilt for 28px. The ring is a conic
    gradient behind an annular mask — a stroked circle can only be spun as a
    shape, and what actually reads here is the colour travelling round it. */
@@ -182,20 +205,32 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 @media (prefers-reduced-motion: reduce) {
   .gate-ring, .gate-core { animation: none; }
   .gate-core { opacity: 0.95; transform: none; }
+  .view.servers-view { scroll-behavior: auto; }
 }
 .wordmark { font-weight: 700; font-size: 15.5px; letter-spacing: -0.3px; }
 .topbar .spacer { flex: 1; }
 
 /* primary nav */
-.nav { display: inline-flex; gap: 2px; background: var(--card-2); border: 1px solid var(--line); border-radius: 11px; padding: 3px; margin-left: 6px; }
-.nav button {
-  border: none; background: none; color: var(--ink-3); font-size: 13px; font-weight: 600;
-  padding: 5px 14px; border-radius: 8px; cursor: pointer; font-family: inherit;
-  display: inline-flex; align-items: center; gap: 6px;
+.nav { display: flex; flex-direction: column; gap: 10px; }
+.nav-group { display: flex; flex-direction: column; }
+.nav > .nav-group > button {
+  width: 100%; border: 0; background: none; color: var(--ink-3); font-size: 13.5px; font-weight: 600;
+  padding: 9px 4px; border-radius: 8px; cursor: pointer; font-family: inherit;
+  display: flex; align-items: center; gap: 10px; text-align: left;
 }
-.nav button:hover { color: var(--ink-2); }
-.nav button.active { background: var(--paper); color: var(--ink); box-shadow: var(--shadow); }
-.nav .n-badge { font-size: 10.5px; font-weight: 700; color: var(--accent); }
+.nav > .nav-group > button:hover { color: var(--ink-2); }
+.nav > .nav-group > button.active { color: var(--ink); }
+.nav > .nav-group > button.active .nav-icon { color: var(--accent); }
+.nav-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.nav .n-badge { margin-left: auto; font-size: 10.5px; font-weight: 700; color: var(--accent); }
+.section-nav { display: flex; flex-direction: column; gap: 2px; padding: 3px 0 10px 28px; }
+.section-nav button {
+  position: relative; border: 0; background: none; color: var(--ink-3); padding: 5px 4px; cursor: pointer;
+  font: 500 11.5px/1.35 inherit; text-align: left; white-space: nowrap; transition: color .14s ease;
+}
+.section-nav button:hover { color: var(--ink-2); }
+.section-nav button.active { color: var(--ink); font-weight: 650; }
+.section-nav button.active::before { content: ''; position: absolute; left: -9px; top: 50%; width: 5px; height: 5px; border-radius: 50%; background: var(--grad); transform: translateY(-50%); }
 
 /* Version + the whole update flow, in the slot the version was already in.
    Hovering the version turns it into the check; checking turns it into a
@@ -228,7 +263,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 /* The bar: real while bytes arrive, indeterminate once the install starts and
    the thing reporting progress is the thing being replaced. */
 .vb-bar { flex: 1; display: block; height: 4px; border-radius: 999px; background: var(--line-2); overflow: hidden; min-width: 60px; }
-.vb-bar-fill { display: block; height: 100%; border-radius: 999px; background: var(--grad); transition: width .25s ease-out; }
+.vb-bar-fill { display: block; width: 100%; height: 100%; border-radius: 999px; background: var(--grad); transform-origin: left; transition: transform .25s ease-out; }
 .vb-bar.indet .vb-bar-fill { width: 38%; animation: vb-slide 1.15s ease-in-out infinite; }
 @keyframes vb-slide {
   0% { transform: translateX(-105%); }
@@ -267,9 +302,9 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .themeswitch button.active { background: var(--paper); color: var(--ink); }
 
 /* ── page intro (compact, no box) ───────────────────────────────────────── */
-.pagehead { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, .95fr); align-items: start; gap: 24px; margin: 8px 0 14px; }
+.pagehead { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, .95fr); align-items: start; gap: 40px; margin: 14px 0 34px; }
 .pagehead-copy { min-width: 0; padding-top: 2px; }
-.pagehead h1 { font-size: 22px; letter-spacing: -0.5px; margin: 0 0 3px; line-height: 1.2; }
+.pagehead h1 { font-size: 24px; letter-spacing: -0.5px; margin: 0 0 5px; line-height: 1.2; }
 .pagehead p { margin: 0; color: var(--ink-2); font-size: 13.5px; max-width: 520px; }
 .pagehead-meta { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
 .grad-text { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -636,7 +671,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 
 /* sparkline */
 .spark { display: flex; align-items: flex-end; gap: 3px; height: 46px; margin-top: 4px; }
-.spark-bar { flex: 1; min-width: 3px; background: var(--grad); border-radius: 3px 3px 0 0; opacity: .85; min-height: 2px; transition: height .2s; }
+.spark-bar { flex: 1; min-width: 3px; background: var(--grad); border-radius: 3px 3px 0 0; opacity: .85; min-height: 2px; }
 .spark-bar.empty { background: var(--line-2); opacity: .5; }
 .spark-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 13px 16px 10px; margin-top: 10px; }
 .spark-axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-3); margin-top: 6px; }
@@ -716,11 +751,22 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 }
 
 @media (max-width: 900px) {
+  .app-main { grid-template-columns: 164px minmax(0, 1fr); }
+  .side-rail { padding-left: 18px; }
+  .wrap { padding: 0 24px; }
   .pagehead { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .pagehead-copy { padding-top: 0; }
   .pagehead-meta { align-items: stretch; }
   .pagehead-meta .summary { align-self: flex-end; }
   .ag-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .app-main { grid-template-columns: 68px minmax(0, 1fr); }
+  .side-rail { padding: 22px 10px; }
+  .nav > .nav-group > button { justify-content: center; padding: 10px; }
+  .nav-label, .nav .n-badge, .section-nav { display: none; }
+  .wrap { padding: 0 18px; }
 }
 
 @media (max-width: 640px) {
@@ -729,12 +775,10 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
   .gwbar .glabel { grid-column: 1 / -1; width: auto; }
   .feed-row { grid-template-columns: 1fr; gap: 3px; }
   .feed-row .f-meta { justify-content: flex-start; }
-  .nav button { padding: 5px 10px; }
   .ag-grid { grid-template-columns: 1fr; }
-  /* The topbar carries a lot for one line: mark, version, update state, nav,
-     theme, health, and two hover-revealed buttons that a touch screen shows
-     unconditionally. Let it wrap onto a second row rather than push the page
-     sideways — the body must never scroll horizontally. */
-  .topbar-in { flex-wrap: wrap; row-gap: 8px; padding: 10px 14px; }
-  .topbar .spacer { flex-basis: 100%; height: 0; }
+  /* The topbar keeps only product and utility controls while the primary nav
+     stays in its compact rail, so it can remain one line at the shell minimum. */
+  .topbar-in { padding: 10px 16px; }
+  .wordmark { display: none; }
+  .footer > span { display: none; }
 }

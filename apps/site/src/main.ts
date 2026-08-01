@@ -4,6 +4,9 @@
  * All motion respects prefers-reduced-motion.
  */
 import Lenis from 'lenis';
+import { hydrateDownloadCtas } from './downloads';
+
+void hydrateDownloadCtas();
 
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 

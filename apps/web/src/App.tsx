@@ -27,7 +27,14 @@ import type {
 import { api } from './api';
 
 type View = 'servers' | 'analytics' | 'settings';
+type ServerSection = 'agents' | 'mcp-servers' | 'cli';
 type Theme = 'light' | 'medium' | 'dark';
+
+const SERVER_SECTIONS: { id: ServerSection; label: string }[] = [
+  { id: 'agents', label: 'Connected agents' },
+  { id: 'mcp-servers', label: 'MCP servers' },
+  { id: 'cli', label: 'CLI tools' },
+];
 
 /**
  * The two hooks the native manager window and this page use to talk.
@@ -324,6 +331,8 @@ export function App() {
   const [adding, setAdding] = useState<RegistryEntry | 'custom' | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
   const [version, setVersion] = useState('');
+  const [activeSection, setActiveSection] = useState<ServerSection>('agents');
+  const viewRef = useRef<HTMLElement>(null);
 
   const refreshAgents = useCallback(() => {
     void api.clients().then(setAgents).catch(() => {});
@@ -385,6 +394,40 @@ export function App() {
     setAdding(e);
   }, [quickAddOAuth]);
 
+  const openView = useCallback((next: View) => {
+    setView(next);
+    requestAnimationFrame(() => viewRef.current?.scrollTo({ top: 0 }));
+  }, []);
+
+  const scrollToSection = useCallback((id: ServerSection) => {
+    document.getElementById(id)?.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'start',
+    });
+  }, []);
+
+  useEffect(() => {
+    const root = viewRef.current;
+    if (view !== 'servers' || !root) return;
+    const sections = SERVER_SECTIONS.map(({ id }) => document.getElementById(id)).filter((section): section is HTMLElement => !!section);
+    const update = () => {
+      const marker = root.getBoundingClientRect().top + Math.min(180, root.clientHeight * 0.28);
+      let current = sections[0]?.id as ServerSection | undefined;
+      for (const section of sections) {
+        if (section.getBoundingClientRect().top <= marker) current = section.id as ServerSection;
+      }
+      if (current) setActiveSection(current);
+    };
+    update();
+    root.addEventListener('scroll', update, { passive: true });
+    const resize = new ResizeObserver(update);
+    sections.forEach((section) => resize.observe(section));
+    return () => {
+      root.removeEventListener('scroll', update);
+      resize.disconnect();
+    };
+  }, [view, agents.length, servers?.length, showCatalog, adding]);
+
   return (
     <div className="app">
       <CloseChoice />
@@ -392,107 +435,140 @@ export function App() {
         <div className="topbar-in">
           <GateMark />
           <span className="wordmark">Hypergate</span>
-          <VersionBox version={version} u={updater} onOpenUpdates={() => setView('settings')} />
-          <nav className="nav">
-            <button className={view === 'servers' ? 'active' : ''} onClick={() => setView('servers')}>Servers</button>
-            <button className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}>
-              Analytics{stats && stats.totalCalls > 0 && <span className="n-badge">{fmtNum(stats.totalCalls)}</span>}
-            </button>
-            <button className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}>Settings</button>
-          </nav>
+          <VersionBox version={version} u={updater} onOpenUpdates={() => openView('settings')} />
           <div className="spacer" />
           <ThemeSwitch />
           <ServerHealth offline={offline} gateway={gateway} />
         </div>
       </header>
 
-      <div className="wrap">
-        {offline && (
-          <div className="banner">
-            <b>Can't reach the daemon.</b>{' '}
-            <span className="muted">
-              Start it from the tray menu (<b>Restart daemon</b>) or with <code>hypergate start</code>. In the repo,{' '}
-              <code>npm run daemon</code>. This page reconnects automatically.
-            </span>
-          </div>
-        )}
+      <div className="app-main">
+        <aside className="side-rail">
+          <nav className="nav" aria-label="Primary navigation">
+            {(['servers', 'analytics', 'settings'] as View[]).map((item) => (
+              <div className="nav-group" key={item}>
+                <button
+                  className={view === item ? 'active' : ''}
+                  aria-current={view === item ? 'page' : undefined}
+                  onClick={() => openView(item)}
+                >
+                  <NavIcon view={item} />
+                  <span className="nav-label">{item === 'servers' ? 'Servers' : item[0].toUpperCase() + item.slice(1)}</span>
+                  {item === 'analytics' && stats && stats.totalCalls > 0 && <span className="n-badge">{fmtNum(stats.totalCalls)}</span>}
+                </button>
+                {item === 'servers' && view === 'servers' && (
+                  <div className="section-nav" aria-label="Servers sections">
+                    {SERVER_SECTIONS.map((section) => (
+                      <button
+                        key={section.id}
+                        className={activeSection === section.id ? 'active' : ''}
+                        aria-current={activeSection === section.id ? 'location' : undefined}
+                        onClick={() => scrollToSection(section.id)}
+                      >
+                        {section.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </nav>
+        </aside>
 
-        <main className="view">
-          {view === 'servers' ? (
-            <>
-              <div className="pagehead">
-                <div className="pagehead-copy">
-                  <h1>Every MCP server. <span className="grad-text">One endpoint.</span></h1>
-                  <p>Run servers in sandboxed processes or Docker, supervise them, and connect any agent through a single gateway URL — with full local visibility into every call.</p>
-                </div>
-                <div className="pagehead-meta">
-                  {gateway && <GatewayBar gateway={gateway} />}
-                  <div className="summary">
-                    <b>{servers?.length ?? '–'}</b> servers<span className="sep">·</span>
-                    <b>{running}</b> running<span className="sep">·</span>
-                    <b>{tools}</b> tools
+        <div className="wrap">
+          {offline && (
+            <div className="banner">
+              <b>Can't reach the daemon.</b>{' '}
+              <span className="muted">
+                Start it from the tray menu (<b>Restart daemon</b>) or with <code>hypergate start</code>. In the repo,{' '}
+                <code>npm run daemon</code>. This page reconnects automatically.
+              </span>
+            </div>
+          )}
+
+          <main ref={viewRef} className={`view ${view === 'servers' ? 'servers-view' : ''}`}>
+            {view === 'servers' ? (
+              <>
+                <div className="pagehead">
+                  <div className="pagehead-copy">
+                    <h1>Every MCP server. <span className="grad-text">One endpoint.</span></h1>
+                    <p>Connect your agents, choose what they can reach, and keep every local tool visible through one gateway.</p>
+                  </div>
+                  <div className="pagehead-meta">
+                    {gateway && <GatewayBar gateway={gateway} />}
+                    <div className="summary">
+                      <b>{agents.length}</b> agents<span className="sep">·</span>
+                      <b>{running}</b> running<span className="sep">·</span>
+                      <b>{tools}</b> tools
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="section-title">
-                Active servers
-                <span className="rt">
-                  <button className={`btn sm ${showCatalog ? '' : 'btn-accent'}`} onClick={() => { setShowCatalog((v) => !v); setAdding(null); }}>
-                    {showCatalog ? 'Close' : '+ Add server'}
-                  </button>
-                </span>
-              </div>
+                <section id="agents" className="dashboard-section">
+                  <ConnectedAgents agents={agents} servers={servers ?? []} onChange={refreshAgents} />
+                </section>
 
-              {servers && servers.length === 0 && !showCatalog ? (
-                <div className="panel"><div className="empty">
-                  <div className="cat">🐈</div>
-                  <b>No servers yet.</b>
-                  <div className="small" style={{ marginTop: 4 }}>Add one — its tools join the gateway instantly.</div>
-                  <div style={{ marginTop: 14 }}><button className="btn btn-primary" onClick={() => setShowCatalog(true)}>+ Add your first server</button></div>
-                </div></div>
-              ) : servers && servers.length > 0 ? (
-                <div className="panel"><div className="list">
-                  {servers.map((s) => <ServerRow key={s.id} s={s} agents={agents} onChange={refresh} />)}
-                </div></div>
-              ) : null}
+                <section id="mcp-servers" className="dashboard-section">
+                  <div className="section-title">
+                    MCP servers
+                    <span className="rt">
+                      <button className={`btn sm ${showCatalog ? '' : 'btn-accent'}`} onClick={() => { setShowCatalog((v) => !v); setAdding(null); }}>
+                        {showCatalog ? 'Close' : '+ Add server'}
+                      </button>
+                    </span>
+                  </div>
 
-              <ConnectedAgents agents={agents} servers={servers ?? []} onChange={refreshAgents} />
+                  {servers && servers.length === 0 && !showCatalog ? (
+                    <div className="panel"><div className="empty">
+                      <div className="cat">🐈</div>
+                      <b>No servers yet.</b>
+                      <div className="small" style={{ marginTop: 4 }}>Add one. Its tools join the gateway instantly.</div>
+                      <div style={{ marginTop: 14 }}><button className="btn btn-primary" onClick={() => setShowCatalog(true)}>+ Add your first server</button></div>
+                    </div></div>
+                  ) : servers && servers.length > 0 ? (
+                    <div className="panel"><div className="list">
+                      {servers.map((s) => <ServerRow key={s.id} s={s} agents={agents} onChange={refresh} />)}
+                    </div></div>
+                  ) : null}
 
-              <CliSection />
+                  {showCatalog && <AddCatalog curated={registry} onPick={handlePick} />}
 
-              {showCatalog && <AddCatalog curated={registry} onPick={handlePick} />}
+                  {adding && (
+                    <AddServer
+                      entry={adding === 'custom' ? null : adding}
+                      onClose={() => setAdding(null)}
+                      onAdded={() => { setAdding(null); setShowCatalog(false); void refresh(); }}
+                    />
+                  )}
+                </section>
 
-              {adding && (
-                <AddServer
-                  entry={adding === 'custom' ? null : adding}
-                  onClose={() => setAdding(null)}
-                  onAdded={() => { setAdding(null); setShowCatalog(false); void refresh(); }}
-                />
-              )}
-            </>
-          ) : view === 'analytics' ? (
-            <AnalyticsView stats={stats} />
-          ) : (
-            <SettingsView gateway={gateway} version={version} u={updater} />
-          )}
-        </main>
+                <section id="cli" className="dashboard-section">
+                  <CliSection />
+                </section>
+              </>
+            ) : view === 'analytics' ? (
+              <AnalyticsView stats={stats} />
+            ) : (
+              <SettingsView gateway={gateway} version={version} u={updater} />
+            )}
+          </main>
 
-        <div className="footer">
-          <span>
-            Local-first · MIT · made with <Heart /> by Nekko Labs Community
-          </span>
-          <div className="spacer" style={{ flex: 1 }} />
-          <a
-            className="foot-gh"
-            href="https://github.com/nekko-labs/hypergate"
-            target="_blank"
-            rel="noreferrer"
-            title="nekko-labs/hypergate on GitHub"
-            aria-label="Hypergate on GitHub"
-          >
-            <GitHubMark />
-          </a>
+          <div className="footer">
+            <span>
+              Local-first · MIT · made with <Heart /> by Nekko Labs Community
+            </span>
+            <div className="spacer" style={{ flex: 1 }} />
+            <a
+              className="foot-gh"
+              href="https://github.com/nekko-labs/hypergate"
+              target="_blank"
+              rel="noreferrer"
+              title="nekko-labs/hypergate on GitHub"
+              aria-label="Hypergate on GitHub"
+            >
+              <GitHubMark />
+            </a>
+          </div>
         </div>
       </div>
     </div>
@@ -591,6 +667,16 @@ function Heart() {
       <path d="M12 21.35 10.55 20.03C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35Z" />
     </svg>
   );
+}
+
+function NavIcon({ view }: { view: View }) {
+  if (view === 'servers') {
+    return <svg className="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.5h12v4H4zM4 11.5h12v4H4z" /><path d="M6.5 6.5h.01M6.5 13.5h.01" /></svg>;
+  }
+  if (view === 'analytics') {
+    return <svg className="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 15.5V11m6 4.5v-11m6 11V8" /></svg>;
+  }
+  return <svg className="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3" /><path d="M10 2.5v2m0 11v2m7.5-7.5h-2m-11 0h-2m12.8-5.3-1.4 1.4M6.1 13.9l-1.4 1.4m10.6 0-1.4-1.4M6.1 6.1 4.7 4.7" /></svg>;
 }
 
 /**
@@ -790,7 +876,7 @@ function ProgressBar({ fraction }: { fraction?: number }) {
       aria-valuemax={100}
       aria-valuenow={known ? Math.round(fraction * 100) : undefined}
     >
-      <span className="vb-bar-fill" style={known ? { width: `${Math.max(3, fraction * 100)}%` } : undefined} />
+      <span className="vb-bar-fill" style={known ? { transform: `scaleX(${Math.max(0.03, fraction)})` } : undefined} />
     </span>
   );
 }
@@ -2207,7 +2293,7 @@ function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInf
 
   return (
     <>
-      <div className="section-title" id="agents">
+      <div className="section-title">
         Connected agents
         <span className="rt">
           <button
@@ -2727,7 +2813,7 @@ function AgentEditor({
  */
 function CliSection() {
   const [clis, setClis] = useState<CliStatus[] | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [offering, setOffering] = useState(false);
   const [q, setQ] = useState('');
   const [check, setCheck] = useState<CliCheckResult | null>(null);

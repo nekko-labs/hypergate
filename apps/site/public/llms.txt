@@ -23,7 +23,8 @@ Hypergate is not a connector directory: it is a proper server runtime. Add serve
 
 ## Pages
 
-- [Home](https://hypergate.app/): what Hypergate is, the gateway, the isolation tradeoffs, analytics, and the quick start.
+- [Home](https://hypergate.app/): what Hypergate is, the gateway, the isolation tradeoffs, analytics, and a device-matched direct download for the latest release.
+- [Release notes](https://hypergate.app/release-notes.html): published changes and direct installer downloads for Windows, macOS, and Linux.
 
 ## Docs and source
 

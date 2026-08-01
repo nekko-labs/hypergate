@@ -6,9 +6,19 @@
 
 > Open source · MIT · [nekko-labs](https://github.com/nekko-labs) · [hypergate.app](https://hypergate.app)
 
+## Download
+
+**Windows:** [x64 installer](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-windows-x64-setup.exe) · [Arm64 installer](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-windows-arm64-setup.exe)
+
+**macOS:** [Apple silicon installer](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-macos-arm64.pkg) · [Intel standalone binary](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-darwin-x64)
+
+**Linux:** [DEB x64](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-linux-x64.deb) · [DEB Arm64](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-linux-arm64.deb) · [RPM and tarball options](https://hypergate.app/release-notes.html)
+
+**Next:** [View the GitHub repository](https://github.com/nekko-labs/hypergate) · [Read the latest release notes](https://hypergate.app/release-notes.html)
+
 ## Install
 
-**An installer, if you'd rather not think about it.** Grab the one for your machine from the [latest release](https://github.com/nekko-labs/hypergate/releases): a `-setup.exe` for Windows, a `.pkg` for macOS, a `.deb`/`.rpm`/tarball for Linux, each for x64 and arm64. **Nothing else is required, not even Node**: the daemon ships as a single compiled executable. You get a Start Menu / Launchpad / app-menu entry to click, the `hypergate` command on your PATH, and an entry in Add/Remove Programs. Everything installs per-user, so no admin prompt.
+**An installer, if you'd rather not think about it.** Use the direct download for your machine above. Every [latest release](https://github.com/nekko-labs/hypergate/releases/latest) includes a `-setup.exe` for Windows, a `.pkg` for macOS, and `.deb`/`.rpm`/tarball packages for Linux, each for x64 and arm64. **Nothing else is required, not even Node**: the daemon ships as a single compiled executable. You get a Start Menu / Launchpad / app-menu entry to click, the `hypergate` command on your PATH, and an entry in Add/Remove Programs. Everything installs per-user, so no admin prompt.
 
 **Or npm, if you already have Node:**
 
