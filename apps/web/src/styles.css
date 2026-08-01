@@ -155,9 +155,33 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
   border-bottom: 1px solid var(--line);
 }
 .topbar-in { max-width: 1000px; margin: 0 auto; padding: 11px 24px; display: flex; align-items: center; gap: 12px; }
-.logo-tile {
-  width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
-  background: var(--grad); font-size: 14px; box-shadow: var(--shadow);
+/* The gate mark: the hero shader's ring, rebuilt for 28px. The ring is a conic
+   gradient behind an annular mask — a stroked circle can only be spun as a
+   shape, and what actually reads here is the colour travelling round it. */
+.gate-mark { position: relative; width: 28px; height: 28px; flex: none; display: block; }
+.gate-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 0turn, #6d5efc, #22d3ee 28%, #a5f3fc 44%, #22d3ee 62%, #6d5efc 100%);
+  -webkit-mask: radial-gradient(closest-side, transparent 55%, #000 64%);
+  mask: radial-gradient(closest-side, transparent 55%, #000 64%);
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--violet, #6d5efc) 60%, transparent));
+  animation: gate-spin 7s linear infinite;
+}
+/* Event horizon. Inset rather than sized so it tracks the mark if it resizes. */
+.gate-core {
+  position: absolute; inset: 31%; border-radius: 50%;
+  background: radial-gradient(circle, #ffffff 0%, #a5f3fc 46%, rgba(34, 211, 238, 0) 100%);
+  animation: gate-breathe 3.4s ease-in-out infinite;
+}
+@keyframes gate-spin { to { transform: rotate(1turn); } }
+@keyframes gate-breathe {
+  0%, 100% { opacity: 0.72; transform: scale(0.9); }
+  50%      { opacity: 1;    transform: scale(1.06); }
+}
+/* A mark that spins forever is exactly the kind of thing this setting is for. */
+@media (prefers-reduced-motion: reduce) {
+  .gate-ring, .gate-core { animation: none; }
+  .gate-core { opacity: 0.95; transform: none; }
 }
 .wordmark { font-weight: 700; font-size: 15.5px; letter-spacing: -0.3px; }
 .topbar .spacer { flex: 1; }

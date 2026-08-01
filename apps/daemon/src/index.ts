@@ -117,7 +117,7 @@ const OAUTH_DIR = join(DATA_DIR, 'oauth');
 // sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
-const VERSION = '0.16.0';
+const VERSION = '0.16.1';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -738,6 +738,29 @@ const forgetAccount = (id: string): void => {
   secretStore(id).remove(K_ACCOUNT);
   accountProbed.delete(id);
   accountMemo.delete(id);
+};
+
+/**
+ * Drop a server's grant entirely: tokens, the registered client, the PKCE
+ * verifier, the CSRF state, the cached account — the whole entry, not its keys
+ * one at a time.
+ *
+ * Removing a server used to leave this behind. The config row went, the
+ * process stopped, and the grant stayed in the keychain forever, so re-adding
+ * the same server came back already signed in as whoever set it up last, and
+ * "remove" quietly meant "hide". A grant is the most sensitive thing we hold
+ * on a user's behalf; when they remove the server they are done with it.
+ */
+const deleteOAuth = (id: string): void => {
+  oauthCache.delete(id);
+  accountProbed.delete(id);
+  accountMemo.delete(id);
+  if (useKeychain()) shell.secretDelete(oauthKey(id));
+  try {
+    rmSync(oauthFile(id));
+  } catch {
+    /* absent is the outcome we wanted anyway */
+  }
 };
 
 /** The identity the stored grant states about itself. No network, always cheap. */
@@ -1651,12 +1674,27 @@ if (STDIO_MODE) {
       return json(res, 200, { logs: supervisor.logs(id) });
     }
 
+    // Remove: everything this server was, gone. Stop it, forget its OAuth
+    // grant, drop the config row, and take it out of the agent allow-lists it
+    // appears in — so nothing is left pointing at an id that no longer exists,
+    // and re-adding it starts from a clean sign-in rather than resurrecting
+    // somebody's old grant.
     const rmM = /^\/api\/servers\/([^/]+)$/.exec(pathname);
     if (rmM && req.method === 'DELETE') {
       const id = rmM[1];
       await supervisor.remove(id);
+      deleteOAuth(id);
       servers = servers.filter((s) => s.id !== id);
       saveConfig(servers);
+      // `'*'` needs no pruning: it means "every server there is", and this one
+      // no longer is one.
+      let scopesChanged = false;
+      for (const agent of clients) {
+        if (agent.servers === '*' || !agent.servers.includes(id)) continue;
+        agent.servers = agent.servers.filter((s) => s !== id);
+        scopesChanged = true;
+      }
+      if (scopesChanged) saveClients(clients);
       return json(res, 200, { ok: true });
     }
 
@@ -1677,20 +1715,6 @@ if (STDIO_MODE) {
       }
       supervisor.markAuthorizing(cfg);
       return json(res, 200, { ...supervisor.status(cfg.id), authUrl: result.authUrl, error: result.error } as ServerStatus);
-    }
-
-    // disconnect: sign out (drop stored OAuth tokens) and stop the server.
-    const discM = /^\/api\/servers\/([^/]+)\/disconnect$/.exec(pathname);
-    if (discM && req.method === 'POST') {
-      const cfg = servers.find((s) => s.id === discM[1]);
-      if (!cfg) return json(res, 404, { error: 'not_found' });
-      await supervisor.stop(cfg.id);
-      makeProvider(cfg).invalidateCredentials('all');
-      forgetAccount(cfg.id);
-      cfg.enabled = false;
-      saveConfig(servers);
-      supervisor.markAuthorizing(cfg);
-      return json(res, 200, supervisor.status(cfg.id));
     }
 
     const m = /^\/api\/servers\/([^/]+)\/(start|stop|restart)$/.exec(pathname);

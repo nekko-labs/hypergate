@@ -38,9 +38,10 @@ export const api = {
   logs: (id: string) => j<{ logs: string[] }>(`/api/servers/${id}/logs`),
   add: (cfg: Partial<ManagedServerConfig>) => j<ServerStatus>('/api/servers', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }),
   action: (id: string, action: 'start' | 'stop' | 'restart') => j<ServerStatus>(`/api/servers/${id}/${action}`, { method: 'POST' }),
-  // Remote OAuth: (re)start the browser login (returns { authUrl } to open), or disconnect (sign out).
+  // Remote OAuth: (re)start the browser login. Returns { authUrl } to open.
   authorize: (id: string) => j<ServerStatus>(`/api/servers/${id}/authorize`, { method: 'POST' }),
-  disconnect: (id: string) => j<ServerStatus>(`/api/servers/${id}/disconnect`, { method: 'POST' }),
+  // Remove is the whole eraser: the server, its OAuth grant, and its place in
+  // every agent's allow-list. There is no separate sign-out.
   remove: (id: string) => j<{ ok: boolean }>(`/api/servers/${id}`, { method: 'DELETE' }),
   searchRegistry: (q: string) => j<RegistryEntry[]>(`/api/registry/search?q=${encodeURIComponent(q)}`),
   // Popularity scores for catalog ordering — fetched lazily when the catalog opens.
