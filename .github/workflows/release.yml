@@ -134,7 +134,16 @@ jobs:
             gpg --batch --yes --armor --detach-sign release-assets/SHA256SUMS
           fi
           ls -la release-assets
+          # The npm line depends on whether we actually published. Promising
+          # `npm install -g hypergated` on a release where nothing was published
+          # sends people to a 404, so say what is true for this release.
+          version="${GITHUB_REF_NAME#v}"
+          if [ -n "$NPM_TOKEN" ]; then
+            npm_line="or \`npm install -g hypergated\`"
+          else
+            npm_line="or from the npm tarballs attached here: \`npm install -g hypergate-shell-<os>-<arch>-${version}.tgz hypergated-${version}.tgz\` (\`hypergated\` is not on the public registry yet; these are the same packages, and they are what the in-app updater installs)"
+          fi
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --title "$GITHUB_REF_NAME" \
-            --notes "Install with an installer below (no Node needed), or \`npm install -g hypergated\`. Bare \`hypergate\` CLI binaries are attached too." \
+            --notes "Install with an installer below (no Node needed), ${npm_line}. Bare \`hypergate\` CLI binaries are attached too, and \`SHA256SUMS\` is GPG-signed with the key at \`docs/release-signing-key.asc\`." \
             || gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
