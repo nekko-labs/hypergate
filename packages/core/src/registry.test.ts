@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { REGISTRY, RECOMMENDED_IDS, sortRegistry, registryEntry } from './registry.js';
 import { KNOWN_CLIS, knownCli } from './clis.js';
-import type { RegistryEntry } from '@hypergate/shared';
+import { mergeCatalogSearch, type RegistryEntry } from '@hypergate/shared';
 
 const entry = (id: string, over: Partial<RegistryEntry> = {}): RegistryEntry => ({
   id,
@@ -19,11 +19,21 @@ describe('REGISTRY catalog', () => {
   });
 
   it('includes the requested official servers, flagged official', () => {
-    for (const id of ['supabase', 'linear', 'figma', 'atlassian', 'azure', 'aws', 'gcp-toolbox', 'cloudflare', 'higgsfield', 'meta-ads', 'kotrain']) {
+    for (const id of ['supabase', 'linear', 'figma', 'atlassian', 'azure', 'aws', 'gcp-toolbox', 'cloudflare', 'higgsfield', 'meta-ads', 'kotrain', 'vercel']) {
       const e = registryEntry(id);
       expect(e, id).toBeDefined();
       expect(e!.official, id).toBe(true);
     }
+  });
+
+  it('uses Vercel’s verified remote OAuth endpoint', () => {
+    expect(registryEntry('vercel')).toMatchObject({
+      runtime: 'remote',
+      url: 'https://mcp.vercel.com',
+      transport: 'http',
+      auth: 'oauth',
+      command: '',
+    });
   });
 
   it('has the whole recommended set present + flagged recommended', () => {
@@ -32,6 +42,28 @@ describe('REGISTRY catalog', () => {
       expect(e, id).toBeDefined();
       expect(e!.recommended, id).toBe(true);
     }
+  });
+});
+
+describe('mergeCatalogSearch', () => {
+  it('puts matching curated entries first and removes duplicate endpoints', () => {
+    const curated = [
+      entry('vercel', { name: 'Vercel', description: 'Deploy projects', runtime: 'remote', command: '', url: 'https://mcp.vercel.com', auth: 'oauth' }),
+      entry('github', { name: 'GitHub' }),
+    ];
+    const searched = [
+      entry('com-pulsemcp-vercel', { name: 'vercel' }),
+      entry('com-vercel-vercel-mcp', { name: 'vercel-mcp', runtime: 'remote', command: '', url: 'https://mcp.vercel.com/' }),
+    ];
+
+    expect(mergeCatalogSearch(curated, searched, 'verc').map((e) => e.id)).toEqual(['vercel', 'com-pulsemcp-vercel']);
+  });
+
+  it('does not include unrelated curated entries', () => {
+    expect(mergeCatalogSearch([entry('github'), entry('vercel')], [entry('registry-hit')], 'verc').map((e) => e.id)).toEqual([
+      'vercel',
+      'registry-hit',
+    ]);
   });
 });
 

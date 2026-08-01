@@ -36,8 +36,10 @@ interface DialogProps {
  */
 export function Dialog({ title, onClose, children, width = 560, description }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
   const titleId = useId();
   const descId = useId();
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -52,7 +54,7 @@ export function Dialog({ title, onClose, children, width = 560, description }: D
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== 'Tab' || !panel) return;
@@ -83,10 +85,10 @@ export function Dialog({ title, onClose, children, width = 560, description }: D
       if (openCount === 0) setAppInert(false);
       previouslyFocused?.focus?.();
     };
-  }, [onClose]);
+  }, []);
 
   return createPortal(
-    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}>
       <div
         ref={panelRef}
         className="modal"

@@ -30,15 +30,6 @@ export function ServerRow({ s, onChange }: { s: ServerStatus; onChange: () => vo
     else toast.show(`Could not start sign-in for ${s.name}`, 'error');
     onChange();
   };
-  const disconnect = async () => {
-    try {
-      await api.disconnect(s.id);
-      toast.show(`Disconnected ${s.name}`, 'success');
-    } catch {
-      toast.show(`Could not disconnect ${s.name}`, 'error');
-    }
-    onChange();
-  };
   const remove = async () => {
     try {
       await api.remove(s.id);
@@ -74,9 +65,8 @@ export function ServerRow({ s, onChange }: { s: ServerStatus; onChange: () => vo
             <button className="btn sm btn-go" onClick={() => void act('start')} disabled={busy}>{busy ? 'Starting…' : 'Start'}</button>
           )}
           {!authorizing && <button className="btn sm btn-warn" onClick={() => void act('restart')}>Restart</button>}
-          {isRemote && !authorizing && <button className="btn sm btn-warn" onClick={() => void disconnect()} title="Sign out and drop stored tokens">Disconnect</button>}
           <button className="btn sm" onClick={() => void toggleLogs()}>Logs</button>
-          <button className="btn sm btn-danger" onClick={() => void remove()}>Remove</button>
+          <button className="btn sm btn-danger" onClick={() => void remove()}>{isRemote ? 'Remove & sign out' : 'Remove'}</button>
         </div>
       </div>
       {authorizing && (

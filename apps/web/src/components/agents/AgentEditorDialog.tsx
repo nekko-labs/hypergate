@@ -27,7 +27,7 @@ export function AgentEditorDialog({ agent, servers, onClose, onSaved }: { agent:
     const scoped: '*' | string[] = all ? '*' : [...sel];
     try {
       if (agent) await api.updateClient(agent.id, { name: name.trim(), servers: scoped });
-      else await api.addClient(name.trim(), scoped);
+      else await api.addClient({ name: name.trim(), servers: scoped });
       toast.show(agent ? `Saved ${name.trim()}` : `Created agent ${name.trim()}`, 'success');
       onSaved();
     } catch {

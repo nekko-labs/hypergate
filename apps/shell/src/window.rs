@@ -1,0 +1,230 @@
+//! The manager window: the daemon's web UI in a native webview.
+//!
+//! This is the "desktop app" face of Hypergate. The window hosts the exact same
+//! UI the daemon serves at `/` (one UI, two frames), so nothing is
+//! reimplemented and the browser remains a first-class fallback. The webview is
+//! the OS's own (WebView2 / WKWebView / WebKitGTK), so no browser engine ships
+//! in the binary and the download stays small.
+//!
+//! Closing the window does not have one obvious meaning — Hypergate is a
+//! resident agent, but it is also the thing running your servers — so the
+//! window is hidden rather than destroyed and the *decision* is the user's
+//! (see `CloseAction`). Hiding also keeps the webview alive, so reopening is
+//! instant and the page keeps its scroll position and open panels.
+//!
+//! The page can talk back: {@link ManagerWindow::ask_close} calls into it, and
+//! the answer arrives over wry's IPC channel as a `Wake::Close`.
+
+use tao::dpi::LogicalSize;
+use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
+use tao::window::{Window, WindowBuilder, WindowId};
+use wry::{NewWindowFeatures, NewWindowResponse};
+
+use crate::tray::{CloseDecision, Wake};
+use crate::{api, icon};
+
+/// Whether a URL is one we're willing to hand to the OS.
+///
+/// `open` gives whatever it is to the same shell that launches programs, and
+/// these strings come from a page — which, for a remote MCP server's sign-in
+/// flow, is a page we did not write. Web schemes only, matched case-
+/// insensitively because `HTTP://` is a valid way to write one.
+fn is_web_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
+/// Hand a URL to the OS, for the browser to deal with.
+fn open_external(url: &str) {
+    if is_web_url(url) {
+        let _ = open::that_detached(url);
+    }
+}
+
+/// The size the window opens at when the screen has room for it.
+///
+/// The manager is a two-column-ish dashboard — a server list whose rows carry a
+/// state pill, a runtime chip, a tool count and five controls — and it reads
+/// cramped before it reads wide, so the default errs on the generous side.
+const PREFERRED: (f64, f64) = (1360.0, 900.0);
+/// Below this the layout stops giving each panel a usable share of the height,
+/// so the window refuses to be dragged smaller (it scrolls instead).
+const MINIMUM: (f64, f64) = (600.0, 420.0);
+/// How much of the monitor the default is allowed to take. A window that opens
+/// exactly as tall as the screen has its title bar under the taskbar on
+/// Windows and its bottom edge under the Dock on macOS, so leave a margin
+/// rather than trusting a work-area query that every platform reports
+/// differently.
+const SCREEN_FRACTION: f64 = 0.9;
+
+pub struct ManagerWindow {
+    window: Window,
+    /// Owned so it lives exactly as long as the window; dropped together.
+    webview: wry::WebView,
+}
+
+impl ManagerWindow {
+    /// Create the window and point its webview at the daemon's UI.
+    ///
+    /// Fails when the platform webview is missing (no WebView2 runtime, no
+    /// webkit2gtk); the caller falls back to the browser, which serves the
+    /// same UI, so the feature degrades instead of dying.
+    pub fn open(target: &EventLoopWindowTarget<Wake>, proxy: EventLoopProxy<Wake>) -> Result<Self, String> {
+        let mut builder = WindowBuilder::new()
+            .with_title("Hypergate")
+            .with_inner_size(Self::default_size(target))
+            .with_min_inner_size(LogicalSize::new(MINIMUM.0, MINIMUM.1));
+        // Windows and Linux take the icon per-window; macOS ignores it (the
+        // Dock/switcher icon comes from the .app bundle instead).
+        if let Ok(mark) = icon::window_icon() {
+            builder = builder.with_window_icon(Some(mark));
+        }
+        let window = builder
+            .build(target)
+            .map_err(|e| format!("could not create the manager window: {e}"))?;
+
+        let webview = Self::attach_webview(&window, proxy)?;
+
+        window.set_focus();
+        Ok(Self { window, webview })
+    }
+
+    /// The default size, shrunk to fit when the screen is smaller than we want.
+    ///
+    /// `with_inner_size` is a request, not a constraint: nothing clamps it to
+    /// the display, so a fixed default that suits a desktop monitor opens with
+    /// its bottom edge off a laptop screen.
+    fn default_size(target: &EventLoopWindowTarget<Wake>) -> LogicalSize<f64> {
+        let (mut width, mut height) = PREFERRED;
+        if let Some(monitor) = target.primary_monitor() {
+            let screen: LogicalSize<f64> = monitor.size().to_logical(monitor.scale_factor());
+            width = width.min(screen.width * SCREEN_FRACTION).max(MINIMUM.0);
+            height = height.min(screen.height * SCREEN_FRACTION).max(MINIMUM.1);
+        }
+        LogicalSize::new(width, height)
+    }
+
+    /// A new window belongs in the user's browser.
+    ///
+    /// This frame has no tabs, no address bar and no back button, so a popup
+    /// inside it would be a dead end — and left unhandled it isn't even that.
+    /// WebView2 raises `NewWindowRequested` and, with nobody listening, drops
+    /// the request on the floor: every `target="_blank"` link and the OAuth
+    /// sign-in popup did nothing at all in the app while working in a browser
+    /// tab. Hand them to the real browser instead, where the user is already
+    /// signed in to GitHub and can see what they are authorizing.
+    fn open_externally(url: String, _features: NewWindowFeatures) -> NewWindowResponse {
+        open_external(&url);
+        NewWindowResponse::Deny
+    }
+
+    /// The page's side of the conversation. Only ever messages we defined:
+    /// anything else on this channel is ignored rather than acted on.
+    fn ipc_handler(proxy: EventLoopProxy<Wake>) -> impl Fn(wry::http::Request<String>) + 'static {
+        move |req| {
+            let body = req.body().as_str();
+            // A window the page opens itself, rather than one the user clicked
+            // a link to. `window.open` reaches `open_externally` above on some
+            // webviews and is quietly swallowed on others (a popup blocked for
+            // want of a user gesture never becomes a new-window request at
+            // all), so the page asks us directly and the answer is the same.
+            if let Some(url) = body.strip_prefix("open:") {
+                open_external(url);
+                return;
+            }
+            let event = match body {
+                "close:asking" => Wake::CloseAsked,
+                "close:tray" => Wake::Close(CloseDecision::Tray),
+                "close:quit" => Wake::Close(CloseDecision::Quit),
+                "close:cancel" => Wake::Close(CloseDecision::Cancel),
+                _ => return,
+            };
+            let _ = proxy.send_event(event);
+        }
+    }
+
+    /// Windows and macOS attach straight to the window handle.
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    fn attach_webview(window: &Window, proxy: EventLoopProxy<Wake>) -> Result<wry::WebView, String> {
+        wry::WebViewBuilder::new()
+            .with_url(api::ui_url())
+            .with_ipc_handler(Self::ipc_handler(proxy))
+            .with_new_window_req_handler(Self::open_externally)
+            .build(window)
+            .map_err(|e| format!("could not create the webview: {e}"))
+    }
+
+    /// Linux: tao windows are GTK, so the webview goes into the window's
+    /// default vertical box rather than onto the raw handle.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn attach_webview(window: &Window, proxy: EventLoopProxy<Wake>) -> Result<wry::WebView, String> {
+        use tao::platform::unix::WindowExtUnix;
+        use wry::WebViewBuilderExtUnix;
+        let vbox = window
+            .default_vbox()
+            .ok_or("the manager window has no GTK container to hold a webview")?;
+        wry::WebViewBuilder::new()
+            .with_url(api::ui_url())
+            .with_ipc_handler(Self::ipc_handler(proxy))
+            .with_new_window_req_handler(Self::open_externally)
+            .build_gtk(vbox)
+            .map_err(|e| format!("could not create the webview: {e}"))
+    }
+
+    pub fn id(&self) -> WindowId {
+        self.window.id()
+    }
+
+    /// Bring an already-open window back to the front (and back into existence,
+    /// when it was hidden by a close).
+    pub fn focus(&self) {
+        self.window.set_visible(true);
+        self.window.set_focus();
+    }
+
+    /// Get out of the way without going away: the gateway and every managed
+    /// server keep running, and the tray icon is how you come back.
+    pub fn hide(&self) {
+        self.window.set_visible(false);
+    }
+
+    /// Ask the page what closing should do. The answer comes back over IPC as a
+    /// `Wake::Close`; the caller sets a deadline, because a page that failed to
+    /// load cannot answer and the window must still close.
+    pub fn ask_close(&self) {
+        let _ = self
+            .webview
+            .evaluate_script("window.__hypergateAskClose && window.__hypergateAskClose()");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_web_url;
+
+    #[test]
+    fn opens_web_urls() {
+        assert!(is_web_url("https://github.com/login/oauth/authorize?client_id=x"));
+        assert!(is_web_url("http://localhost:7777/oauth/callback"));
+        // A scheme is case-insensitive, and a page is free to write it either way.
+        assert!(is_web_url("HTTPS://example.com"));
+    }
+
+    #[test]
+    fn refuses_everything_else() {
+        // The URL comes from a page, so the schemes that launch programs or
+        // read the disk must not survive the trip to the OS.
+        for url in [
+            "file:///C:/Windows/System32/calc.exe",
+            "javascript:alert(1)",
+            "data:text/html,<script>1</script>",
+            "ms-settings:windowsupdate",
+            "vscode://file/etc/passwd",
+            "",
+            // Not a scheme — a path that merely starts with the right letters.
+            "https-not-really/x",
+        ] {
+            assert!(!is_web_url(url), "should have refused {url}");
+        }
+    }
+}

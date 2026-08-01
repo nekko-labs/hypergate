@@ -40,8 +40,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="toast-viewport" role="region" aria-label="Notifications" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={`toast toast-${t.kind}`} role="status">
-            <span className="toast-dot" />
+          <div key={t.id} className={`toast toast-${t.kind}`} role={t.kind === 'error' ? 'alert' : 'status'}>
+            <span className="toast-dot" aria-hidden="true" />
             <span className="toast-msg">{t.message}</span>
             <button className="toast-close" aria-label="Dismiss" onClick={() => dismiss(t.id)}>
               ✕

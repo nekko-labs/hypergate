@@ -29,7 +29,7 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="panel error-boundary" role="alert">
           <div className="empty">
-            <div className="cat">💥</div>
+            <div className="cat" aria-hidden="true">💥</div>
             <b>Something went wrong{this.props.surface ? ` in ${this.props.surface}` : ''}.</b>
             <div className="small" style={{ marginTop: 4 }}>{this.state.error.message}</div>
             <div style={{ marginTop: 14 }}>

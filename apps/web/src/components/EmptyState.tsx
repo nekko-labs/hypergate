@@ -19,8 +19,8 @@ export function EmptyState({
 }) {
   return (
     <div className="panel" style={{ marginTop: 12 }}>
-      <div className="empty">
-        <div className={`cat ${loading ? 'is-loading' : ''}`}>{glyph}</div>
+      <div className="empty" role={loading ? 'status' : undefined} aria-busy={loading || undefined}>
+        <div className={`cat ${loading ? 'is-loading' : ''}`} aria-hidden="true">{glyph}</div>
         <b>{title}</b>
         {children && <div className="small" style={{ marginTop: 4, maxWidth: 380, marginInline: 'auto' }}>{children}</div>}
         {action && <div style={{ marginTop: 14 }}>{action}</div>}

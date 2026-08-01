@@ -10,13 +10,77 @@
   <meta property="og:title" content="Hypergate — every MCP server, one gate" />
   <meta property="og:description" content="A local-first runtime and manager for MCP servers. Run them securely, watch every call, connect any agent through a single gateway." />
   <meta property="og:image" content="https://hypergate.app/og.png" />
+  <meta property="og:image:width" content="2560" />
+  <meta property="og:image:height" content="1200" />
+  <meta property="og:image:alt" content="Hypergate: run MCP servers securely, one gateway for every agent" />
   <meta property="og:url" content="https://hypergate.app/" />
   <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Hypergate" />
+  <meta property="og:locale" content="en_US" />
   <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Hypergate — every MCP server, one gate" />
+  <meta name="twitter:description" content="A local-first runtime and manager for MCP servers. Run them securely, watch every call, connect any agent through a single gateway." />
+  <meta name="twitter:image" content="https://hypergate.app/og.png" />
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/src/styles.css" />
+  <!-- Structured data: so search and answer engines describe Hypergate accurately -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://nekkolabs.com/#organization",
+        "name": "Nekko Labs",
+        "url": "https://nekkolabs.com/"
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://hypergate.app/#website",
+        "url": "https://hypergate.app/",
+        "name": "Hypergate",
+        "description": "Local-first runtime and manager for MCP servers: sandboxed, supervised, and aggregated behind one gateway endpoint any agent can use.",
+        "inLanguage": "en",
+        "publisher": { "@id": "https://nekkolabs.com/#organization" }
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://hypergate.app/#app",
+        "name": "Hypergate",
+        "url": "https://hypergate.app/",
+        "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "MCP server runtime and gateway",
+        "operatingSystem": "Windows, macOS, Linux",
+        "image": "https://hypergate.app/og.png",
+        "description": "Hypergate runs your MCP servers on your machine: sandboxed, supervised, and aggregated behind one gateway endpoint any agent harness can use. Add servers from a curated catalog, pick how each is isolated (process sandbox, Docker, or remote), and paste one URL into your agent.",
+        "license": "https://opensource.org/licenses/MIT",
+        "isAccessibleForFree": true,
+        "softwareRequirements": "No dependencies for the installers; Node 20+ (22.5+ recommended) for the npm install",
+        "downloadUrl": "https://github.com/nekko-labs/hypergate/releases",
+        "codeRepository": "https://github.com/nekko-labs/hypergate",
+        "featureList": [
+          "Aggregating MCP gateway: every server's tools behind one endpoint, over streamable HTTP or stdio",
+          "Per-server isolation: process sandbox (default), Docker container, or remote hosted endpoint",
+          "Curated catalog of first-party MCP servers with verified launch configs and trust chips",
+          "One-click OAuth for remote first-party servers, no tokens to paste",
+          "Search over the official MCP registry",
+          "Durable usage history, logs, and an audit trail of every tool call",
+          "Tool inspector showing descriptions and typed parameters from the live schema",
+          "Command-line tools radar that detects the CLIs your servers depend on"
+        ],
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "publisher": { "@id": "https://nekkolabs.com/#organization" }
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <canvas id="stars" aria-hidden="true"></canvas>
@@ -36,9 +100,14 @@
       <a href="#features" data-scroll>Features</a>
       <a href="#isolation" data-scroll>Security</a>
       <a href="#analytics" data-scroll>Analytics</a>
-      <a href="#start" data-scroll>Quick start</a>
+      <a href="/release-notes.html">Release notes</a>
+      <a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">GitHub ↗</a>
     </nav>
-    <a class="nav-cta" href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">GitHub ↗</a>
+    <span data-download-group>
+      <a class="nav-cta" href="https://github.com/nekko-labs/hypergate/releases/latest" data-download-primary>
+        <span data-download-label>Download</span>
+      </a>
+    </span>
   </header>
 
   <main id="top">
@@ -58,11 +127,26 @@
           Open Paw, or any agent at one URL and jump.
         </p>
         <div class="hero-ctas reveal" data-delay="260">
-          <a class="btn btn-primary" href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">Get Hypergate on GitHub</a>
-          <a class="btn btn-ghost" href="#features" data-scroll>See it running ↓</a>
+          <div class="download-control" data-download-group>
+            <a class="btn btn-primary download-primary" href="https://github.com/nekko-labs/hypergate/releases/latest" data-download-primary>
+              <span data-download-label>Download Hypergate</span>
+              <small data-download-version>latest</small>
+            </a>
+            <details class="download-picker" data-linux-picker hidden>
+              <summary aria-label="Choose a Linux package"><span aria-hidden="true">⌄</span></summary>
+              <div class="download-menu">
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="deb">DEB <small>Debian / Ubuntu</small></a>
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="rpm">RPM <small>Fedora / RHEL</small></a>
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="tar.gz">Tarball <small>Other distributions</small></a>
+              </div>
+            </details>
+          </div>
+          <a class="btn btn-ghost repo-cta" href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">View GitHub repo ↗</a>
         </div>
-        <div class="hero-snippet reveal" data-delay="340">
-          <code><span class="c-dim">$</span> claude mcp add -t http hypergate http://localhost:7777/mcp</code>
+        <div class="hero-snippet reveal" data-delay="340" data-install-command>
+          <span class="install-shell" data-install-shell>Terminal</span>
+          <code><span class="c-dim">$</span> <span data-install-command-text>Detecting the right install command…</span></code>
+          <button type="button" data-copy-install aria-label="Copy install command">Copy</button>
         </div>
       </div>
       <div class="hero-stats reveal" data-delay="420">
@@ -245,7 +329,21 @@
            catalog, and paste the gateway snippet into your agent. That's the whole
            setup.</p>
         <div class="hero-ctas">
-          <a class="btn btn-primary" href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">Star it on GitHub</a>
+          <div class="download-control" data-download-group>
+            <a class="btn btn-primary download-primary" href="https://github.com/nekko-labs/hypergate/releases/latest" data-download-primary>
+              <span data-download-label>Download Hypergate</span>
+              <small data-download-version>latest</small>
+            </a>
+            <details class="download-picker" data-linux-picker hidden>
+              <summary aria-label="Choose a Linux package"><span aria-hidden="true">⌄</span></summary>
+              <div class="download-menu download-menu-up">
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="deb">DEB <small>Debian / Ubuntu</small></a>
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="rpm">RPM <small>Fedora / RHEL</small></a>
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="tar.gz">Tarball <small>Other distributions</small></a>
+              </div>
+            </details>
+          </div>
+          <a class="btn btn-ghost repo-cta" href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">View GitHub repo ↗</a>
         </div>
       </div>
     </section>
@@ -255,7 +353,7 @@
     <div class="foot-in">
       <span>Hypergate · local-first · MIT</span>
       <span class="foot-dim">Built by <a href="https://github.com/nekko-labs" target="_blank" rel="noopener">Nekko Labs</a></span>
-      <a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">nekko-labs/hypergate</a>
+      <span class="foot-links"><a href="/release-notes.html">Release notes</a><a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">GitHub</a></span>
     </div>
   </footer>
 

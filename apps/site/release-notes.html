@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Release notes · Hypergate</title>
+  <meta name="description" content="What changed in every Hypergate release, with direct downloads for the latest Windows, macOS, and Linux installers." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="canonical" href="https://hypergate.app/release-notes.html" />
+  <meta property="og:title" content="Hypergate release notes" />
+  <meta property="og:description" content="New features, fixes, and direct downloads for every Hypergate release." />
+  <meta property="og:image" content="https://hypergate.app/og.png" />
+  <meta property="og:url" content="https://hypergate.app/release-notes.html" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <canvas id="stars" aria-hidden="true"></canvas>
+
+  <header class="nav scrolled" id="nav">
+    <a class="nav-brand" href="/">
+      <svg class="nav-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="11" fill="none" stroke="url(#nvG)" stroke-width="4.5"/>
+        <circle cx="16" cy="16" r="4.5" fill="#a5f3fc"/>
+        <defs><linearGradient id="nvG" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#6d5efc"/><stop offset="1" stop-color="#22d3ee"/>
+        </linearGradient></defs>
+      </svg>
+      <span>Hypergate</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/">Overview</a>
+      <a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">GitHub ↗</a>
+    </nav>
+    <span data-download-group>
+      <a class="nav-cta" href="https://github.com/nekko-labs/hypergate/releases/latest" data-download-primary>
+        <span data-download-label>Download</span>
+      </a>
+    </span>
+  </header>
+
+  <main class="release-main">
+    <div class="release-wrap">
+      <header class="release-head">
+        <p class="feat-k">Shipping log</p>
+        <h1>Release notes</h1>
+        <p>Every new capability, behavior change, and fix in Hypergate. Notes and downloads come directly from the published GitHub releases.</p>
+        <div class="hero-ctas">
+          <div class="download-control" data-download-group>
+            <a class="btn btn-primary download-primary" href="https://github.com/nekko-labs/hypergate/releases/latest" data-download-primary>
+              <span data-download-label>Download Hypergate</span>
+              <small data-download-version>latest</small>
+            </a>
+            <details class="download-picker" data-linux-picker hidden>
+              <summary aria-label="Choose a Linux package"><span aria-hidden="true">⌄</span></summary>
+              <div class="download-menu">
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="deb">DEB <small>Debian / Ubuntu</small></a>
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="rpm">RPM <small>Fedora / RHEL</small></a>
+                <a href="https://github.com/nekko-labs/hypergate/releases/latest" data-linux-format="tar.gz">Tarball <small>Other distributions</small></a>
+              </div>
+            </details>
+          </div>
+          <a class="btn btn-ghost repo-cta" href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">View GitHub repo ↗</a>
+        </div>
+      </header>
+
+      <section class="release-list release-state" id="release-list" aria-live="polite">
+        Loading published releases…
+      </section>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-in">
+      <span>Hypergate · local-first · MIT</span>
+      <span class="foot-dim">Built by <a href="https://github.com/nekko-labs" target="_blank" rel="noopener">Nekko Labs</a></span>
+      <span class="foot-links"><a href="/">Overview</a><a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">GitHub</a></span>
+    </div>
+  </footer>
+
+  <script type="module" src="/src/release-notes.ts"></script>
+</body>
+</html>

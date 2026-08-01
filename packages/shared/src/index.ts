@@ -67,8 +67,27 @@ export interface ManagedServerConfig {
   clientSecret?: string;
   /** Optional OAuth scope to request (space-delimited), when the provider needs it. */
   scope?: string;
+  /** Resource ceilings enforced by the OS (process runtime). */
+  limits?: ResourceLimits;
   /** Whether the supervisor should run it. */
   enabled: boolean;
+}
+
+/**
+ * OS-enforced resource ceilings for a process-runtime server.
+ *
+ * Applied by the `hypergate sandbox-exec` launcher, not by Node: these need
+ * Windows Job Objects and POSIX `setrlimit`, which a Node parent cannot ask for.
+ * When the launcher is unavailable the server still starts, unenforced, and the
+ * daemon says so in its logs rather than pretending the limits are in force.
+ */
+export interface ResourceLimits {
+  /** Memory ceiling in MB. Windows: Job Object `JobMemoryLimit`. POSIX: `RLIMIT_AS`. */
+  memMb?: number;
+  /** CPU ceiling as a percentage of the machine. Windows only (POSIX needs cgroups). */
+  cpuPct?: number;
+  /** Max open file descriptors. POSIX only (Windows has no per-process fd table). */
+  nofile?: number;
 }
 
 /** What a RuntimeAdapter produces: the concrete stdio process to launch. */
@@ -89,6 +108,31 @@ export interface ToolInfo {
   inputSchema?: unknown;
 }
 
+/**
+ * Who a signed-in remote server is signed in *as*.
+ *
+ * A remote MCP server is reached with one account's grant, and which account
+ * that is decides what the agent can see — so it belongs on the server row next
+ * to the state, not buried in a token blob. Derived locally from the grant's own
+ * claims (an `id_token`, or a JWT access token) and, only when those carry no
+ * identity, from the provider's OpenID `userinfo` endpoint.
+ *
+ * Never includes the token itself.
+ */
+export interface ServerAccount {
+  /** What to show: an email, a username, or (last resort) the subject id. */
+  label: string;
+  email?: string;
+  /** Human display name, when the claims carry one. */
+  name?: string;
+  /** Stable account id (`sub`), when known. */
+  subject?: string;
+  /** Organisation / tenant / workspace the grant is scoped to, when named. */
+  org?: string;
+  /** Where the identity came from, so the UI can be honest about it. */
+  source: 'id_token' | 'access_token' | 'userinfo';
+}
+
 /** Runtime status the API/UI shows. Never includes secrets. */
 export interface ServerStatus {
   id: string;
@@ -104,6 +148,16 @@ export interface ServerStatus {
   toolDetails?: ToolInfo[];
   /** Last error message, if state === 'errored'. */
   error?: string;
+  /**
+   * The most recent line this server wrote, for the collapsed row.
+   *
+   * A running server's log is the one thing a list can't summarise with a pill:
+   * "ready" and "ready but complaining every second" look identical. Carrying
+   * the last line on the status the UI already polls means the list can show it
+   * without a request per row. Absent for a server that has said nothing (a
+   * remote one never does: it has no stderr).
+   */
+  lastLog?: string;
   startedAt?: string;
   restarts: number;
   /** Remote endpoint (remote runtime), surfaced for display. */
@@ -113,6 +167,18 @@ export interface ServerStatus {
    * only transiently, right after an OAuth flow is (re)started for this server.
    */
   authUrl?: string;
+  /**
+   * The account this server's stored grant belongs to (remote + OAuth only).
+   * Absent when the server needs no login, isn't signed in, or the provider
+   * gave us nothing to identify the account with.
+   */
+  account?: ServerAccount;
+  /**
+   * This server holds a live OAuth grant. Distinguishes "signed in, but the
+   * provider won't say as whom" from "no sign-in involved at all", which
+   * `account` alone cannot.
+   */
+  signedIn?: boolean;
 }
 
 /** A curated/known server users can add in one click. */
@@ -165,6 +231,22 @@ export interface RegistryEntry {
    * daemon's `/api/registry/popularity` when the catalog opens; absent until then.
    */
   popularity?: number;
+}
+
+export function mergeCatalogSearch(curated: RegistryEntry[], searched: RegistryEntry[], query: string): RegistryEntry[] {
+  const needle = query.trim().toLowerCase();
+  const matchingCurated = needle
+    ? curated.filter((entry) => [entry.name, entry.id, entry.description, entry.homepage].some((value) => value?.toLowerCase().includes(needle)))
+    : [];
+  const ids = new Set<string>();
+  const urls = new Set<string>();
+  return [...matchingCurated, ...searched].filter((entry) => {
+    const url = entry.url?.toLowerCase().replace(/\/+$/, '');
+    if (ids.has(entry.id) || (url && urls.has(url))) return false;
+    ids.add(entry.id);
+    if (url) urls.add(url);
+    return true;
+  });
 }
 
 /**
@@ -334,18 +416,43 @@ export interface AgentClient {
   createdAt: string;
   /** Last time a call was attributed to this agent's token. */
   lastUsed?: string;
+  /**
+   * The known harness this agent *is* (a {@link ConnectTarget} id), when it was
+   * created from the catalog rather than by hand.
+   *
+   * This is what makes an agent "official": its name is the product's name, so
+   * it is not the user's to rename, and it has exactly one way to be connected
+   * — the client's own. A custom agent has no target: the user named it, and
+   * picks a client when they connect it.
+   */
+  target?: string;
 }
 
 /** Request body to create an agent. */
 export interface CreateAgentRequest {
   name: string;
   servers: '*' | string[];
+  /** Known harness this agent is for (a {@link ConnectTarget} id), if any. */
+  target?: string;
 }
 
 /** Request body to update an agent (partial). */
 export interface UpdateAgentRequest {
   name?: string;
   servers?: '*' | string[];
+}
+
+/**
+ * Request body to enable or disable one server for one agent
+ * (`POST /api/clients/:id/servers/:serverId`).
+ *
+ * A single-server flip rather than a whole allow-list write: the daemon knows
+ * every configured server, so it can turn a `'*'` scope into the explicit list
+ * it implies before removing one, something a UI holding a stale server list
+ * cannot do safely.
+ */
+export interface SetAgentServerRequest {
+  allowed: boolean;
 }
 
 /** An agent plus a ready-to-paste connect snippet (returned by the clients API). */
@@ -359,31 +466,295 @@ export interface AgentClientInfo extends AgentClient {
 }
 
 /**
+ * Connecting an agent harness to the gateway.
+ *
+ * Every connection is one scoped agent token pointed at one client, so this all
+ * hangs off a connected agent rather than off the master token. A `cli` target
+ * we can wire up ourselves — the daemon runs the client's own `mcp add` command,
+ * shell-free, with an argv it built; a `config` target gets a snippet plus the
+ * path of the file to paste it into. Either way the UI also shows the exact
+ * command, quoted for the user's shell, so nothing is hidden behind the button.
+ */
+
+/** Shell whose quoting rules a copy-paste connect command should follow. */
+export type ConnectShell = 'powershell' | 'cmd' | 'bash';
+
+/**
+ * How a client gets connected: run its CLI, paste a config snippet, or add the
+ * endpoint by hand in the client's own settings (`manual` — a cloud agent or an
+ * app whose MCP list lives in a UI, not a file we can name).
+ */
+export type ConnectMethod = 'cli' | 'config' | 'manual';
+
+/** An agent harness the gateway can be connected to. Pure data. */
+export interface ConnectTarget {
+  id: string;
+  name: string;
+  method: ConnectMethod;
+  /** The executable to look for on PATH (`cli` targets). */
+  command?: string;
+  /** One-line description shown under the client's name. */
+  hint?: string;
+  homepage?: string;
+  /** How to install the CLI, shown when it isn't on PATH (`cli` targets). */
+  install?: string;
+  /** What this agent *is*, one line, for the "add an agent" picker. */
+  blurb?: string;
+  /** A caveat worth stating up front (e.g. a cloud agent that can't see localhost). */
+  note?: string;
+}
+
+/** A target plus what this machine actually has. */
+export interface ConnectTargetStatus extends ConnectTarget {
+  /** `cli`: the command is on PATH. `config`/`manual`: always true (nothing to detect). */
+  found: boolean;
+  /** Version of the detected CLI, best-effort. */
+  version?: string;
+  /** Where this client keeps its MCP config, resolved for this OS, when it is a file. */
+  configPath?: string;
+}
+
+/** The detected clients on this machine, plus the shell to preselect. */
+export interface ConnectTargetsInfo {
+  platform: string;
+  defaultShell: ConnectShell;
+  shells: ConnectShell[];
+  targets: ConnectTargetStatus[];
+}
+
+/** A target with the connect material filled in for one agent's token. */
+export interface AgentConnectTarget extends ConnectTargetStatus {
+  /** The argv the daemon runs on one click (`cli` targets). */
+  argv?: string[];
+  /** The same command quoted per shell, for users who'd rather run it themselves. */
+  commands?: Record<ConnectShell, string>;
+  /**
+   * Config-file snippet to paste. Present for `config` targets, and also for a
+   * `cli` target whose config format we know — so someone without the CLI
+   * installed still has a way in rather than a dead end.
+   */
+  snippet?: string;
+  /** The bearer token to paste into a `manual` client's settings form. */
+  token?: string;
+}
+
+/** `GET /api/clients/:id/connect` — everything needed to connect one agent. */
+export interface AgentConnectInfo extends ConnectTargetsInfo {
+  agentId: string;
+  /** The MCP entry name the client ends up with (constant, so re-connecting replaces it). */
+  entryName: string;
+  url: string;
+  /** The agent's own harness, when it has one — the only target worth showing. */
+  target?: string;
+  targets: AgentConnectTarget[];
+}
+
+/** `POST /api/clients/:id/connect` — run a `cli` target's install for the user. */
+export interface ConnectRequest {
+  /** Id of the `cli` target to connect (see ConnectTarget.id). */
+  target: string;
+}
+
+/** Outcome of a one-click connect. */
+export interface ConnectResult {
+  ok: boolean;
+  target: string;
+  /** The command that ran, as a display string. */
+  command: string;
+  /** Combined stdout/stderr from the client's CLI, trimmed. */
+  output: string;
+  /** Why it failed, when it did. */
+  error?: string;
+}
+
+/**
+ * What the manager window's close button does.
+ *
+ * `tray` keeps Hypergate resident (the window goes away, the gateway and every
+ * managed server stay up); `quit` takes the whole thing down. `ask` is the
+ * first-run state: the shell shows the choice in the window the first time it is
+ * closed and records the answer here, because guessing wrong either kills a
+ * user's running servers or leaves them running when they meant to stop.
+ */
+export type CloseAction = 'ask' | 'tray' | 'quit';
+
+/**
  * Desktop/service preferences for the local daemon. Persisted in
- * `~/.hypergate/settings.json`. `runOnStartup` is backed by an OS autostart
- * entry (Windows: an HKCU `…\Run` value launching the tray hidden);
- * `startMinimized` is read by the tray launcher to decide whether to open the
- * manager UI on launch or just sit in the notification area.
+ * `~/.hypergate/settings.json`. `runOnStartup` is backed by a real OS autostart
+ * entry (Windows: an HKCU `…\Run` value; macOS: a LaunchAgent; Linux: an XDG
+ * autostart entry); `startMinimized` is read by the tray launcher to decide
+ * whether to open the manager UI on launch or just sit in the notification area.
  */
 export interface DaemonSettings {
   /** Launch Hypergate automatically when the user signs in. */
   runOnStartup: boolean;
   /** Stay in the tray on launch instead of opening the manager UI. */
   startMinimized: boolean;
+  /** What the manager window's close button does. Defaults to `ask` (first run). */
+  closeAction: CloseAction;
+  /**
+   * A version the user pressed Skip on. It stays available in Settings and a
+   * forced check clears it: skipping means "stop offering this one", not
+   * "never update again".
+   */
+  skippedUpdate?: string;
 }
 
 /** `/api/settings` payload: the settings plus what this platform can actually do. */
 export interface SettingsInfo extends DaemonSettings {
   /** Host platform, e.g. `win32` / `darwin` / `linux`. */
   platform: string;
-  /** Whether OS autostart integration is wired up on this platform (Windows for now). */
+  /** Whether OS autostart integration works on this platform. */
   startupSupported: boolean;
+  /**
+   * How the login item is (or would be) installed: `shell` = delegated to the
+   * `hypergate` binary, `daemon` = written by the daemon itself, `none` = not
+   * available here. Surfaced so the UI can say what it will actually launch.
+   */
+  startupVia: 'shell' | 'daemon' | 'none';
+  /** The command the login item runs, when autostart is available. */
+  startupCommand?: string;
 }
 
 /** Request body to update settings (partial). */
 export interface UpdateSettingsRequest {
   runOnStartup?: boolean;
   startMinimized?: boolean;
+  closeAction?: CloseAction;
+  /** A version to stop being offered, or `null` to start being offered it again. */
+  skippedUpdate?: string | null;
+}
+
+/**
+ * Updates.
+ *
+ * How this install got here decides what an update can do to it, so the channel
+ * is detected rather than assumed. `npm` is a global npm install (the published
+ * `hypergated` package plus its platform shell binary); `installer` is one of the
+ * native packages (.exe / .pkg / .deb / .rpm / tarball); `repo` is a checkout
+ * being run in place; `unknown` is anything we cannot place, where we tell the
+ * user what we found instead of guessing at a command.
+ */
+export type InstallChannel = 'npm' | 'installer' | 'repo' | 'unknown';
+
+/** What an update would take on this install (from `updatePlan`). */
+export interface UpdatePlan {
+  /** Can Hypergate apply the update itself, in one click? */
+  canApply: boolean;
+  /** The equivalent command, always shown so the button is never a black box. */
+  command?: string;
+  /** Why it can't be applied for you, when it can't. */
+  note?: string;
+}
+
+/**
+ * `GET /api/update` (cached, never fetches) and `POST /api/update/check` (fetches).
+ *
+ * `latest` is absent until a check has found a published release: with nothing
+ * published yet that is the honest answer, not an error.
+ */
+export interface UpdateInfo extends UpdatePlan {
+  /** The running daemon's version. */
+  current: string;
+  /** Newest published version, when a check has found one. */
+  latest?: string;
+  /** True only when `latest` is a genuinely newer version than `current`. */
+  updateAvailable: boolean;
+  /** When the last successful check happened (ISO), if ever. */
+  checkedAt?: string;
+  /** Where `latest` came from. */
+  source?: 'npm' | 'github';
+  /** Release notes for `latest`, when known. */
+  releaseUrl?: string;
+  channel: InstallChannel;
+  /** Set when the last check could not reach a feed, so the UI can say why. */
+  error?: string;
+  /** A version already downloaded and sitting ready to install. */
+  staged?: string;
+  /** The version the user pressed Skip on (see `DaemonSettings.skippedUpdate`). */
+  skipped?: string;
+  /** Bytes the download will pull, when the feed says how big the payload is. */
+  downloadSize?: number;
+  /**
+   * Whether the payload can be fetched here, i.e. the feed named the packages
+   * to download. `canApply` says the channel *may* be replaced in place;
+   * this says we know *what* to replace it with.
+   */
+  canDownload?: boolean;
+}
+
+/** `POST /api/update/apply`: the update was handed to the shell, which restarts Hypergate. */
+export interface ApplyUpdateResponse {
+  ok: boolean;
+  /** The command the updater will run, echoed back for the UI's progress copy. */
+  command?: string;
+  error?: string;
+}
+
+/**
+ * One file the update is made of: the daemon package, plus the native shell
+ * build for this platform. Resolved from whichever feed answered (an npm
+ * packument's `dist`, or a GitHub release's assets).
+ */
+export interface UpdateAsset {
+  /** File name it is stored under in the staging directory. */
+  name: string;
+  url: string;
+  /** Bytes, when the feed says. */
+  size?: number;
+  /** npm's `dist.integrity` (`sha512-…`), checked after download when present. */
+  integrity?: string;
+  /** npm's `dist.shasum` (sha1 hex), the older integrity field. */
+  shasum?: string;
+}
+
+/**
+ * How far along a download or install is.
+ *
+ * `downloading` is real: bytes received out of the payload size. `installing`
+ * cannot be, because the install replaces the files the daemon is running from,
+ * so the daemon is gone for the duration — the UI shows the phase and waits for
+ * the new version to answer.
+ */
+export type UpdateStage = 'idle' | 'downloading' | 'staged' | 'installing' | 'error';
+
+export interface UpdateProgress {
+  stage: UpdateStage;
+  /** The version being downloaded or installed. */
+  version?: string;
+  received: number;
+  /** Total bytes, when every asset declared a size. */
+  total?: number;
+  /** 0..1, only when `total` is known. */
+  fraction?: number;
+  /** Which file is in flight, so a two-file download can say so. */
+  file?: string;
+  error?: string;
+  startedAt?: string;
+}
+
+/**
+ * What the last completed update did, written by the updater and read once by
+ * the UI that comes back up. Without it a successful update is indistinguishable
+ * from a crash-and-restart.
+ */
+export interface UpdateResult {
+  ok: boolean;
+  /** The version that was installed (or attempted). */
+  version: string;
+  finishedAt: string;
+  error?: string;
+}
+
+/**
+ * Answer to `POST /api/shutdown`: the daemon accepted the request and will exit
+ * once this response is on the wire. `servers` is how many managed servers it
+ * stops on the way out, so the UI can say what actually went down.
+ */
+export interface ShutdownResponse {
+  ok: boolean;
+  /** Managed servers the daemon is stopping before it exits. */
+  servers: number;
 }
 
 /** Daemon management API (HTTP, localhost) — request/response contracts. */

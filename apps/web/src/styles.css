@@ -27,8 +27,8 @@
   --shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 10px 30px -18px rgb(0 0 0 / 0.55);
 
   /* Semantic surfaces shared across themes (overridable below). */
-  --on-accent: #fff;                       /* text/icons on the gradient/accent */
-  --overlay: rgba(6, 8, 14, 0.55);         /* modal backdrop scrim */
+  --on-accent: #fff;
+  --overlay: rgba(6, 8, 14, 0.55);
   --overlay-shadow: 0 24px 64px -24px rgb(0 0 0 / 0.7);
   color-scheme: dark;
 }
@@ -70,8 +70,11 @@
 }
 
 * { box-sizing: border-box; }
+html, body, #root { height: 100%; }
 body {
   margin: 0;
+  /* The window is the app: the page itself never scrolls (see `.app`). */
+  overflow: hidden;
   font-family: Inter, -apple-system, 'Segoe UI', system-ui, sans-serif;
   background: var(--paper);
   color: var(--ink);
@@ -83,33 +86,231 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace; }
 
-.wrap { max-width: 1000px; margin: 0 auto; padding: 22px 24px 96px; }
+/* ── app shell ──────────────────────────────────────────────────────────
+   A desktop window, not a web page. The topbar and the footer are rails
+   that never move; the view between them takes whatever height is left.
+   Inside a view the headings, the gateway bar and the section titles keep
+   their natural height, and the panels give up height (proportionally to
+   how tall they are, so a one-row panel barely gives up anything) and
+   scroll their own list instead. Resizing the window therefore re-sizes
+   the lists rather than lengthening the page. */
+.app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.app-main {
+  flex: 1; min-height: 0; display: grid; grid-template-columns: 188px minmax(0, 1fr);
+  width: 100%; max-width: 1360px; margin: 0 auto;
+}
+.side-rail { min-height: 0; padding: 26px 16px 18px 24px; }
+.wrap {
+  min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 32px;
+}
+.view {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  padding: 22px 0 2px;
+  /* Last resort only: at very short window heights the panels bottom out at
+     their floor and the view scrolls so nothing becomes unreachable. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.view::-webkit-scrollbar { display: none; }
+.view.servers-view { scroll-behavior: smooth; scroll-snap-type: y proximity; }
+/* Chrome (headings, the gateway bar, section titles) keeps its natural height … */
+.view > *,
+.view > .duo > section > * { flex: none; }
+/* … panels share out what is left over and scroll inside. */
+.view > .panel,
+.view > .duo > section > .panel { flex: 0 1 auto; min-height: 64px; display: flex; flex-direction: column; }
+/* How far a panel may be squeezed: a one- or two-row panel keeps its natural
+   height (a floor would only pad it out), while a list long enough to be worth
+   scrolling holds on to a row before the view itself gives way. Keep these
+   floors mean: a floor high enough to overflow the view costs every panel the
+   height it would otherwise have shared out. */
+.view .panel:has(.list-row:nth-child(3)),
+.view .panel:has(.feed-row:nth-child(6)) { min-height: 96px; }
+/* The scrolling surface inside a panel: its list, its feed, or its empty state. */
+.view > .panel > .list,
+.view > .panel > .feed,
+.view > .panel > .empty,
+.view > .duo > section > .panel > .list { overflow-y: auto; min-height: 0; }
+/* An empty state is a pitch and a button, not a list, so it keeps its height and
+   lets the view scroll instead. There is little else on screen when one shows. */
+.view > .panel:has(> .empty) { flex: none; }
+.view > .panel > .catalog-search { flex: none; }
+.dashboard-section {
+  flex: none; min-height: max(320px, calc(100% - 72px));
+  padding: 18px 0 64px; scroll-snap-align: start; scroll-margin-top: 18px;
+}
+.dashboard-section:last-child { min-height: max(320px, calc(100% - 24px)); }
+.servers-view > .pagehead { scroll-snap-align: start; }
+.dashboard-section > .section-title:first-child { margin-top: 0; }
+.dashboard-section .ag-grid { border-top: 0; gap: 6px 22px; }
+.dashboard-section .ag-card { border-bottom: 0; border-radius: 10px; }
+.dashboard-section > .panel { min-height: 0; overflow: visible; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+.dashboard-section > .panel > .list { overflow: visible; gap: 4px; }
+.dashboard-section > .panel > .list > .list-row { border: 0; border-radius: 12px; padding: 14px 10px; }
+.dashboard-section > .panel:has(> .catalog-search) { padding: 8px; border-radius: 14px; background: var(--card); }
+/* A panel that holds no list (an add/edit form, the agent picker) scrolls whole,
+   and holds on to more height than a list would: it is only on screen because
+   it was asked for, so it is the thing being worked on. */
+.view > .panel-scroll { overflow-y: auto; min-height: 220px; }
+
+/* Two sections that sit side by side while the window is wide enough to take
+   them (analytics). Both columns are the height of the pair, so they shrink
+   together and each list keeps scrolling inside its own panel. The pair carries
+   its columns' floor (a section title, 53px with its margins, on top of the
+   panel floors above) so a column is never squeezed past what it can show and
+   spilled over the section below it. */
+.view > .duo { flex: 0 1 auto; display: flex; gap: 0 16px; min-height: 117px; }
+.view > .duo > section { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.view > .duo:has(.list-row:nth-child(3)) { min-height: 149px; }
+@media (max-width: 860px) {
+  /* Too narrow for two columns: the pair dissolves and its sections take their
+     chances in the view like every other section. */
+  .view > .duo { display: contents; }
+  .view > .duo > section { min-height: 117px; }
+  .view > .duo > section:has(.list-row:nth-child(3)) { min-height: 149px; }
+}
+
+/* Scrollbars sized for an app, not a document. */
+.view, .view .list, .view .feed, .view .empty, .view .panel-scroll, .perm-list, pre.logs, .row-detail .tool-list {
+  scrollbar-width: none;
+}
+.view::-webkit-scrollbar, .view .list::-webkit-scrollbar, .view .feed::-webkit-scrollbar,
+.view .empty::-webkit-scrollbar, .view .panel-scroll::-webkit-scrollbar,
+.perm-list::-webkit-scrollbar, pre.logs::-webkit-scrollbar, .row-detail .tool-list::-webkit-scrollbar { display: none; }
 
 /* ── header ─────────────────────────────────────────────────────────────── */
 .topbar {
-  position: sticky; top: 0; z-index: 10;
-  backdrop-filter: blur(12px);
-  background: color-mix(in srgb, var(--paper) 80%, transparent);
-  border-bottom: 1px solid var(--line);
+  flex: none; z-index: 10;
+  background: var(--paper);
 }
-.topbar-in { max-width: 1000px; margin: 0 auto; padding: 11px 24px; display: flex; align-items: center; gap: 12px; }
-.logo-tile {
-  width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
-  background: var(--grad); font-size: 14px; box-shadow: var(--shadow);
+.topbar-in { max-width: 1360px; margin: 0 auto; padding: 14px 28px; display: flex; align-items: center; gap: 12px; }
+/* The gate mark: the hero shader's ring, rebuilt for 28px. The ring is a conic
+   gradient behind an annular mask — a stroked circle can only be spun as a
+   shape, and what actually reads here is the colour travelling round it. */
+.gate-mark { position: relative; width: 28px; height: 28px; flex: none; display: block; }
+.gate-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 0turn, #6d5efc, #22d3ee 28%, #a5f3fc 44%, #22d3ee 62%, #6d5efc 100%);
+  -webkit-mask: radial-gradient(closest-side, transparent 55%, #000 64%);
+  mask: radial-gradient(closest-side, transparent 55%, #000 64%);
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--violet, #6d5efc) 60%, transparent));
+  animation: gate-spin 7s linear infinite;
+}
+/* Event horizon. Inset rather than sized so it tracks the mark if it resizes. */
+.gate-core {
+  position: absolute; inset: 31%; border-radius: 50%;
+  background: radial-gradient(circle, #ffffff 0%, #a5f3fc 46%, rgba(34, 211, 238, 0) 100%);
+  animation: gate-breathe 3.4s ease-in-out infinite;
+}
+@keyframes gate-spin { to { transform: rotate(1turn); } }
+@keyframes gate-breathe {
+  0%, 100% { opacity: 0.72; transform: scale(0.9); }
+  50%      { opacity: 1;    transform: scale(1.06); }
+}
+/* A mark that spins forever is exactly the kind of thing this setting is for. */
+@media (prefers-reduced-motion: reduce) {
+  .gate-ring, .gate-core { animation: none; }
+  .gate-core { opacity: 0.95; transform: none; }
+  .view.servers-view { scroll-behavior: auto; }
 }
 .wordmark { font-weight: 700; font-size: 15.5px; letter-spacing: -0.3px; }
 .topbar .spacer { flex: 1; }
 
 /* primary nav */
-.nav { display: inline-flex; gap: 2px; background: var(--card-2); border: 1px solid var(--line); border-radius: 11px; padding: 3px; margin-left: 6px; }
-.nav button {
-  border: none; background: none; color: var(--ink-3); font-size: 13px; font-weight: 600;
-  padding: 5px 14px; border-radius: 8px; cursor: pointer; font-family: inherit;
-  display: inline-flex; align-items: center; gap: 6px;
+.nav { display: flex; flex-direction: column; gap: 10px; }
+.nav-group { display: flex; flex-direction: column; }
+.nav > .nav-group > button {
+  width: 100%; border: 0; background: none; color: var(--ink-3); font-size: 13.5px; font-weight: 600;
+  padding: 9px 4px; border-radius: 8px; cursor: pointer; font-family: inherit;
+  display: flex; align-items: center; gap: 10px; text-align: left;
 }
-.nav button:hover { color: var(--ink-2); }
-.nav button.active { background: var(--paper); color: var(--ink); box-shadow: var(--shadow); }
-.nav .n-badge { font-size: 10.5px; font-weight: 700; color: var(--accent); }
+.nav > .nav-group > button:hover { color: var(--ink-2); }
+.nav > .nav-group > button.active { color: var(--ink); }
+.nav > .nav-group > button.active .nav-icon { color: var(--accent); }
+.nav-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.nav .n-badge { margin-left: auto; font-size: 10.5px; font-weight: 700; color: var(--accent); }
+.section-nav { display: flex; flex-direction: column; gap: 2px; padding: 3px 0 10px 28px; }
+.section-nav button {
+  position: relative; border: 0; background: none; color: var(--ink-3); padding: 5px 4px; cursor: pointer;
+  font: 500 11.5px/1.35 inherit; text-align: left; white-space: nowrap; transition: color .14s ease;
+}
+.section-nav button:hover { color: var(--ink-2); }
+.section-nav button.active { color: var(--ink); font-weight: 650; }
+.section-nav button.active::before { content: ''; position: absolute; left: -9px; top: 50%; width: 5px; height: 5px; border-radius: 50%; background: var(--grad); transform: translateY(-50%); }
+
+/* Version + the whole update flow, in the slot the version was already in.
+   Hovering the version turns it into the check; checking turns it into a
+   spinner; an answer turns it into the offer; taking the offer turns it into a
+   progress bar. One element, so the topbar never grows a second control and
+   nothing around it moves when the state changes. */
+.verbox { display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 24px; white-space: nowrap; }
+.verbox-offer {
+  flex: none; gap: 2px; padding: 3px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 10px; background: color-mix(in srgb, var(--accent) 7%, var(--paper-2));
+}
+/* The version, which is also the check button. The min-width is the width of
+   "Check for updates": the label swaps on hover, and the nav beside it must not
+   twitch when it does. */
+.verbox .vb-ver {
+  cursor: pointer; font-family: inherit; border: 1px solid var(--line);
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 112px; transition: color .12s, border-color .12s, background .12s;
+}
+.verbox .vb-ver:hover { color: var(--ink); border-color: var(--ink-3); background: var(--card-2); }
+.verbox button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+.verbox .vb-latest { opacity: .65; }
+.verbox .chip-update {
+  height: 28px; padding: 0 8px 0 3px; display: inline-flex; align-items: center; gap: 6px;
+  font-family: inherit; font-weight: 550; color: var(--ink); background: transparent;
+  border: 0; border-radius: 7px; white-space: nowrap;
+}
+.verbox .vb-update-icon {
+  width: 21px; height: 21px; display: inline-grid; place-items: center; border-radius: 6px;
+  background: var(--grad); color: #fff; font-size: 13px; font-weight: 750; line-height: 1;
+}
+.verbox .vb-update-label { color: var(--ink-2); }
+.verbox .vb-update-version { color: var(--ink); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.verbox .chip-done { cursor: pointer; font-family: inherit; font-weight: 600; color: var(--success); border-color: color-mix(in srgb, var(--success) 32%, transparent); background: color-mix(in srgb, var(--success) 13%, var(--card-2)); }
+.verbox .chip-bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 32%, transparent); background: color-mix(in srgb, var(--danger) 12%, var(--card-2)); }
+/* The offer's buttons. Small, because they sit in the chrome, not in the page. */
+.verbox .vb-act { min-height: 28px; padding: 0 9px; border-radius: 7px; font-size: 11.5px; white-space: nowrap; }
+.verbox .vb-busy { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-2); }
+.verbox .vb-progress { min-width: 236px; }
+.verbox .vb-pct { font-variant-numeric: tabular-nums; font-size: 10.5px; min-width: 34px; text-align: right; }
+
+/* The bar: real while bytes arrive, indeterminate once the install starts and
+   the thing reporting progress is the thing being replaced. */
+.vb-bar { flex: 1; display: block; height: 4px; border-radius: 999px; background: var(--line-2); overflow: hidden; min-width: 60px; }
+.vb-bar-fill { display: block; width: 100%; height: 100%; border-radius: 999px; background: var(--grad); transform-origin: left; transition: transform .25s ease-out; }
+.vb-bar.indet .vb-bar-fill { width: 38%; animation: vb-slide 1.15s ease-in-out infinite; }
+@keyframes vb-slide {
+  0% { transform: translateX(-105%); }
+  100% { transform: translateX(275%); }
+}
+.spin { animation: spin 850ms linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation-duration: 2.4s; }
+  .vb-bar.indet .vb-bar-fill { animation: none; width: 100%; opacity: .55; }
+}
+
+/* Server health + the one control that changes it. Same reveal-on-hover rule as
+   the update check: the state is always visible, the button that ends the
+   session is not, until you reach for it (and always is, on touch). */
+.healthbox { display: inline-flex; align-items: center; gap: 7px; }
+.healthbox .hb-stop {
+  opacity: 0; pointer-events: none; transition: opacity .12s;
+  white-space: nowrap; padding: 2px 8px; font-size: 11.5px;
+}
+.healthbox:hover .hb-stop, .healthbox:focus-within .hb-stop { opacity: 1; pointer-events: auto; }
+.healthbox .hb-actions { display: inline-flex; align-items: center; gap: 5px; }
+.healthbox .hb-actions .btn { padding: 2px 9px; font-size: 11.5px; }
+.healthbox .hb-err { color: var(--danger); white-space: nowrap; }
+@media (hover: none) {
+  .healthbox .hb-stop { opacity: 1; pointer-events: auto; }
+}
 
 /* theme switch */
 .themeswitch { display: inline-flex; gap: 1px; background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px; }
@@ -121,9 +322,11 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .themeswitch button.active { background: var(--paper); color: var(--ink); }
 
 /* ── page intro (compact, no box) ───────────────────────────────────────── */
-.pagehead { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 8px 0 18px; }
-.pagehead h1 { font-size: 22px; letter-spacing: -0.5px; margin: 0 0 3px; line-height: 1.2; }
-.pagehead p { margin: 0; color: var(--ink-2); font-size: 13.5px; max-width: 560px; }
+.pagehead { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, .95fr); align-items: start; gap: 40px; margin: 14px 0 34px; }
+.pagehead-copy { min-width: 0; padding-top: 2px; }
+.pagehead h1 { font-size: 24px; letter-spacing: -0.5px; margin: 0 0 5px; line-height: 1.2; }
+.pagehead p { margin: 0; color: var(--ink-2); font-size: 13.5px; max-width: 520px; }
+.pagehead-meta { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
 .grad-text { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
 /* inline summary line instead of stat boxes */
@@ -131,14 +334,15 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .summary b { color: var(--ink); font-weight: 700; }
 .summary .sep { opacity: .4; margin: 0 8px; }
 
-/* ── gateway bar (slim; the one CTA worth keeping) ──────────────────────── */
-.gwbar { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
-.gwbar-row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; flex-wrap: wrap; }
-.gwbar .glabel { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; font-size: 13px; }
+/* ── gateway controls beside the page title ─────────────────────────────── */
+.gwbar { width: 100%; display: grid; gap: 6px; }
+.gw-field { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.gwbar .glabel { width: 68px; flex: none; display: inline-flex; align-items: center; gap: 7px; color: var(--ink-2); font-weight: 700; font-size: 12px; }
 .gwbar .glabel .dot-grad { width: 8px; height: 8px; border-radius: 50%; background: var(--grad); }
-.gwbar .url { font-family: ui-monospace, monospace; font-size: 12.5px; color: var(--ink); background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 9px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gwbar .tok { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink-3); }
-.gwbar .connect-panel { border-top: 1px solid var(--line); padding: 12px 14px 14px; background: var(--paper-2); }
+.gwbar .url, .gwbar .tok { flex: 1 1 auto; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gwbar .url { color: var(--ink); }
+.gwbar .tok { color: var(--ink-3); }
+.gw-field .btn { flex: none; }
 
 /* ── generic list (servers, catalog, analytics rows) ────────────────────── */
 .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
@@ -146,6 +350,62 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .list-row { padding: 12px 15px; border-top: 1px solid var(--line); }
 .list-row:first-child { border-top: none; }
 .list-head { display: flex; align-items: center; gap: 10px; }
+
+/* ── expandable rows (servers, agents) ───────────────────────────────────────
+   A row is a summary you scan the list with and, one click later, everything
+   there is to know about that one thing. The whole head is the target; the
+   caret is the control that says so, and the only one a keyboard needs. */
+.list-row.expandable > .row-top { cursor: pointer; }
+.list-row.expandable:has(> .row-top:hover) { background: var(--card-2); }
+.list-row.expandable.open { background: var(--card-2); }
+.list-row.expandable .row-ident { flex: 1 1 auto; min-width: 0; }
+.list-row.expandable .row-actions { flex: none; cursor: default; }
+/* Counts about the row, read as one phrase: "3 tools · 1/2 agents". */
+.row-meta { display: inline-flex; align-items: center; gap: 7px; }
+.row-meta:empty { display: none; }
+.row-meta > span + span::before { content: '·'; margin-right: 7px; color: var(--ink-3); }
+/* The row's own actions come up out of the background when you are on the row:
+   an icon per row is chrome until it is the row you mean. */
+.list-row.expandable:has(> .row-top:hover) .btn-icon, .list-row.expandable.open .btn-icon { color: var(--ink-2); }
+.caret-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex: none; margin-left: -3px;
+  padding: 0; border: none; border-radius: 6px; background: none;
+  color: var(--ink-3); cursor: pointer;
+}
+.caret-btn:hover { color: var(--ink); }
+.caret-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+.row-caret { display: block; transition: transform .16s cubic-bezier(.16, 1, .3, 1); }
+.row-caret.open { transform: rotate(90deg); }
+.open > .row-top .caret-btn { color: var(--ink-2); }
+/* A note under the head (waiting for sign-in, the last error) stays in both states. */
+.row-note { margin: 7px 0 0 28px; }
+/* What the server said last: the log, at a glance, without opening anything.
+   One line, because the row is a summary: the window onto the rest is a click
+   away and this is the sentence that tells you whether you want it. */
+.row-lastlog {
+  margin: 6px 0 0 28px; font-size: 11.5px; line-height: 1.45; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.list-row.expandable:has(> .row-top:hover) .row-lastlog { color: var(--ink-2); }
+
+/* The opened half. Sections, not a second card: the row is already the card. */
+.row-detail { margin: 12px 0 2px; padding-left: 28px; animation: row-open .18s cubic-bezier(.16, 1, .3, 1); }
+@keyframes row-open { from { opacity: 0; transform: translateY(-3px); } }
+.detail-block + .detail-block, .row-detail > .connect-panel { margin-top: 13px; }
+.detail-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
+  color: var(--ink-3); margin-bottom: 6px;
+}
+.detail-label .dl-count { margin-left: 5px; letter-spacing: 0; color: var(--ink-2); }
+.detail-label .dl-note { margin-left: 8px; letter-spacing: 0; text-transform: none; font-weight: 400; }
+/* The blocks bring their own inset surfaces; inside a row they need no lead-in. */
+.row-detail .tool-list, .row-detail .perm-panel, .row-detail .perm-row, .row-detail pre.logs, .row-detail .connect-panel { margin-top: 0; }
+/* A 60-tool server would otherwise make its row taller than the window. */
+.row-detail .tool-list { max-height: 264px; overflow: auto; }
+.row-detail pre.logs { max-height: 200px; }
+.logs-note { padding: 6px 0; }
+@media (prefers-reduced-motion: reduce) { .row-detail { animation: none; } }
 
 .section-title {
   margin: 26px 0 10px; font-size: 11.5px; font-weight: 700; letter-spacing: 1.1px;
@@ -168,9 +428,22 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 }
 .btn:hover { color: var(--ink); border-color: var(--ink-3); }
 .btn:active { transform: translateY(1px); }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn-primary { background: var(--grad); color: var(--on-accent); border: none; font-weight: 600; }
 .btn-primary:hover { color: var(--on-accent); filter: brightness(1.08); }
+.btn-catalog-add {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--card-2), var(--card-2)) padding-box,
+    linear-gradient(120deg, color-mix(in srgb, var(--accent) 58%, var(--line-2)), color-mix(in srgb, var(--accent-2) 58%, var(--line-2))) border-box;
+}
+.btn-catalog-add:not(:disabled):hover {
+  background:
+    linear-gradient(color-mix(in srgb, var(--accent) 8%, var(--card-2)), color-mix(in srgb, var(--accent) 8%, var(--card-2))) padding-box,
+    var(--grad) border-box;
+}
+.btn-catalog-add.btn-primary { color: #fff; background: var(--grad) padding-box, var(--grad) border-box; }
 .btn-ghost { background: transparent; border-color: transparent; }
 .btn-ghost:hover { border-color: var(--line-2); }
 .btn.sm { padding: 3px 9px; font-size: 12px; }
@@ -187,6 +460,24 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .btn-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 32%, transparent); background: color-mix(in srgb, var(--danger) 12%, var(--card-2)); }
 .btn-danger:hover { color: var(--danger); border-color: var(--danger); background: color-mix(in srgb, var(--danger) 20%, var(--card-2)); }
 
+/* Icon-only action (restart / remove). No box: in a row that already carries a
+   state pill, chips and a switch, a bordered button is a fourth kind of thing
+   competing for the same glance. The glyph is the control, bigger than a
+   lettered button's text would be, on a hit area larger than the glyph, and
+   the semantic tint arrives on hover, where a warning belongs. A red trash can
+   in every row is an alarm nobody raised. */
+.btn-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; padding: 0; border-radius: 9px;
+  background: transparent; border-color: transparent; color: var(--ink-3);
+}
+.btn.sm.btn-icon { width: 30px; height: 30px; }
+.btn-icon svg { display: block; }
+.btn-icon:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); border-color: transparent; }
+.btn-icon.btn-warn:hover { color: var(--warning); }
+.btn-icon.btn-danger:hover { color: var(--danger); }
+.btn-icon:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+
 /* ── pills & chips ──────────────────────────────────────────────────────── */
 .pill { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; }
 .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
@@ -200,16 +491,17 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .chip-accent { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 /* Official / verified-publisher chip (green, like the ready pill) */
 .chip-official { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); border-color: color-mix(in srgb, var(--success) 32%, transparent); font-weight: 600; }
+/* Who a signed-in remote server is signed in as. Tinted like the OAuth state it
+   belongs to, so "connected" and "as whom" read as one fact. */
+.chip-account {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* Recommended star, before a catalog entry's name */
 .rec-star { color: var(--warning); font-size: 14px; line-height: 1; flex: none; }
 /* Ad-hoc CLI availability-check row sits atop the known list, subtly set apart */
 .cli-check { background: var(--paper-2); }
-
-/* ── tabs (gateway snippets) ────────────────────────────────────────────── */
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
-.tab { border: none; background: none; color: var(--ink-3); font-size: 12.5px; font-weight: 500; padding: 6px 11px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; font-family: inherit; }
-.tab:hover { color: var(--ink-2); }
-.tab.active { color: var(--ink); border-bottom-color: var(--accent); }
 
 pre.snippet, pre.logs {
   background: var(--paper); border: 1px solid var(--line); color: var(--ink-2);
@@ -221,8 +513,6 @@ pre.logs { max-height: 220px; }
 /* ── server rows ────────────────────────────────────────────────────────── */
 .server-name { font-weight: 600; font-size: 14px; letter-spacing: -0.2px; }
 .tool-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.link-btn { background: none; border: none; color: var(--ink-3); font-size: 12.5px; cursor: pointer; padding: 2px 6px; border-radius: 7px; font-family: inherit; }
-.link-btn:hover { color: var(--ink); background: var(--card-2); }
 
 /* ── tool inspector (clickable list → detail) ───────────────────────────── */
 .tool-list { margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--paper-2); }
@@ -257,12 +547,106 @@ pre.logs { max-height: 220px; }
 .catalog-search input:focus { box-shadow: none; }
 
 /* ── connected agents ───────────────────────────────────────────────────── */
-.agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--grad); flex: none; }
 .tok { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink-3); }
 .perm-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 9px; }
 .perm-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; max-height: 240px; overflow: auto; }
 .perm-check { display: flex; align-items: center; gap: 9px; padding: 5px 2px; cursor: pointer; font-size: 13px; color: var(--ink); font-weight: 400; }
 .perm-check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+
+/* Per-agent server permissions, clickable in place: the chip is both the state
+   (allowed / blocked) and the control that flips it. */
+.chip-toggle { cursor: pointer; font-family: inherit; font-weight: 500; transition: color .12s, border-color .12s, background .12s; }
+.chip-toggle.on { color: var(--success); border-color: color-mix(in srgb, var(--success) 30%, transparent); background: color-mix(in srgb, var(--success) 12%, var(--card-2)); }
+.chip-toggle.on:hover { border-color: var(--success); }
+.chip-toggle.off { color: var(--ink-3); border-color: var(--line); background: var(--paper); text-decoration: line-through; text-decoration-thickness: 1px; }
+.chip-toggle.off:hover { color: var(--ink-2); border-color: var(--ink-3); }
+.chip-toggle:disabled { opacity: .5; cursor: default; }
+
+/* The same permission from the server's side: one switch per connected agent. */
+.perm-panel { margin-top: 11px; border: 1px solid var(--line); border-radius: 11px; padding: 11px 13px; background: var(--paper-2); display: flex; flex-direction: column; gap: 4px; }
+.perm-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 0; border-top: 1px solid var(--line); }
+.perm-toggle-row:first-of-type { border-top: none; }
+
+/* The agent catalog: "which agent are you connecting?", asked before anything
+   else, because the answer is both the agent's name and its only way in. */
+.agent-picker { text-align: left; }
+.agent-picker-row { padding: 16px; background: var(--paper-2); }
+.empty .agent-picker { margin-top: 16px; }
+.empty-pick { text-align: center; }
+.empty-pick .agent-picker .row { justify-content: center; text-align: center; }
+.ag-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 22px; margin-top: 13px; border-top: 1px solid var(--line); }
+.ag-card {
+  min-width: 0; min-height: 76px; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center; gap: 11px; padding: 11px 5px; border: 0; border-bottom: 1px solid var(--line);
+  border-radius: 0; background: transparent; color: var(--ink-2); cursor: pointer; font-family: inherit; text-align: left;
+  transition: background .14s ease, color .14s ease;
+}
+.ag-card:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.ag-card:active { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.ag-card:focus-visible { outline: none; border-radius: 10px; box-shadow: inset 0 0 0 2px var(--accent); }
+.ag-card:disabled { opacity: .58; cursor: wait; }
+.ag-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ag-line { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.ag-card .ag-name { color: var(--ink); font-size: 13.5px; font-weight: 650; letter-spacing: -0.2px; }
+.ag-card .ag-blurb { line-height: 1.35; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.ag-state { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-3); font-size: 10.5px; font-weight: 650; white-space: nowrap; }
+.ag-state-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.ag-state.connected { color: var(--success); }
+.ag-state.ready, .ag-state.loading { color: var(--accent); }
+.ag-go { color: var(--ink-3); font-size: 23px; font-weight: 300; line-height: 1; transform: translateX(-3px); transition: color .14s ease, transform .14s ease; }
+.ag-card:hover .ag-go, .ag-card:focus-visible .ag-go { color: var(--ink); transform: translateX(0); }
+.ag-mark {
+  width: 42px; height: 42px; flex: none; display: grid; place-items: center; border-radius: 11px;
+  color: var(--ink-2); background: color-mix(in srgb, var(--ink) 7%, var(--card));
+}
+.ag-mark svg { width: 21px; height: 21px; overflow: visible; }
+.ag-mark svg path { fill: currentColor; }
+.ag-mark-openclaw svg path, .ag-mark-hermes svg path, .ag-mark-custom svg path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ag-glyph { font-size: 16px; font-weight: 750; letter-spacing: -0.5px; }
+.ag-mark.small { width: 24px; height: 24px; border-radius: 7px; }
+.ag-mark.small svg { width: 13px; height: 13px; }
+.ag-mark.small .ag-glyph { font-size: 10px; }
+.ag-mark-claude-code { color: #df7956; background: color-mix(in srgb, #df7956 15%, var(--card)); }
+.ag-mark-cursor { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, var(--card)); }
+.ag-mark-gemini-cli { color: #8b7cff; background: color-mix(in srgb, #8b7cff 15%, var(--card)); }
+.ag-mark-vscode { color: #32a7ed; background: color-mix(in srgb, #32a7ed 15%, var(--card)); }
+.ag-mark-kotrain { color: #fff; background: var(--grad); }
+.ag-mark-openclaw { color: #ed6b66; background: color-mix(in srgb, #ed6b66 14%, var(--card)); }
+.ag-mark-hermes { color: #d2a34f; background: color-mix(in srgb, #d2a34f 15%, var(--card)); }
+.ag-mark-mcp-json { color: var(--ink-2); background: var(--card); box-shadow: inset 0 0 0 1px var(--line-2); }
+.ag-mark-odysseus { color: #22d3ee; background: color-mix(in srgb, #22d3ee 14%, var(--card)); }
+.ag-mark-devin { color: #9b87ff; background: color-mix(in srgb, #9b87ff 16%, var(--card)); }
+.ag-added .ag-mark { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--success) 58%, transparent); }
+
+/* A custom agent's name is edited where it is shown; there is no Edit button. */
+.agent-name-input {
+  font-weight: 600; font-size: 14px; letter-spacing: -0.2px; font-family: inherit;
+  padding: 2px 7px; border-radius: 8px; min-width: 90px; max-width: 260px;
+  background: transparent; border: 1px solid transparent; color: var(--ink);
+}
+.agent-name-input:hover { border-color: var(--line-2); background: var(--card-2); }
+.agent-name-input:focus { border-color: var(--accent); background: var(--paper); outline: none; }
+.agent-name-input.bad { border-color: var(--danger); }
+
+/* Per-agent connect panel: one client's own way in (no tab strip of the rest). */
+.connect-panel { margin-top: 11px; border: 1px solid var(--line); border-radius: 11px; padding: 10px 13px 13px; background: var(--paper-2); }
+.conn-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.conn-title { font-weight: 600; font-size: 13px; letter-spacing: -0.2px; }
+.conn-pick { display: inline-flex; align-items: center; gap: 7px; }
+.conn-pick .client-select { padding: 3px 8px; font-size: 12.5px; border-radius: 8px; }
+.conn-docs { margin-left: auto; }
+/* A `manual` client asks for the endpoint and the header, so give it both. */
+.conn-fields { display: flex; flex-direction: column; gap: 7px; margin-top: 11px; }
+.conn-field { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.conn-field > .small { min-width: 82px; }
+.conn-body { margin-top: 10px; }
+.conn-body code, .conn-result code { font-family: ui-monospace, monospace; font-size: 11.5px; background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; }
+.conn-body .path { color: var(--ink); }
+.shellbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.conn-result { margin-top: 12px; border-radius: 10px; padding: 10px 12px; font-size: 12.5px; }
+.conn-result.ok { color: var(--success); background: color-mix(in srgb, var(--success) 11%, transparent); border: 1px solid color-mix(in srgb, var(--success) 28%, transparent); }
+.conn-result.err { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent); }
+.conn-result .snippet { max-height: 160px; }
 
 /* ── forms ──────────────────────────────────────────────────────────────── */
 input, select, textarea {
@@ -293,6 +677,12 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .toggle.on .knob { transform: translateX(17px); background: var(--on-accent); }
 .toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
 .toggle:disabled { opacity: .5; cursor: default; }
+/* Inline in a list-row action bar, next to `.btn.sm` — smaller, and green when
+   on, because green already means "up" everywhere else in this UI. */
+.toggle.sm { width: 34px; height: 19px; }
+.toggle.sm .knob { width: 14px; height: 14px; }
+.toggle.sm.on .knob { transform: translateX(15px); }
+.toggle-go.on { background: var(--success); }
 
 /* ── empty state ────────────────────────────────────────────────────────── */
 .empty { text-align: center; padding: 40px 22px; color: var(--ink-3); }
@@ -300,7 +690,8 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .empty b { color: var(--ink-2); }
 
 /* ── banner ─────────────────────────────────────────────────────────────── */
-.banner { border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--card)); border-radius: 12px; padding: 12px 14px; margin: 4px 0 16px; }
+/* Sits between the topbar and the view, so it owns the gap above it only. */
+.banner { flex: none; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--card)); border-radius: 12px; padding: 12px 14px; margin: 14px 0 0; }
 
 /* ── analytics ──────────────────────────────────────────────────────────── */
 .metricbar { display: flex; flex-wrap: wrap; background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
@@ -313,7 +704,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 
 /* sparkline */
 .spark { display: flex; align-items: flex-end; gap: 3px; height: 46px; margin-top: 4px; }
-.spark-bar { flex: 1; min-width: 3px; background: var(--grad); border-radius: 3px 3px 0 0; opacity: .85; min-height: 2px; transition: height .2s; }
+.spark-bar { flex: 1; min-width: 3px; background: var(--grad); border-radius: 3px 3px 0 0; opacity: .85; min-height: 2px; }
 .spark-bar.empty { background: var(--line-2); opacity: .5; }
 .spark-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 13px 16px 10px; margin-top: 10px; }
 .spark-axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-3); margin-top: 6px; }
@@ -346,47 +737,54 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .callout .t { font-weight: 700; font-size: 13.5px; margin-bottom: 2px; }
 .callout .d { color: var(--ink-2); font-size: 12.5px; }
 
-/* footer */
-.footer { margin-top: 52px; padding-top: 16px; border-top: 1px solid var(--line); display: flex; gap: 14px; align-items: center; color: var(--ink-3); font-size: 12.5px; }
+/* footer: the bottom rail of the shell, always in view */
+.footer { flex: none; padding: 11px 0; border-top: 1px solid var(--line); display: flex; gap: 14px; align-items: center; color: var(--ink-3); font-size: 12.5px; }
+.footer .heart { color: #e2555f; vertical-align: -1px; margin: 0 1px; }
+/* The mark carries the link on its own: quiet at rest, inked and lifted on hover. */
+.foot-gh { display: inline-flex; align-items: center; color: var(--ink-3); transition: color .15s ease, transform .15s ease; }
+.foot-gh:hover { color: var(--ink); text-decoration: none; transform: translateY(-1px); }
 
-@media (max-width: 640px) {
-  .pagehead h1 { font-size: 19px; }
-  .feed-row { grid-template-columns: 1fr; gap: 3px; }
-  .feed-row .f-meta { justify-content: flex-start; }
-  .nav button { padding: 5px 10px; }
+/* ── modal (the first-run "what should closing do?" question) ───────────── */
+.modal-veil, .modal-overlay {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px;
+  background: var(--overlay); backdrop-filter: blur(3px); overflow-y: auto;
+  animation: veil-in .14s ease-out;
 }
-
-/* ── modal dialogs (add-server / catalog / agent editor) ────────────────── */
-.modal-overlay {
-  position: fixed; inset: 0; z-index: 50;
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 7vh 16px 16px;
-  background: var(--overlay); backdrop-filter: blur(3px);
-  overflow-y: auto;
-  animation: overlay-in .12s ease-out;
-}
+@keyframes veil-in { from { opacity: 0 } to { opacity: 1 } }
 .modal {
-  width: 100%; background: var(--card); border: 1px solid var(--line-2);
-  border-radius: 16px; box-shadow: var(--overlay-shadow); outline: none;
-  padding: 18px; animation: modal-in .14s cubic-bezier(.2, .8, .3, 1);
+  width: 100%; background: var(--paper); border: 1px solid var(--line-2); outline: none;
+  border-radius: 16px; padding: 22px 24px 18px; box-shadow: var(--overlay-shadow);
+  animation: modal-in .16s cubic-bezier(.2, .8, .3, 1);
 }
 .modal:focus-visible { box-shadow: var(--overlay-shadow), 0 0 0 3px var(--ring); }
+@keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.985) } to { opacity: 1; transform: none } }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.modal-title { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; margin: 0; }
+.modal-mark { font-size: 26px; line-height: 1; }
+.modal-title { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; letter-spacing: -0.3px; margin: 0; }
 .modal-x { flex: none; }
-.modal-desc { margin: 6px 0 0; }
+.modal-desc { margin: 8px 0 0; }
 .modal-body { margin-top: 12px; }
 .modal-body .panel { box-shadow: none; }
 .catalog-scroll { max-height: min(52vh, 460px); overflow-y: auto; }
-@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes modal-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+.modal-choices { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
+.choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  border: 1px solid var(--line-2); background: var(--card-2); border-radius: 12px;
+  padding: 12px 14px; cursor: pointer; font-family: inherit; color: var(--ink-2);
+  transition: border-color .12s, background .12s, transform .06s;
+}
+.choice:hover { border-color: var(--accent); background: var(--card); }
+.choice:active { transform: translateY(1px); }
+.choice:disabled { opacity: .6; cursor: default; }
+.choice .choice-t { font-weight: 600; font-size: 13.5px; color: var(--ink); }
+.choice-warn:hover { border-color: var(--danger); }
 @media (prefers-reduced-motion: reduce) {
-  .modal-overlay, .modal { animation: none; }
+  .modal-veil, .modal-overlay, .modal { animation: none; }
 }
 
 /* ── toasts (shared async feedback) ─────────────────────────────────────── */
 .toast-viewport {
-  position: fixed; z-index: 60; right: 16px; bottom: 16px;
+  position: fixed; z-index: 70; right: 16px; bottom: 16px;
   display: flex; flex-direction: column; gap: 8px; max-width: min(360px, calc(100vw - 32px));
   pointer-events: none;
 }
@@ -403,6 +801,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
   font-size: 12px; padding: 2px 4px; border-radius: 6px; font-family: inherit;
 }
 .toast .toast-close:hover { color: var(--ink); background: var(--card-2); }
+.toast .toast-close:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
 .toast-success { border-left-color: var(--success); }
 .toast-success .toast-dot { background: var(--success); }
 .toast-error { border-left-color: var(--danger); }
@@ -451,3 +850,50 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .empty .cat.is-loading { animation: cat-pulse 1.3s ease-in-out infinite; }
 @keyframes cat-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .empty .cat.is-loading { animation: none; } }
+
+/* A short window spends its height on lists, not on prose: the page intro
+   loses its paragraph and the section titles their generous margins, so the
+   panels keep something worth scrolling. */
+@media (max-height: 660px) {
+  .view { padding-top: 12px; }
+  .pagehead { margin: 0 0 12px; }
+  .pagehead p, .callout { display: none; }
+  .section-title { margin: 15px 0 8px; }
+  .empty { padding: 22px; }
+}
+
+@media (max-width: 900px) {
+  .app-main { grid-template-columns: 164px minmax(0, 1fr); }
+  .side-rail { padding-left: 18px; }
+  .wrap { padding: 0 24px; }
+  .pagehead { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .pagehead-copy { padding-top: 0; }
+  .pagehead-meta { align-items: stretch; }
+  .pagehead-meta .summary { align-self: flex-end; }
+  .ag-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .verbox-offer .vb-update-label { display: none; }
+}
+
+@media (max-width: 760px) {
+  .app-main { grid-template-columns: 68px minmax(0, 1fr); }
+  .side-rail { padding: 22px 10px; }
+  .nav > .nav-group > button { justify-content: center; padding: 10px; }
+  .nav-label, .nav .n-badge, .section-nav { display: none; }
+  .wrap { padding: 0 18px; }
+  .verbox-offer .vb-secondary { display: none; }
+}
+
+@media (max-width: 640px) {
+  .pagehead h1 { font-size: 19px; }
+  .gw-field { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+  .gwbar .glabel { grid-column: 1 / -1; width: auto; }
+  .feed-row { grid-template-columns: 1fr; gap: 3px; }
+  .feed-row .f-meta { justify-content: flex-start; }
+  .ag-grid { grid-template-columns: 1fr; }
+  /* The topbar keeps only product and utility controls while the primary nav
+     stays in its compact rail, so it can remain one line at the shell minimum. */
+  .topbar-in { padding: 10px 16px; }
+  .wordmark { display: none; }
+  .verbox-offer .vb-tertiary { display: none; }
+  .footer > span { display: none; }
+}

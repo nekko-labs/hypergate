@@ -3,10 +3,11 @@
 // then speaks MCP over plain fetch: initialize → tools/list → tools/call.
 // Also asserts the bearer token is enforced (401 without it).
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { shutdown, removeDir } from './smoke-lib.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 7877;
@@ -22,6 +23,7 @@ daemon.stderr.on('data', (d) => process.stderr.write(d));
 const fail = (msg) => {
   console.error(`✗ ${msg}`);
   daemon.kill();
+  removeDir(DIR);
   process.exit(1);
 };
 const ok = (msg) => console.log(`✓ ${msg}`);
@@ -99,7 +101,6 @@ const text = call.body?.result?.content?.[0]?.text;
 if (text !== 'nyaa') fail(`tools/call wrong result: ${JSON.stringify(call.body)}`);
 ok('tools/call routed to the echo server and returned "nyaa"');
 
-daemon.kill();
-rmSync(DIR, { recursive: true, force: true });
+await shutdown(daemon, DIR);
 console.log('\nHTTP gateway smoke: all green');
 process.exit(0);
