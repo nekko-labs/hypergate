@@ -86,9 +86,23 @@ const fmtRel = (iso?: string): string => {
 };
 const fmtClock = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour12: false });
 
-/** Open a provider's OAuth sign-in in a popup window (falls back to a new tab). */
+/**
+ * Open a provider's OAuth sign-in, wherever this page happens to be running.
+ *
+ * In the desktop app there is no second window to open one into, so the shell
+ * takes the URL over IPC and launches the user's real browser — which is where
+ * they are already signed in to GitHub, and where they can see the address
+ * they are handing a password to. In a browser tab a popup is the polite
+ * option: the manager stays visible behind it and closing the popup is
+ * obviously the way back.
+ */
 const openAuth = (authUrl?: string): void => {
   if (!authUrl) return;
+  const ipc = (window as HypergateWindow).ipc;
+  if (ipc) {
+    ipc.postMessage(`open:${authUrl}`);
+    return;
+  }
   window.open(authUrl, 'hypergate-oauth', 'width=600,height=760,noopener');
 };
 
