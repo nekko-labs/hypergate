@@ -30,7 +30,13 @@ jobs:
           - { name: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
           - { name: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
           - { name: darwin-arm64, runner: macos-latest, target: aarch64-apple-darwin }
-          - { name: darwin-x64, runner: macos-13, target: x86_64-apple-darwin }
+          # Cross-compiled from the arm64 runner rather than built on an Intel
+          # one: `macos-13` is retired, and a job asking for it is not slow, it
+          # never starts — the 2026-07-27 build sat queued for the full 24-hour
+          # timeout and was cancelled, which is why no release had ever been cut
+          # even before the publish step was fixed. Apple's SDK carries both
+          # slices, so `--target x86_64-apple-darwin` needs nothing extra.
+          - { name: darwin-x64, runner: macos-latest, target: x86_64-apple-darwin }
           - { name: linux-x64, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { name: linux-arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
     steps:
