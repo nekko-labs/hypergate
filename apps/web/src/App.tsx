@@ -390,7 +390,7 @@ export function App() {
       <CloseChoice />
       <header className="topbar">
         <div className="topbar-in">
-          <div className="logo-tile"><img src="/favicon.svg" alt="" width="22" height="22" /></div>
+          <GateMark />
           <span className="wordmark">Hypergate</span>
           <VersionBox version={version} u={updater} onOpenUpdates={() => setView('settings')} />
           <nav className="nav">
@@ -589,6 +589,28 @@ function Heart() {
     >
       <path d="M12 21.35 10.55 20.03C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35Z" />
     </svg>
+  );
+}
+
+/**
+ * The gate, turning.
+ *
+ * The marketing site draws this as a liquid ring in a WebGL shader; a 28px
+ * mark in a topbar cannot justify a GL context, so it is rebuilt out of the
+ * two things that actually carry the look — a conic sweep from violet through
+ * cyan to ice, and an event horizon breathing in the middle. The ring is a
+ * masked conic gradient rather than an SVG stroke because only a conic can
+ * rotate the *colour* around the circle instead of rotating a shape.
+ *
+ * Both animations stop under `prefers-reduced-motion` (styles.css), which is
+ * the same courtesy the site's shader extends by freezing its clock.
+ */
+function GateMark() {
+  return (
+    <span className="gate-mark" aria-hidden="true">
+      <span className="gate-ring" />
+      <span className="gate-core" />
+    </span>
   );
 }
 
@@ -937,6 +959,7 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
   const [logs, setLogs] = useState<string[] | null>(null);
   const [showTools, setShowTools] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
+  const [armed, setArmed] = useState(false);
   const allowedBy = agents.filter((a) => a.servers === '*' || a.servers.includes(s.id)).length;
   const busy = s.state === 'starting';
   const running = s.state === 'ready' || s.state === 'starting';
@@ -949,10 +972,6 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
   const signIn = async () => {
     const st = await api.authorize(s.id).catch(() => null);
     openAuth(st?.authUrl);
-    onChange();
-  };
-  const disconnect = async () => {
-    await api.disconnect(s.id).catch(() => {});
     onChange();
   };
   const toggleLogs = async () => {
@@ -995,7 +1014,6 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
           {!authorizing && (
             <IconBtn icon="restart" label={`Restart ${s.name}`} tone="warn" onClick={() => void act('restart')} disabled={busy} />
           )}
-          {isRemote && !authorizing && <button className="btn sm btn-warn" onClick={() => void disconnect()} title="Sign out and drop stored tokens">Disconnect</button>}
           {agents.length > 0 && (
             <button
               className={`btn sm ${showAgents ? '' : allowedBy === 0 ? 'btn-warn' : ''}`}
@@ -1006,7 +1024,23 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
             </button>
           )}
           <button className="btn sm" onClick={() => void toggleLogs()}>Logs</button>
-          <IconBtn icon="trash" label={`Remove ${s.name}`} tone="danger" onClick={() => { void api.remove(s.id).then(onChange); }} />
+          {/* Remove takes the sign-in with it, so the trash asks once. Two
+              clicks in the same spot, not a modal — the cost of a misclick is
+              a re-authorization, not a lost afternoon. */}
+          {armed ? (
+            <>
+              <button
+                className="btn sm btn-danger"
+                onClick={() => { void api.remove(s.id).then(onChange); }}
+                title={`Remove ${s.name}${isRemote ? ' and delete its stored sign-in' : ''}`}
+              >
+                {isRemote ? 'Remove & sign out' : 'Remove'}
+              </button>
+              <button className="btn sm" onClick={() => setArmed(false)}>Cancel</button>
+            </>
+          ) : (
+            <IconBtn icon="trash" label={`Remove ${s.name}`} tone="danger" onClick={() => setArmed(true)} />
+          )}
         </div>
       </div>
       {authorizing && (
@@ -1050,8 +1084,12 @@ function AccountChip({ s }: { s: ServerStatus }) {
   const detail = [a.email, a.name, a.org && `org: ${a.org}`, a.subject && `id: ${a.subject}`]
     .filter(Boolean)
     .join(' · ');
+  // `source` is required by the type, but it arrives as parsed JSON from a
+  // keychain entry an older build may have written — and a missing field here
+  // used to take down the entire page, not just this chip.
+  const from = a.source ? ` (from the ${a.source.replace('_', ' ')})` : '';
   return (
-    <span className="chip chip-account" title={`Signed in as ${a.label}${detail ? ` — ${detail}` : ''} (from the ${a.source.replace('_', ' ')})`}>
+    <span className="chip chip-account" title={`Signed in as ${a.label}${detail ? ` — ${detail}` : ''}${from}`}>
       👤 {shown}
       {a.org && <span className="muted"> · {a.org}</span>}
     </span>
@@ -2469,10 +2507,19 @@ function AgentEditor({
  * servers need one — `uvx` for Python servers, `docker` for the Docker runtime,
  * `flyctl` for Fly, `kotrain` for the Kotrain server) plus a quick search to
  * check any command. Local + shell-free; nothing leaves the machine.
+ *
+ * This lists what you *have*. It used to list all 22 tools we know of and mark
+ * the absent ones "missing", which read as a fault report — as though the app
+ * wanted them and something had gone wrong — when the honest meaning was only
+ * "we have heard of this and you have not installed it". Nobody needs a
+ * standing list of software they don't own. The ones you don't have are a
+ * suggestion, so they live behind "Install a tool", where they are an offer
+ * rather than a complaint.
  */
 function CliSection() {
   const [clis, setClis] = useState<CliStatus[] | null>(null);
   const [open, setOpen] = useState(false);
+  const [offering, setOffering] = useState(false);
   const [q, setQ] = useState('');
   const [check, setCheck] = useState<CliCheckResult | null>(null);
   const [checking, setChecking] = useState(false);
@@ -2500,13 +2547,16 @@ function CliSection() {
     return () => clearTimeout(t);
   }, [q]);
 
-  const found = clis?.filter((c) => c.found).length ?? 0;
-  const total = clis?.length ?? 0;
+  const installed = (clis ?? []).filter((c) => c.found);
+  const available = (clis ?? []).filter((c) => !c.found);
   const query = q.trim().toLowerCase();
-  const filtered = (clis ?? []).filter(
-    (c) => !query || c.name.toLowerCase().includes(query) || c.command.toLowerCase().includes(query) || c.description.toLowerCase().includes(query),
-  );
-  const knownExact = (clis ?? []).some((c) => c.command.toLowerCase() === query);
+  const matches = (c: CliStatus): boolean =>
+    !query || c.name.toLowerCase().includes(query) || c.command.toLowerCase().includes(query) || c.description.toLowerCase().includes(query);
+  const filtered = installed.filter(matches);
+  // The ad-hoc probe answers for anything on PATH, so it only earns a row when
+  // the list above can't already answer: an exact command we detected is that
+  // row, not a second one saying the same thing.
+  const knownExact = installed.some((c) => c.command.toLowerCase() === query);
   const showAdhoc = query.length > 0 && !knownExact;
 
   return (
@@ -2514,7 +2564,7 @@ function CliSection() {
       <div className="section-title">
         Command-line tools
         <span className="rt">
-          {clis && <span className="small muted" style={{ marginRight: 8 }}>{found}/{total} detected</span>}
+          {clis && <span className="small muted" style={{ marginRight: 8 }}>{installed.length} detected</span>}
           <button className="btn sm" onClick={() => setOpen((v) => !v)}>{open ? 'Hide' : 'Show'}</button>
         </span>
       </div>
@@ -2533,31 +2583,93 @@ function CliSection() {
               <>
                 {showAdhoc && <CliCheckRow name={q.trim()} result={check} checking={checking} />}
                 {filtered.map((c) => <CliRow key={c.id} c={c} />)}
-                {filtered.length === 0 && !showAdhoc && <div className="list-row small muted">No known tools match “{q.trim()}”.</div>}
+                {filtered.length === 0 && !showAdhoc && (
+                  <div className="list-row small muted">
+                    {query ? <>Nothing installed matches “{q.trim()}”.</> : <>No known tools detected on your PATH yet.</>}
+                  </div>
+                )}
               </>
             )}
           </div>
+          {available.length > 0 && (
+            <div className="row between wrap-gap" style={{ marginTop: 12 }}>
+              <span className="small muted">
+                {available.length} more {available.length === 1 ? 'tool' : 'tools'} Hypergate knows how to use.
+              </span>
+              <button className="btn sm" onClick={() => setOffering((v) => !v)}>
+                {offering ? 'Close' : 'Install a tool'}
+              </button>
+            </div>
+          )}
+          {offering && (
+            <div className="list" style={{ marginTop: 10 }}>
+              {available.map((c) => <CliInstallRow key={c.id} c={c} />)}
+            </div>
+          )}
         </div>
       )}
     </>
   );
 }
 
+/**
+ * One tool you could install. `install` in the catalog is written three ways —
+ * a shell command, a URL, or a sentence like "Comes with Node.js" — because
+ * that is genuinely how these tools are obtained, so each gets the control it
+ * deserves: a command you can copy, a link you can open, or plain words.
+ */
+function CliInstallRow({ c }: { c: CliStatus }) {
+  const [copied, copy] = useCopy();
+  const hint = c.install?.trim();
+  const isUrl = !!hint && /^https?:\/\//i.test(hint);
+  // A command, as opposed to prose: no spaces around a sentence, and it starts
+  // with something you'd actually type.
+  const isCommand = !!hint && !isUrl && /^(npm|npx|pnpm|yarn|bun|brew|pipx|pip|winget|choco|scoop|apt|cargo|go) /i.test(hint);
+
+  return (
+    <div className="list-row">
+      <div className="row between wrap-gap">
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div className="row wrap-gap" style={{ gap: 8 }}>
+            <span className="server-name">{c.name}</span>
+            <span className="chip mono">{c.command}</span>
+            <span className="chip">{c.category}</span>
+          </div>
+          {c.description && <div className="small muted" style={{ marginTop: 3 }}>{c.description}</div>}
+          {hint && !isUrl && !isCommand && <div className="small muted" style={{ marginTop: 3 }}>{hint}</div>}
+        </div>
+        <div className="row">
+          {isCommand && (
+            <>
+              <code className="chip mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>{hint}</code>
+              <button className="btn sm" onClick={() => copy(`cli-${c.id}`, hint)}>
+                {copied === `cli-${c.id}` ? 'Copied!' : 'Copy'}
+              </button>
+            </>
+          )}
+          {isUrl && <a className="btn sm" href={hint} target="_blank" rel="noreferrer">Get it ↗</a>}
+          {c.homepage && !isUrl && <a className="small muted" href={c.homepage} target="_blank" rel="noreferrer">docs</a>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** One tool you have. Only ever rendered for a detected CLI. */
 function CliRow({ c }: { c: CliStatus }) {
   return (
     <div className="list-row">
       <div className="row between wrap-gap">
         <div style={{ flex: 1, minWidth: 200 }}>
           <div className="row wrap-gap" style={{ gap: 8 }}>
-            <span className={`pill ${c.found ? 'pill-ready' : 'pill-stopped'}`}><span className="dot" />{c.found ? 'installed' : 'missing'}</span>
+            <span className="pill pill-ready"><span className="dot" />installed</span>
             <span className="server-name">{c.name}</span>
             <span className="chip mono">{c.command}</span>
             <span className="chip">{c.category}</span>
-            {c.found && c.version && <span className="small muted">v{c.version}</span>}
+            {c.version && <span className="small muted">v{c.version}</span>}
           </div>
           {c.description && <div className="small muted" style={{ marginTop: 3 }}>{c.description}</div>}
-          {c.found && c.path && <div className="small muted mono" style={{ marginTop: 3, wordBreak: 'break-all' }}>{c.path}</div>}
-          {!c.found && c.install && <div className="small" style={{ marginTop: 3, color: 'var(--warning)' }}>Install: {c.install}</div>}
+          {c.path && <div className="small muted mono" style={{ marginTop: 3, wordBreak: 'break-all' }}>{c.path}</div>}
         </div>
         {c.homepage && (
           <div className="row"><a className="small muted" href={c.homepage} target="_blank" rel="noreferrer">docs</a></div>
