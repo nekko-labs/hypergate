@@ -1,0 +1,51 @@
+[package]
+name = "hypergate-shell"
+version = "0.17.0"
+edition = "2024"
+description = "Hypergate desktop shell: tray agent, CLI, and sandbox launcher"
+license = "MIT"
+
+# One binary called `hypergate`: the tray agent, the CLI, and the sandbox-exec
+# shim share a process so there is a single thing to install, sign and put on PATH.
+[[bin]]
+name = "hypergate"
+path = "src/main.rs"
+
+[profile.release]
+# A resident tray agent should be small and start instantly.
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[dependencies]
+clap = { version = "4.6.4", features = ["derive"] }
+dirs = "6.0.0"
+keyring = "4.1.5"
+muda = "0.19.3"
+open = "5.4.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tao = "0.35.3"
+tray-icon = "0.24.1"
+ureq = { version = "3.3.0", features = ["json"] }
+wry = "0.55.1"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.189"
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security",
+    # Shell links (Start Menu / desktop shortcuts) and the console the tray closes.
+    "Win32_System_Com",
+    "Win32_System_Console",
+    "Win32_UI_Shell",
+    # The HKCU Run key, read and written in-process (never via reg.exe, which
+    # flashes a console window when spawned from the console-less tray).
+    "Win32_System_Registry",
+] }

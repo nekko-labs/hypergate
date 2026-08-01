@@ -4,4 +4,8 @@ export * from './gateway.js';
 export * from './registry.js';
 export * from './registry-search.js';
 export * from './clis.js';
+export * from './connect.js';
+export * from './agents.js';
 export * from './oauth.js';
+export * from './account.js';
+export * from './update.js';

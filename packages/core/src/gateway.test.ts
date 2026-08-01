@@ -78,6 +78,29 @@ describe('Supervisor + Gateway (end-to-end via process runtime)', () => {
     await client.close();
   });
 
+  it('seats a stopped server in the roster with register(), and can still start it', async () => {
+    // A server the user stopped must survive a daemon restart: the daemon seats
+    // disabled configs so /api/servers (which is list()) still shows them.
+    const disabled: ManagedServerConfig = { ...echoConfig, id: 'echo-off', name: 'Echo (off)', enabled: false };
+    const seated = supervisor.register(disabled);
+    expect(seated.state).toBe('stopped');
+    expect(seated.tools).toEqual([]);
+    expect(supervisor.list().map((s) => s.id)).toContain('echo-off');
+    // Nothing was spawned, so the gateway has no client for it yet.
+    expect(supervisor.client('echo-off')).toBeUndefined();
+
+    // Registering twice must not reset a running server or duplicate the entry.
+    const before = supervisor.list().length;
+    supervisor.register(disabled);
+    expect(supervisor.list().length).toBe(before);
+
+    const started = await supervisor.start({ ...disabled, enabled: true });
+    expect(started.state).toBe('ready');
+    expect(started.tools).toContain('echo');
+    await supervisor.stop('echo-off');
+    expect(supervisor.status('echo-off')?.state).toBe('stopped');
+  });
+
   it('does not leak the host env into the sandboxed child', async () => {
     // The supervisor only forwards an allow-listed base env + declared vars,
     // so an ambient secret set in this process must not reach the child.

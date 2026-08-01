@@ -5,3 +5,6 @@ dist/
 .env.local
 .DS_Store
 data/
+dist-npm/
+dist-standalone/
+dist-installers/

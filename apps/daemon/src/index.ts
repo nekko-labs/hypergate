@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, renameSync, rmSync } from 'node:fs';
 import { join, extname, dirname, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -9,7 +9,45 @@ import { promisify } from 'node:util';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
-import { Supervisor, createGateway, REGISTRY, searchRegistry, KNOWN_CLIS, HypergateOAuthProvider, type OAuthStore } from '@hypergate/core';
+import {
+  Supervisor,
+  createGateway,
+  REGISTRY,
+  searchRegistry,
+  KNOWN_CLIS,
+  CONNECT_TARGETS,
+  ENTRY_NAME,
+  agentConnectTarget,
+  configPathFor,
+  connectArgv,
+  connectTarget,
+  defaultShellFor,
+  formatCommand,
+  shellsFor,
+  HypergateOAuthProvider,
+  setServerAllowed,
+  assetsFromGithub,
+  assetsFromNpm,
+  detectInstallChannel,
+  isNewerVersion,
+  latestFromGithub,
+  latestFromNpm,
+  releaseUrlFor,
+  shellPackageFor,
+  updatePlan,
+  GITHUB_FEED_URL,
+  NPM_FEED_URL,
+  accountFromTokens,
+  accountFromUserinfo,
+  authorizationServersOf,
+  decodeJwtClaims,
+  userinfoEndpoint,
+  type OAuthStore,
+} from '@hypergate/core';
+import { openStore } from './store.ts';
+import * as shell from './shell.ts';
+import * as autostart from './autostart.ts';
+import { Updater } from './updater.ts';
 import type {
   ManagedServerConfig,
   GatewayInfo,
@@ -24,6 +62,17 @@ import type {
   PopularityMap,
   CliStatus,
   CliCheckResult,
+  ConnectTargetStatus,
+  ConnectTargetsInfo,
+  AgentConnectInfo,
+  ConnectResult,
+  SetAgentServerRequest,
+  ShutdownResponse,
+  UpdateInfo,
+  UpdateAsset,
+  ApplyUpdateResponse,
+  InstallChannel,
+  ServerAccount,
 } from '@hypergate/shared';
 
 /**
@@ -37,7 +86,11 @@ import type {
  * Local-first: binds to localhost. The daemon makes outbound calls only for
  * user-initiated actions — registry search, and connecting to the remote MCP
  * servers a user adds (plus their OAuth login/token exchange). OAuth tokens are
- * stored locally under ~/.hypergate/oauth/ and nothing phones home on its own.
+ * stored in the OS keychain (via the `hypergate` shell binary), falling back to
+ * ~/.hypergate/oauth/ where no keychain exists. Nothing phones home on its own.
+ *
+ * Durable state (usage history, server logs) lives in SQLite at
+ * ~/.hypergate/hypergate.db — see store.ts.
  */
 const DATA_DIR = process.env.HYPERGATE_DIR ?? join(homedir(), '.hypergate');
 // One-time migration from the pre-rename data dir (NekkoMCP → Hypergate, v0.7.0):
@@ -58,9 +111,21 @@ const ANALYTICS_PATH = join(DATA_DIR, 'analytics.json');
 const CLIENTS_PATH = join(DATA_DIR, 'clients.json');
 const SETTINGS_PATH = join(DATA_DIR, 'settings.json');
 const POPULARITY_PATH = join(DATA_DIR, 'popularity.json');
+const UPDATE_PATH = join(DATA_DIR, 'update.json');
 const OAUTH_DIR = join(DATA_DIR, 'oauth');
-const PORT = Number(process.env.PORT ?? 7777);
-const VERSION = '0.7.0';
+// `HYPERGATE_PORT` first, because that's what the shell and CLI read: a user who
+// sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
+// otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
+const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
+const VERSION = '0.17.0';
+/**
+ * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
+ * It deliberately does NOT open the durable store: the rolled-up aggregates are
+ * written as absolute values, so a short-lived process starting from an empty
+ * in-memory state would stomp the resident daemon's counts with lower ones.
+ * (Its calls therefore go unrecorded, exactly as before this store existed.)
+ */
+const STDIO_MODE = process.argv.includes('--stdio');
 /** How long a fetched popularity snapshot stays fresh before we refetch (24h). */
 const POPULARITY_TTL = 24 * 60 * 60 * 1000;
 /** Where OAuth providers send the user back after the browser login. */
@@ -79,13 +144,17 @@ const saveConfig = (servers: ManagedServerConfig[]): void => {
   writeFileSync(CONFIG_PATH, JSON.stringify(servers, null, 2));
 };
 
-/** Analytics survive restarts: hydrate from disk on boot, persist (debounced) on each call. */
-const loadAnalytics = (): AnalyticsSnapshot | undefined => {
+/**
+ * The durable store (SQLite/WAL). Undefined in `--stdio` mode (see STDIO_MODE)
+ * and on a runtime without `node:sqlite`, in which case analytics fall back to
+ * the legacy JSON snapshot below and stay in-memory-only.
+ */
+const store = STDIO_MODE ? undefined : openStore(DATA_DIR);
+
+/** Legacy fallback: the pre-SQLite snapshot, used only when the store is unavailable. */
+const loadLegacyAnalytics = (): AnalyticsSnapshot | undefined => {
   try {
-    if (existsSync(ANALYTICS_PATH)) {
-      const raw = readFileSync(ANALYTICS_PATH, 'utf8');
-      if (raw.length < 16_000_000) return JSON.parse(raw) as AnalyticsSnapshot;
-    }
+    if (existsSync(ANALYTICS_PATH)) return JSON.parse(readFileSync(ANALYTICS_PATH, 'utf8')) as AnalyticsSnapshot;
   } catch {
     /* ignore a corrupt snapshot */
   }
@@ -118,8 +187,20 @@ const debounce = (fn: () => void, ms: number): (() => void) => {
   };
 };
 
-/** The gateway bearer token: generated once, persisted, never logged. */
+/**
+ * The gateway bearer token: generated once, persisted, never logged.
+ *
+ * Resolution order is keychain → legacy plaintext file → mint a new one. When
+ * the shell launches the daemon it passes the token in `HYPERGATE_TOKEN` (which
+ * wins over all of this), so in the normal desktop flow the token lives only in
+ * the OS keychain and no plaintext copy is ever written. A bare daemon with no
+ * shell keeps the old file behaviour.
+ */
 const loadToken = (): string => {
+  if (shell.hasShell()) {
+    const fromKeychain = shell.secretGet('gateway-token')?.trim();
+    if (fromKeychain) return fromKeychain;
+  }
   try {
     if (existsSync(TOKEN_PATH)) {
       const t = readFileSync(TOKEN_PATH, 'utf8').trim();
@@ -129,32 +210,22 @@ const loadToken = (): string => {
     /* regenerate below */
   }
   const t = randomBytes(24).toString('hex');
+  // Prefer the keychain for a freshly minted token; only fall back to a file.
+  if (shell.hasShell() && shell.secretSet('gateway-token', t)) return t;
   mkdirSync(DATA_DIR, { recursive: true });
   writeFileSync(TOKEN_PATH, t);
   return t;
 };
 
 // ── desktop / service settings (autostart + tray behavior) ─────────────────
-// Preferences live in ~/.hypergate/settings.json. `runOnStartup` is backed by
-// an OS autostart entry so it reflects reality even when changed outside the
-// app; `startMinimized` is read by the tray launcher (scripts/hypergate-tray.ps1)
-// to decide whether to open the manager UI on launch. Windows-only for now
-// (matches the tray); a no-op that reports `startupSupported: false` elsewhere.
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const TRAY_PS1 = join(REPO_ROOT, 'scripts', 'hypergate-tray.ps1');
-const RUN_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-const RUN_VALUE = 'Hypergate';
-const STARTUP_SUPPORTED = process.platform === 'win32';
+// Preferences live in ~/.hypergate/settings.json. `runOnStartup` is backed by a
+// real OS login item, so it reflects reality even when changed outside the app.
+//
+// The login item goes through the `hypergate` shell binary when it is installed
+// (it owns the idiomatic per-user mechanism on each platform), and is written by
+// the daemon itself when it isn't — see autostart.ts. Either way the toggle
+// works, which it previously did not on an install with no shell.
 const pexecFile = promisify(execFile);
-
-/** Run a PowerShell script via -EncodedCommand (base64/UTF-16LE) to sidestep all shell quoting. */
-const runPowerShell = async (script: string): Promise<string> => {
-  const encoded = Buffer.from(script, 'utf16le').toString('base64');
-  const { stdout } = await pexecFile('powershell', [
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded,
-  ]);
-  return stdout.trim();
-};
 
 // ── popularity ranking (lazy, cached; never fetched on boot) ────────────────
 // The catalog sorts the recommended set first, then the rest by popularity. We
@@ -232,6 +303,150 @@ const computePopularity = async (): Promise<PopularityMap> => {
   return scores;
 };
 
+// ── updates (lazy, cached; never fetched on boot) ───────────────────────────
+// "Is there a newer Hypergate, and can we install it for you." The check is an
+// outbound call, so it follows the popularity rule exactly: only when the UI asks
+// (i.e. when someone opens the manager, or presses Check for updates), cached to
+// disk for a day, soft-failing to whatever we last knew. `GET /api/update` never
+// touches the network at all.
+//
+// Feeds, in order: the npm registry (the package `npm install -g` would fetch),
+// then the GitHub release. Either URL can be pointed elsewhere for a test or an
+// internal mirror.
+const UPDATE_TTL = 24 * 60 * 60 * 1000;
+const NPM_URL = process.env.HYPERGATE_UPDATE_NPM_URL ?? NPM_FEED_URL;
+const GITHUB_URL = process.env.HYPERGATE_UPDATE_GITHUB_URL ?? GITHUB_FEED_URL;
+
+interface UpdateCache {
+  checkedAt: string;
+  latest?: string;
+  source?: 'npm' | 'github';
+  releaseUrl?: string;
+  error?: string;
+  /** The files an update would pull, resolved during the check that found it. */
+  assets?: UpdateAsset[];
+}
+
+/** The one download job, watched by the UI and handed to the shell to install. */
+const updater = new Updater(DATA_DIR);
+const loadUpdateCache = (): UpdateCache | undefined => {
+  try {
+    if (existsSync(UPDATE_PATH)) return JSON.parse(readFileSync(UPDATE_PATH, 'utf8')) as UpdateCache;
+  } catch {
+    /* ignore a corrupt cache */
+  }
+  return undefined;
+};
+const saveUpdateCache = (c: UpdateCache): void => {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(UPDATE_PATH, JSON.stringify(c));
+  } catch {
+    /* best-effort; an update check is not critical */
+  }
+};
+
+/**
+ * How this copy was installed, which decides whether we may replace it.
+ * `process.execPath` matters as much as the module path: in the compiled
+ * standalone daemon there is no module path on disk at all.
+ */
+const installChannel = (): InstallChannel =>
+  detectInstallChannel({
+    daemonPath: fileURLToPath(import.meta.url),
+    execPath: process.execPath,
+    platform: process.platform,
+  });
+
+const fetchJson = async (url: string, signal: AbortSignal): Promise<unknown | undefined> => {
+  const res = await fetch(url, { signal, headers: { 'User-Agent': 'hypergate', Accept: 'application/json' } });
+  if (!res.ok) return undefined;
+  return (await res.json()) as unknown;
+};
+
+/** The platform shell package for this machine, on whichever registry we use. */
+const SHELL_PKG = shellPackageFor(process.platform, process.arch);
+const SHELL_NPM_URL = NPM_URL.replace(/\/[^/]+$/, `/${SHELL_PKG}`);
+
+/**
+ * Ask the feeds what the newest published version is, and (only when that turns
+ * out to be an upgrade) what downloading it would involve. Never throws.
+ *
+ * Resolving the assets is deferred behind `isNewerVersion` on purpose: the
+ * common answer is "you're current", and that must stay a single lookup.
+ */
+const fetchLatest = async (): Promise<UpdateCache> => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  const checkedAt = new Date().toISOString();
+  try {
+    const npmDoc = await fetchJson(NPM_URL, ctrl.signal).catch(() => undefined);
+    const fromNpm = latestFromNpm(npmDoc);
+    if (fromNpm) {
+      const assets = isNewerVersion(fromNpm, VERSION)
+        ? assetsFromNpm(
+            { main: npmDoc, shell: await fetchJson(SHELL_NPM_URL, ctrl.signal).catch(() => undefined) },
+            fromNpm,
+            process.platform,
+            process.arch,
+          )
+        : [];
+      return { checkedAt, latest: fromNpm, source: 'npm', releaseUrl: releaseUrlFor(fromNpm), assets };
+    }
+    const ghDoc = await fetchJson(GITHUB_URL, ctrl.signal).catch(() => undefined);
+    const fromGithub = latestFromGithub(ghDoc);
+    if (fromGithub) {
+      // The release carries the same npm tarballs as attachments, which is what
+      // lets an update install before anything is published to npm at all.
+      const assets = isNewerVersion(fromGithub, VERSION) ? assetsFromGithub(ghDoc, fromGithub, process.platform, process.arch) : [];
+      return { checkedAt, latest: fromGithub, source: 'github', releaseUrl: releaseUrlFor(fromGithub), assets };
+    }
+    // Neither feed has a release. Today that is simply the truth (nothing is
+    // published yet), so it is recorded as a successful check with no version
+    // rather than an error the UI has to apologise for.
+    return { checkedAt };
+  } catch (e) {
+    return { checkedAt, error: e instanceof Error ? e.message : 'could not reach the update feed' };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** The `/api/update` payload: what we know, plus what updating would take here. */
+const updateInfo = (cache = loadUpdateCache()): UpdateInfo => {
+  const channel = installChannel();
+  const latest = cache?.latest;
+  const available = isNewerVersion(latest, VERSION);
+  // The plan names the version it would install, so it only mentions one when
+  // that version is actually an upgrade.
+  const plan = updatePlan(channel, available ? latest : undefined, process.platform);
+  const assets = available ? (cache?.assets ?? []) : [];
+  const staged = updater.staged();
+  const size = assets.reduce((n, a) => n + (a.size ?? 0), 0);
+  return {
+    current: VERSION,
+    latest,
+    updateAvailable: available,
+    checkedAt: cache?.checkedAt,
+    source: cache?.source,
+    releaseUrl: cache?.releaseUrl,
+    channel,
+    error: cache?.error,
+    // A staged copy of a version we have since outgrown is not an offer.
+    staged: staged && isNewerVersion(staged.version, VERSION) ? staged.version : undefined,
+    skipped: loadSettings().skippedUpdate,
+    canDownload: assets.length > 0,
+    downloadSize: size || undefined,
+    ...plan,
+  };
+};
+
+/** The assets for a version, from the cache the last check filled in. */
+const updateAssets = (version: string): UpdateAsset[] => {
+  const cache = loadUpdateCache();
+  return cache?.latest === version ? (cache.assets ?? []) : [];
+};
+
 // ── CLI detection (local, shell-free; powers the CLIs section) ──────────────
 // "Is this command-line tool installed, where, and what version." Pure PATH
 // scanning + a bounded `--version` probe — no network, no shell (so an ad-hoc
@@ -299,7 +514,49 @@ const detectClisCached = async (): Promise<CliStatus[]> => {
   return result;
 };
 
-const defaultSettings = (): DaemonSettings => ({ runOnStartup: false, startMinimized: true });
+// ── connecting agent harnesses (the "Connected agents" one-click) ───────────
+// Same PATH scan as above, over the clients we know how to wire up. For a `cli`
+// client we can run its own `mcp add` for the user; the argv comes from the
+// table in @hypergate/core, never from the request, and is spawned shell-free.
+const connectTargetStatus = async (): Promise<ConnectTargetStatus[]> =>
+  Promise.all(
+    CONNECT_TARGETS.map(async (t): Promise<ConnectTargetStatus> => {
+      const configPath = configPathFor(t.id, process.platform);
+      if (t.method !== 'cli' || !t.command) return { ...t, found: true, configPath };
+      const path = resolveOnPath(t.command);
+      if (!path) return { ...t, found: false, configPath };
+      return { ...t, found: true, configPath, version: await probeVersion(path, ['--version']) };
+    }),
+  );
+let connectMemo: { at: number; result: ConnectTargetStatus[] } | undefined;
+const connectTargetsCached = async (): Promise<ConnectTargetStatus[]> => {
+  if (connectMemo && Date.now() - connectMemo.at < 10_000) return connectMemo.result;
+  const result = await connectTargetStatus();
+  connectMemo = { at: Date.now(), result };
+  return result;
+};
+/**
+ * Run a client's CLI. Bounded, shell-free, output captured for the UI so a
+ * failure shows the client's own message instead of a bare "didn't work".
+ * `.cmd`/`.bat` shims go through cmd.exe — Node refuses to spawn them directly.
+ */
+const runClientCli = async (file: string, args: string[]): Promise<{ ok: boolean; output: string }> => {
+  const opts = { timeout: 30_000, windowsHide: true, maxBuffer: 1_000_000 } as const;
+  const low = file.toLowerCase();
+  const viaCmd = WIN && (low.endsWith('.cmd') || low.endsWith('.bat'));
+  try {
+    const { stdout, stderr } = viaCmd
+      ? await pexecFile(process.env.ComSpec ?? 'cmd.exe', ['/c', file, ...args], opts)
+      : await pexecFile(file, args, opts);
+    return { ok: true, output: `${stdout}\n${stderr}`.trim() };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    const out = `${err.stdout ?? ''}\n${err.stderr ?? ''}`.trim();
+    return { ok: false, output: out || err.message || 'the command failed' };
+  }
+};
+
+const defaultSettings = (): DaemonSettings => ({ runOnStartup: false, startMinimized: true, closeAction: 'ask' });
 const loadSettings = (): DaemonSettings => {
   try {
     if (existsSync(SETTINGS_PATH)) {
@@ -316,48 +573,36 @@ const saveSettings = (s: DaemonSettings): void => {
   writeFileSync(SETTINGS_PATH, JSON.stringify(s, null, 2));
 };
 
-/** Is the Windows autostart entry present? (Always false on unsupported platforms.) */
-const isStartupEnabled = async (): Promise<boolean> => {
-  if (!STARTUP_SUPPORTED) return false;
-  try {
-    const out = await runPowerShell(
-      `$p = Get-ItemProperty -Path '${RUN_KEY}' -Name '${RUN_VALUE}' -ErrorAction SilentlyContinue; if ($p) { 'yes' } else { 'no' }`,
-    );
-    return out.endsWith('yes');
-  } catch {
-    return false;
-  }
-};
-/** Add/remove the autostart entry that launches the tray hidden at login. */
-const setStartupEnabled = async (on: boolean): Promise<void> => {
-  if (!STARTUP_SUPPORTED) return;
-  if (on) {
-    const launch = `powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${TRAY_PS1}"`;
-    await runPowerShell(
-      `New-Item -Path '${RUN_KEY}' -Force | Out-Null; Set-ItemProperty -Path '${RUN_KEY}' -Name '${RUN_VALUE}' -Value '${launch.replace(/'/g, "''")}'`,
-    );
-  } else {
-    await runPowerShell(`Remove-ItemProperty -Path '${RUN_KEY}' -Name '${RUN_VALUE}' -ErrorAction SilentlyContinue`);
-  }
-};
-
 /** The `/api/settings` payload: persisted prefs reconciled with the real OS autostart state. */
-const settingsInfo = async (): Promise<SettingsInfo> => {
+const settingsInfo = (): SettingsInfo => {
   const s = loadSettings();
+  const startupVia = autostart.via();
   return {
-    runOnStartup: await isStartupEnabled(),
+    // Read from the OS, not from the file: the login item can be removed in
+    // Task Manager or System Settings, and the toggle must not lie about it.
+    runOnStartup: startupVia === 'none' ? false : autostart.enabled(),
     startMinimized: s.startMinimized,
+    closeAction: s.closeAction,
     platform: process.platform,
-    startupSupported: STARTUP_SUPPORTED,
+    startupSupported: startupVia !== 'none',
+    startupVia,
+    startupCommand: autostart.startupCommand(),
+    skippedUpdate: s.skippedUpdate,
   };
 };
 
 // ── OAuth for remote servers ───────────────────────────────────────────────
 // Each remote server's OAuth state (registered client, tokens, PKCE verifier,
-// CSRF state) lives in one JSON file under ~/.hypergate/oauth/. The provider is
-// store-backed (see @hypergate/core) so the daemon owns all the filesystem IO.
+// CSRF state) is one blob. It now lives in the OS keychain under `oauth:<id>`,
+// via the `hypergate` shell binary, instead of plaintext JSON under
+// ~/.hypergate/oauth/. The whole blob is one keychain entry, cached in memory,
+// so a boot costs one subprocess per remote server rather than one per key.
+//
+// Without the shell (or without a working keychain, e.g. headless Linux with no
+// Secret Service) this falls back to exactly the previous file behaviour, so
+// nothing breaks; the grants are simply no better protected than before.
 const oauthFile = (id: string): string => join(OAUTH_DIR, `${encodeURIComponent(id)}.json`);
-const readOAuth = (id: string): Record<string, string> => {
+const readOAuthFile = (id: string): Record<string, string> => {
   try {
     if (existsSync(oauthFile(id))) return JSON.parse(readFileSync(oauthFile(id), 'utf8')) as Record<string, string>;
   } catch {
@@ -365,16 +610,68 @@ const readOAuth = (id: string): Record<string, string> => {
   }
   return {};
 };
-const fileStore = (id: string): OAuthStore => ({
+const writeOAuthFile = (id: string, blob: Record<string, string>): void => {
+  mkdirSync(OAUTH_DIR, { recursive: true });
+  writeFileSync(oauthFile(id), JSON.stringify(blob, null, 2));
+};
+
+/** Keychain entry name for one server's grant blob. */
+const oauthKey = (id: string): string => `oauth:${id}`;
+/** In-memory cache, so repeated `load()` calls don't each spawn a subprocess. */
+const oauthCache = new Map<string, Record<string, string>>();
+/** Whether the keychain is usable. Probed once; false means stay on files. */
+let keychainOk: boolean | undefined;
+const useKeychain = (): boolean => {
+  if (keychainOk === undefined) keychainOk = shell.hasShell() && shell.keychainAvailable();
+  return keychainOk;
+};
+
+const readOAuth = (id: string): Record<string, string> => {
+  const cached = oauthCache.get(id);
+  if (cached) return cached;
+
+  let blob: Record<string, string> = {};
+  if (useKeychain()) {
+    const raw = shell.secretGet(oauthKey(id));
+    if (raw) {
+      try {
+        blob = JSON.parse(raw) as Record<string, string>;
+      } catch {
+        /* corrupt entry → start fresh */
+      }
+    } else {
+      // One-time migration: adopt an existing plaintext grant, then delete it.
+      const fromFile = readOAuthFile(id);
+      if (Object.keys(fromFile).length > 0 && shell.secretSet(oauthKey(id), JSON.stringify(fromFile))) {
+        blob = fromFile;
+        try {
+          rmSync(oauthFile(id));
+          process.stderr.write(`[oauth] moved ${id} grant into the OS keychain\n`);
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+  } else {
+    blob = readOAuthFile(id);
+  }
+  oauthCache.set(id, blob);
+  return blob;
+};
+
+const writeOAuth = (id: string, blob: Record<string, string>): void => {
+  oauthCache.set(id, blob);
+  if (useKeychain() && shell.secretSet(oauthKey(id), JSON.stringify(blob))) return;
+  writeOAuthFile(id, blob);
+};
+
+const secretStore = (id: string): OAuthStore => ({
   load: (key) => readOAuth(id)[key],
-  save: (key, value) => {
-    mkdirSync(OAUTH_DIR, { recursive: true });
-    writeFileSync(oauthFile(id), JSON.stringify({ ...readOAuth(id), [key]: value }, null, 2));
-  },
+  save: (key, value) => writeOAuth(id, { ...readOAuth(id), [key]: value }),
   remove: (key) => {
-    const o = readOAuth(id);
-    delete o[key];
-    if (existsSync(oauthFile(id))) writeFileSync(oauthFile(id), JSON.stringify(o, null, 2));
+    const blob = { ...readOAuth(id) };
+    delete blob[key];
+    writeOAuth(id, blob);
   },
 });
 /**
@@ -390,7 +687,7 @@ const envKey = (prefix: string, id: string): string | undefined =>
 const resolvedClientId = (cfg: ManagedServerConfig): string | undefined => cfg.clientId || envKey('HYPERGATE_CLIENTID', cfg.id);
 const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined => cfg.clientSecret || envKey('HYPERGATE_CLIENTSECRET', cfg.id);
 const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
-  new HypergateOAuthProvider(fileStore(cfg.id), {
+  new HypergateOAuthProvider(secretStore(cfg.id), {
     redirectUrl: OAUTH_REDIRECT,
     clientName: 'Hypergate',
     clientId: resolvedClientId(cfg),
@@ -401,20 +698,229 @@ const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
 const needsAuth = (cfg: ManagedServerConfig): boolean =>
   cfg.runtime === 'remote' && cfg.auth !== 'none' && !makeProvider(cfg).hasTokens();
 
-// Set to a debounced disk writer in HTTP mode; stays a no-op in stdio mode so a
-// transient `--stdio` spawn never clobbers the resident daemon's analytics file.
+// ── which account each remote server is signed in as ────────────────────────
+// "Connected" is only half the answer: a remote server is reached with one
+// person's grant, and which one decides what the agent can see. The cheap route
+// is the grant itself (an id_token, or a JWT access token) and costs nothing.
+// When the token is opaque — which plenty of providers issue — we ask the
+// provider once, following the same discovery chain the MCP OAuth flow already
+// used, and cache the answer in the grant blob so it is one call per sign-in,
+// not one per poll.
+const K_ACCOUNT = 'account';
+
+/** Servers we've already asked the network about, so a miss costs one attempt. */
+const accountProbed = new Set<string>();
+
+/**
+ * Derived accounts, memoised against the access token they came from.
+ *
+ * `/api/servers` is polled every couple of seconds and would otherwise decode a
+ * JWT per remote server every time. Keying on the token means a refresh or a
+ * re-login invalidates the memo for free; a successful `userinfo` probe has to
+ * clear it explicitly, since it lands after the "nothing found" answer was
+ * already memoised.
+ */
+const accountMemo = new Map<string, { token: string; account?: ServerAccount }>();
+
+const cachedAccount = (id: string): ServerAccount | undefined => {
+  const raw = secretStore(id).load(K_ACCOUNT);
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as ServerAccount;
+  } catch {
+    return undefined;
+  }
+};
+const cacheAccount = (id: string, account: ServerAccount): void => {
+  secretStore(id).save(K_ACCOUNT, JSON.stringify(account));
+};
+const forgetAccount = (id: string): void => {
+  secretStore(id).remove(K_ACCOUNT);
+  accountProbed.delete(id);
+  accountMemo.delete(id);
+};
+
+/**
+ * Drop a server's grant entirely: tokens, the registered client, the PKCE
+ * verifier, the CSRF state, the cached account — the whole entry, not its keys
+ * one at a time.
+ *
+ * Removing a server used to leave this behind. The config row went, the
+ * process stopped, and the grant stayed in the keychain forever, so re-adding
+ * the same server came back already signed in as whoever set it up last, and
+ * "remove" quietly meant "hide". A grant is the most sensitive thing we hold
+ * on a user's behalf; when they remove the server they are done with it.
+ */
+const deleteOAuth = (id: string): void => {
+  oauthCache.delete(id);
+  accountProbed.delete(id);
+  accountMemo.delete(id);
+  if (useKeychain()) shell.secretDelete(oauthKey(id));
+  try {
+    rmSync(oauthFile(id));
+  } catch {
+    /* absent is the outcome we wanted anyway */
+  }
+};
+
+/** The identity the stored grant states about itself. No network, always cheap. */
+const accountFromGrant = (cfg: ManagedServerConfig): ServerAccount | undefined => {
+  if (cfg.runtime !== 'remote' || cfg.auth === 'none') return undefined;
+  const tokens = makeProvider(cfg).tokens();
+  if (!tokens?.access_token) return undefined;
+  const memo = accountMemo.get(cfg.id);
+  if (memo?.token === tokens.access_token) return memo.account;
+  const account = accountFromTokens(tokens) ?? cachedAccount(cfg.id);
+  accountMemo.set(cfg.id, { token: tokens.access_token, account });
+  return account;
+};
+
+const fetchJsonOr = async (url: string, signal: AbortSignal, token?: string): Promise<unknown | undefined> => {
+  try {
+    const res = await fetch(url, {
+      signal,
+      headers: {
+        'User-Agent': 'hypergate',
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!res.ok) return undefined;
+    return (await res.json()) as unknown;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Ask the provider who this grant belongs to, once.
+ *
+ * The chain is the MCP/OAuth one: the resource server's RFC 9728 document names
+ * its authorization server, whose metadata names a `userinfo` endpoint, which
+ * the access token can read. Every hop is optional and every failure is silent —
+ * a server with no identity endpoint is a normal server, not a broken one.
+ *
+ * The token only ever goes to the issuer's own origin (enforced in
+ * `userinfoEndpoint`), because the metadata that named the endpoint was fetched
+ * without authentication.
+ */
+const probeAccount = async (cfg: ManagedServerConfig): Promise<ServerAccount | undefined> => {
+  const provider = makeProvider(cfg);
+  const token = provider.tokens()?.access_token;
+  if (!token || !cfg.url) return undefined;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const resource = new URL(cfg.url);
+    // The issuer as the grant itself names it beats discovery when present.
+    const fromIss = (() => {
+      const iss = decodeJwtClaims(token)?.iss;
+      return typeof iss === 'string' ? iss : undefined;
+    })();
+    const prm = await fetchJsonOr(new URL('/.well-known/oauth-protected-resource', resource.origin).toString(), ctrl.signal);
+    const issuers = [fromIss, ...authorizationServersOf(prm), resource.origin].filter(
+      (v): v is string => typeof v === 'string' && v.length > 0,
+    );
+
+    for (const issuer of [...new Set(issuers)]) {
+      let origin: string;
+      try {
+        origin = new URL(issuer).origin;
+      } catch {
+        continue;
+      }
+      for (const wellKnown of ['/.well-known/openid-configuration', '/.well-known/oauth-authorization-server']) {
+        const metadata = await fetchJsonOr(new URL(wellKnown, origin).toString(), ctrl.signal);
+        const endpoint = userinfoEndpoint(metadata, origin);
+        if (!endpoint) continue;
+        const account = accountFromUserinfo(await fetchJsonOr(endpoint, ctrl.signal, token));
+        if (account) return account;
+      }
+    }
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * Decorate the supervisor's statuses with the account behind each remote server.
+ *
+ * Synchronous by design: `/api/servers` is polled every couple of seconds, and
+ * must never wait on a provider. A server whose grant says nothing gets one
+ * background probe, and the answer shows up on the next poll.
+ */
+const withAccounts = (list: ServerStatus[]): ServerStatus[] =>
+  list.map((s) => {
+    const cfg = servers.find((c) => c.id === s.id);
+    if (!cfg || cfg.runtime !== 'remote' || cfg.auth === 'none') return s;
+    const signedIn = makeProvider(cfg).hasTokens();
+    if (!signedIn) return s;
+    const account = accountFromGrant(cfg);
+    if (account) return { ...s, signedIn, account };
+    // Nothing free to show. Ask the provider once, in the background.
+    if (!accountProbed.has(cfg.id)) {
+      accountProbed.add(cfg.id);
+      void probeAccount(cfg)
+        .then((found) => {
+          if (!found) return;
+          cacheAccount(cfg.id, found);
+          // The memo already recorded "nothing found" for this token; drop it,
+          // or the answer we just fetched would never be read back.
+          accountMemo.delete(cfg.id);
+        })
+        .catch(() => {
+          /* an unidentifiable account is not an error */
+        });
+    }
+    return { ...s, signedIn };
+  });
+
+/**
+ * Fill in the last log line for a server whose in-memory ring is empty.
+ *
+ * The supervisor's ring starts empty on every boot, but the durable rows do
+ * not, so without this the collapsed rows would go blank after a restart and
+ * fill back in one server at a time as each said something. One indexed
+ * `LIMIT 1` per server per poll, and only for the servers that need it.
+ */
+const withLastLog = (list: ServerStatus[]): ServerStatus[] =>
+  list.map((s) => (s.lastLog || !store ? s : { ...s, lastLog: store.logs(s.id, 1)[0]?.line }));
+
+// Set to a debounced store writer in HTTP mode; stays a no-op in stdio mode so a
+// transient `--stdio` spawn never clobbers the resident daemon's aggregates.
 let persistAnalytics: () => void = () => {};
 const supervisor = new Supervisor({
-  onUsage: () => persistAnalytics(),
+  onUsage: (e) => {
+    // Queue the raw call for durable history (O(1)); the SQLite write is batched
+    // into the debounced flush so the gateway's hot path never touches the disk.
+    store?.appendEvent(e);
+    persistAnalytics();
+  },
+  onLog: (serverId, line) => {
+    store?.appendLog(serverId, line);
+    persistAnalytics();
+  },
   // The supervisor connects remote servers with this provider (attaches + refreshes
   // the bearer token); the interactive login is driven by the daemon's OAuth routes.
   authProviderFor: (cfg) => (cfg.runtime === 'remote' && cfg.auth !== 'none' ? makeProvider(cfg) : undefined),
+  // Enforces per-server resource limits by spawning through `hypergate
+  // sandbox-exec`. Undefined when the shell is not installed, in which case a
+  // limited server starts unsandboxed and says so in its logs.
+  launcher: shell.shellBin(),
 });
 let servers = loadConfig();
 
 const startEnabled = async (): Promise<void> => {
   for (const s of servers) {
-    if (!s.enabled) continue;
+    // A server the user stopped stays in the roster, just not running: `list()`
+    // is what /api/servers serves, so skipping it entirely made a stopped server
+    // disappear from the UI on the next boot while still living in servers.json.
+    if (!s.enabled) {
+      supervisor.register(s);
+      continue;
+    }
     // Don't attempt a token-less remote connect — just surface it as authorizing.
     if (needsAuth(s)) supervisor.markAuthorizing(s);
     else await supervisor.start(s);
@@ -456,31 +962,53 @@ const runOAuth = async (
 
 /** Find the managed remote server whose live OAuth flow used this CSRF `state`. */
 const serverForState = (state: string): ManagedServerConfig | undefined =>
-  servers.find((s) => s.runtime === 'remote' && fileStore(s.id).load('state') === state);
+  servers.find((s) => s.runtime === 'remote' && secretStore(s.id).load('state') === state);
 
 // ── stdio gateway mode (the single aggregated endpoint for harnesses) ──────
-if (process.argv.includes('--stdio')) {
-  await startEnabled();
-  const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller: 'stdio (local)' });
-  await gateway.connect(new StdioServerTransport());
-  // stdout is the MCP channel now; logs must go to stderr only.
-  process.stderr.write(`hypergated gateway (stdio) up — ${supervisor.ids().length} server(s)\n`);
+//
+// Boot is sequenced with promises rather than top-level `await` throughout this
+// file. Not style: a CommonJS module cannot express top-level await, and the
+// standalone build (Node SEA, see scripts/build-standalone.mjs) requires its
+// entry point to be CommonJS. The ordering guarantees are identical.
+if (STDIO_MODE) {
+  void startEnabled().then(async () => {
+    const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller: 'stdio (local)' });
+    await gateway.connect(new StdioServerTransport());
+    // stdout is the MCP channel now; logs must go to stderr only.
+    process.stderr.write(`hypergated gateway (stdio) up — ${supervisor.ids().length} server(s)\n`);
+  });
 } else {
   // ── HTTP: management API + web UI + streamable-HTTP MCP gateway ──────────
-  // Restore analytics before serving so the first response already reflects history.
-  supervisor.hydrate(loadAnalytics());
-  const flushAnalytics = (): void => {
+  // Restore analytics before serving so the first response already reflects
+  // history. The tail matches the supervisor's in-memory event ring (EVENT_CAP);
+  // everything older stays queryable via /api/usage/events.
+  const EVENT_TAIL = 2000;
+  supervisor.hydrate(store ? store.loadSnapshot(EVENT_TAIL) : loadLegacyAnalytics());
+
+  /** Persist queued events/logs + the rolled-up aggregates. Cheap and idempotent. */
+  const flushStore = (): void => {
     try {
+      if (store) {
+        store.flush(supervisor.snapshot());
+        return;
+      }
       mkdirSync(DATA_DIR, { recursive: true });
       writeFileSync(ANALYTICS_PATH, JSON.stringify(supervisor.snapshot()));
     } catch {
       /* best-effort; analytics are non-critical */
     }
   };
-  persistAnalytics = debounce(flushAnalytics, 2000);
+  persistAnalytics = debounce(flushStore, 2000);
+
+  // Age off old rows on boot, then once a day for a long-running daemon.
+  store?.prune();
+  const pruneTimer = setInterval(() => store?.prune(), 24 * 60 * 60 * 1000);
+  pruneTimer.unref();
+
   for (const sig of ['SIGINT', 'SIGTERM', 'beforeExit'] as const) {
     process.once(sig, () => {
-      flushAnalytics();
+      flushStore();
+      store?.close();
       if (sig !== 'beforeExit') process.exit(0);
     });
   }
@@ -489,7 +1017,10 @@ if (process.argv.includes('--stdio')) {
   let clients = loadClients();
   const persistClients = debounce(() => saveClients(clients), 1500);
 
-  await startEnabled();
+  // Started now, awaited just before we listen: managed servers come up while
+  // the rest of the server is being wired, and nothing is served until they are
+  // up, which is the ordering the top-level `await` used to give.
+  const booted = startEnabled();
   const TOKEN = process.env.HYPERGATE_TOKEN ?? loadToken();
   const json = (res: ServerResponse, status: number, body: unknown): void => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -538,6 +1069,24 @@ if (process.argv.includes('--stdio')) {
     const agent = clients.find((c) => tokenEq(got, c.token));
     return agent ? { kind: 'agent', agent } : null;
   };
+  /**
+   * Is this request safe to treat as coming from *our own* UI (or from something
+   * that isn't a browser at all)?
+   *
+   * The management API answers on localhost with `Access-Control-Allow-Origin: *`,
+   * so any web page the user visits can fire a cross-origin POST at it. It can't
+   * read the reply, but the side effect still happens, which is exactly why the
+   * CLI's `stop` used a pid file instead of a shutdown route. Browsers always
+   * send `Origin` on a cross-origin request, so requiring it to be our own origin
+   * (or absent, i.e. curl / the CLI / a native client) closes that door. A `null`
+   * origin (a sandboxed iframe or a `file://` page) is not our UI, so it is refused.
+   */
+  const selfOrigin = (req: IncomingMessage): boolean => {
+    const origin = req.headers.origin;
+    if (origin === undefined) return true;
+    return origin === `http://localhost:${PORT}` || origin === `http://127.0.0.1:${PORT}`;
+  };
+
   // Best-effort caller identity for analytics. The gateway is stateless (a fresh
   // instance per request), so we can't correlate by session; instead we capture
   // the MCP handshake's clientInfo on `initialize` and attribute the tool calls
@@ -581,10 +1130,32 @@ if (process.argv.includes('--stdio')) {
     return {
       ...a,
       url,
-      connectCommand: `claude mcp add -t http hypergate-${a.id} ${url} -H "Authorization: Bearer ${a.token}"`,
+      connectCommand: formatCommand(
+        'claude',
+        connectArgv('claude-code', { url, token: a.token })!.add,
+        defaultShellFor(process.platform),
+      ),
       clientSnippet: {
-        mcpServers: { [`hypergate-${a.id}`]: { type: 'http', url, headers: { Authorization: `Bearer ${a.token}` } } },
+        mcpServers: { [ENTRY_NAME]: { type: 'http', url, headers: { Authorization: `Bearer ${a.token}` } } },
       },
+    };
+  };
+
+  /** Everything the UI needs to connect one agent to any client we know about. */
+  const agentConnectInfo = async (a: AgentClient): Promise<AgentConnectInfo> => {
+    const url = `http://localhost:${PORT}/mcp`;
+    const ctx = { url, token: a.token };
+    return {
+      agentId: a.id,
+      entryName: ENTRY_NAME,
+      url,
+      // Echoed so the UI knows which of the targets below is *this* agent's,
+      // and can show that one alone instead of a strip of every other client.
+      target: a.target,
+      platform: process.platform,
+      defaultShell: defaultShellFor(process.platform),
+      shells: shellsFor(process.platform),
+      targets: (await connectTargetsCached()).map((t) => agentConnectTarget(t, ctx)),
     };
   };
 
@@ -594,8 +1165,20 @@ if (process.argv.includes('--stdio')) {
   const normServers = (v: unknown): '*' | string[] =>
     v === '*' ? '*' : Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
-  // Built web UI (apps/web/dist) — same relative path from src/ and dist/.
-  const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../web/dist');
+  // Built web UI. Three layouts to find it in, tried in order:
+  //   1. `HYPERGATE_UI_DIR`, which the npm package's wrapper sets explicitly.
+  //   2. `web/` beside the running executable — the installed layout, where the
+  //      daemon is a single compiled binary and `import.meta.url` points inside
+  //      it rather than at anything on disk.
+  //   3. `apps/web/dist` relative to this module, which is the repo.
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const REPO_UI = resolve(HERE, '../../web/dist');
+  const UI_CANDIDATES = [
+    process.env.HYPERGATE_UI_DIR,
+    resolve(dirname(process.execPath), 'web'),
+    REPO_UI,
+  ].filter((p): p is string => Boolean(p));
+  const UI_DIR = resolve(UI_CANDIDATES.find((p) => existsSync(join(p, 'index.html'))) ?? REPO_UI);
   const MIME: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript',
@@ -678,6 +1261,8 @@ if (process.argv.includes('--stdio')) {
       if (!cfg) return oauthPage(res, false, 'Unknown or expired authorization request. Try adding the server again.');
       const result = await runOAuth(cfg, code);
       if (!result.authorized) return oauthPage(res, false, `Could not complete sign-in: ${result.error ?? 'unknown error'}`);
+      // A fresh grant may be a different person; the old label must not stick.
+      forgetAccount(cfg.id);
       const live = servers.find((s) => s.id === cfg.id);
       if (live) {
         live.enabled = true;
@@ -741,32 +1326,176 @@ if (process.argv.includes('--stdio')) {
     }
 
     if (pathname === '/api/gateway') return json(res, 200, gatewayInfo());
-    if (pathname === '/api/analytics') return json(res, 200, supervisor.analytics());
+    if (pathname === '/api/analytics') {
+      const summary = supervisor.analytics();
+      if (!store) return json(res, 200, summary);
+      // The in-memory series can only see the last EVENT_TAIL calls; the store
+      // buckets in SQL, so the 24h chart stays correct however busy the gateway
+      // is. Flush first, or calls still sitting in the debounced write queue
+      // would be missing from the chart for up to two seconds.
+      flushStore();
+      return json(res, 200, { ...summary, series: store.hourlySeries(24) });
+    }
 
-    // ── desktop/service settings (autostart + start-minimized) ───────────────
-    if (pathname === '/api/settings' && req.method === 'GET') return json(res, 200, await settingsInfo());
+    // ── durable usage history (the user's own audit trail; never leaves the box) ──
+    // Filterable itemised feed backing "management of MCP usage": which tool, by
+    // which client, when, how long, how much data, and whether it failed.
+    if (pathname === '/api/usage/events' && req.method === 'GET') {
+      if (!store) return json(res, 200, []);
+      flushStore(); // include calls still sitting in the write queue
+      return json(
+        res,
+        200,
+        store.events({
+          limit: Number(url.searchParams.get('limit')) || 100,
+          serverId: url.searchParams.get('server') ?? undefined,
+          client: url.searchParams.get('client') ?? undefined,
+          since: url.searchParams.get('since') ?? undefined,
+        }),
+      );
+    }
+
+    // ── desktop/service settings (autostart, start-minimized, close button) ──
+    if (pathname === '/api/settings' && req.method === 'GET') return json(res, 200, settingsInfo());
     if (pathname === '/api/settings' && req.method === 'PATCH') {
       try {
         const b = JSON.parse(await readBody(req)) as UpdateSettingsRequest;
         const cur = loadSettings();
         if (typeof b.startMinimized === 'boolean') cur.startMinimized = b.startMinimized;
-        if (typeof b.runOnStartup === 'boolean' && STARTUP_SUPPORTED) {
-          await setStartupEnabled(b.runOnStartup);
+        if (b.closeAction === 'ask' || b.closeAction === 'tray' || b.closeAction === 'quit') cur.closeAction = b.closeAction;
+        // Skipping is per version, and `null` un-skips: the Settings page can
+        // always hand back a version the topbar was told to stop offering.
+        if (b.skippedUpdate === null) delete cur.skippedUpdate;
+        else if (typeof b.skippedUpdate === 'string' && /^[\w.+-]{1,64}$/.test(b.skippedUpdate)) cur.skippedUpdate = b.skippedUpdate;
+        if (typeof b.runOnStartup === 'boolean') {
+          // Let the OS error surface: "could not write the Run key" is a far
+          // better answer than a toggle that silently springs back.
+          autostart.set(b.runOnStartup);
           cur.runOnStartup = b.runOnStartup;
         }
         saveSettings(cur);
-        return json(res, 200, await settingsInfo());
+        return json(res, 200, settingsInfo());
       } catch (e) {
         return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
       }
+    }
+
+    // ── updates ──────────────────────────────────────────────────────────────
+    // GET is free and offline: it reports the cached answer plus what an update
+    // would take on this install. The check is the only part that reaches out,
+    // and only when asked (the UI asks once when it loads; the cache is a day).
+    if (pathname === '/api/update' && req.method === 'GET') return json(res, 200, updateInfo());
+    if (pathname === '/api/update/check' && req.method === 'POST') {
+      const cached = loadUpdateCache();
+      const force = url.searchParams.get('force') === '1';
+      // Pressing the button means "tell me": a version skipped earlier is being
+      // asked about again, so the skip is spent.
+      if (force) {
+        const s = loadSettings();
+        if (s.skippedUpdate) {
+          delete s.skippedUpdate;
+          saveSettings(s);
+        }
+      }
+      const fresh = cached && !cached.error && Date.now() - new Date(cached.checkedAt).getTime() < UPDATE_TTL;
+      if (fresh && !force) return json(res, 200, updateInfo(cached));
+      const result = await fetchLatest();
+      // Keep a version we already knew if this attempt failed to find one.
+      if (result.error && cached?.latest) result.latest = cached.latest;
+      saveUpdateCache(result);
+      return json(res, 200, updateInfo(result));
+    }
+    // How far along a download or install is. Free, offline, and polled while a
+    // job runs, so it stays a plain read of in-memory state.
+    if (pathname === '/api/update/progress' && req.method === 'GET') return json(res, 200, updater.progress());
+    // The outcome of the update that brought this daemon up, reported exactly
+    // once: without it, a successful update looks identical to a crash-restart.
+    if (pathname === '/api/update/result' && req.method === 'GET')
+      return json(res, 200, updater.takeLastResult() ?? { ok: false, version: '', finishedAt: '', error: 'none' });
+
+    // Download without installing. The daemon can do this itself and stay up:
+    // nothing it is running from is touched until the install, which is why
+    // "download only" is a real option and not just a delayed apply.
+    if (pathname === '/api/update/download' && req.method === 'POST') {
+      if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const info = updateInfo();
+      if (!info.updateAvailable || !info.latest) return json(res, 409, { ok: false, error: 'no update available' });
+      // Downloading a package this install could never be replaced with would
+      // be busywork, so the same guard that stops the install stops the fetch.
+      if (!info.canApply) return json(res, 400, { ok: false, error: info.note ?? 'this install cannot be updated in place' });
+      const assets = updateAssets(info.latest);
+      if (assets.length === 0)
+        return json(res, 400, { ok: false, error: 'the release does not carry an installable package for this platform' });
+      // Fire and forget: the caller watches /api/update/progress. A rejection
+      // is recorded in that state, so nothing is swallowed.
+      void updater.download(info.latest, assets).catch(() => {});
+      return json(res, 202, { ok: true, version: info.latest, total: info.downloadSize });
+    }
+
+    // Apply it: same guards as /api/shutdown, since this stops the daemon (and
+    // the tray) so their files can be replaced. The download happens here (we
+    // can report it); the install belongs to the shell, which outlives both the
+    // daemon and the tray and puts them back afterwards.
+    if (pathname === '/api/update/apply' && req.method === 'POST') {
+      if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const info = updateInfo();
+      if (!info.updateAvailable || !info.latest) return json(res, 409, { ok: false, error: 'no update available' } as ApplyUpdateResponse);
+      if (!info.canApply)
+        return json(res, 400, { ok: false, error: info.note ?? 'this install cannot be updated in place' } as ApplyUpdateResponse);
+      if (!shell.hasShell())
+        return json(res, 500, {
+          ok: false,
+          error: 'the hypergate shell binary is not available to run the update',
+        } as ApplyUpdateResponse);
+
+      const assets = updateAssets(info.latest);
+      const version = info.latest;
+      // Answer now, work after. A download can take a minute, and the caller
+      // watching /api/update/progress learns more than a held-open request
+      // would tell it. Nothing staged and nothing to fetch is not an error:
+      // the shell falls back to a registry install.
+      const go = async (): Promise<void> => {
+        if (info.staged !== version && assets.length > 0) await updater.download(version, assets);
+        // From here the daemon is on borrowed time: the shell stops it so its
+        // files can be replaced.
+        updater.installing(version);
+        if (!shell.startUpdate()) throw new Error('the hypergate shell binary would not start');
+      };
+      void go().catch((e: unknown) => {
+        // A download failure already sits in the progress state; a shell that
+        // refused to start does not, and an install that never begins must not
+        // leave the UI spinning on "installing".
+        updater.failed(version, e instanceof Error ? e.message : 'the update could not be started');
+      });
+      return json(res, 202, { ok: true, command: info.command } as ApplyUpdateResponse);
+    }
+
+    // ── stop the daemon (the manager UI's Stop button) ───────────────────────
+    // Two guards, because this is the one route whose whole job is destructive:
+    //   • same-origin (see selfOrigin), so no web page the user happens to visit
+    //     can reach in and kill the gateway;
+    //   • the MASTER gateway token, because an agent's scoped token can call tools, not
+    //     take the runtime down.
+    // Everything is stopped in `shutdown()` after the response is flushed, so the
+    // UI learns it worked instead of seeing a dropped connection.
+    if (pathname === '/api/shutdown' && req.method === 'POST') {
+      if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const body: ShutdownResponse = { ok: true, servers: supervisor.ids().length };
+      res.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' });
+      return res.end(JSON.stringify(body), () => shutdown('requested from the manager UI'));
     }
 
     // ── connected agents (scoped gateway tokens) ─────────────────────────────
     if (pathname === '/api/clients' && req.method === 'GET') return json(res, 200, clients.map(agentInfo));
     if (pathname === '/api/clients' && req.method === 'POST') {
       try {
-        const b = JSON.parse(await readBody(req)) as { name?: string; servers?: unknown };
-        const name = (b.name ?? '').trim();
+        const b = JSON.parse(await readBody(req)) as { name?: string; servers?: unknown; target?: unknown };
+        // A known harness names itself; only a custom agent needs a name typed.
+        const picked = typeof b.target === 'string' ? connectTarget(b.target) : undefined;
+        const name = ((b.name ?? '') || (picked?.name ?? '')).trim();
         if (!name) return json(res, 400, { error: 'name required' });
         const agent: AgentClient = {
           id: `${slugId(name)}-${randomBytes(2).toString('hex')}`,
@@ -774,6 +1503,9 @@ if (process.argv.includes('--stdio')) {
           token: randomBytes(24).toString('hex'),
           servers: normServers(b.servers),
           createdAt: new Date().toISOString(),
+          // Only a target we actually know: the UI shows an official agent's
+          // name as unchangeable, so an unrecognised id must not confer that.
+          ...(picked ? { target: picked.id } : {}),
         };
         clients.push(agent);
         saveClients(clients);
@@ -782,13 +1514,108 @@ if (process.argv.includes('--stdio')) {
         return json(res, 400, { error: 'invalid_json' });
       }
     }
+    // Which harnesses this machine has, before any agent exists (the empty-state
+    // quick-connect asks for this).
+    if (pathname === '/api/connect/targets' && req.method === 'GET') {
+      const info: ConnectTargetsInfo = {
+        platform: process.platform,
+        defaultShell: defaultShellFor(process.platform),
+        shells: shellsFor(process.platform),
+        targets: await connectTargetsCached(),
+      };
+      return json(res, 200, info);
+    }
+
+    // ── connecting an agent to a harness ─────────────────────────────────────
+    const connectM = /^\/api\/clients\/([^/]+)\/connect$/.exec(pathname);
+    if (connectM) {
+      const agent = clients.find((c) => c.id === connectM[1]);
+      if (!agent) return json(res, 404, { error: 'not_found' });
+      // GET: the commands + snippets for every client, scoped to this agent.
+      if (req.method === 'GET') return json(res, 200, await agentConnectInfo(agent));
+      if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
+      // POST: run the client's own `mcp add` for the user. The target id only
+      // selects a row in the built-in table — the argv is ours, and is spawned
+      // without a shell, so nothing from the request reaches a command line.
+      try {
+        const b = JSON.parse(await readBody(req)) as { target?: string };
+        const target = connectTarget(b.target ?? '');
+        if (!target || target.method !== 'cli' || !target.command)
+          return json(res, 400, { error: 'unknown or non-runnable target' });
+        const argv = connectArgv(target.id, { url: `http://localhost:${PORT}/mcp`, token: agent.token });
+        if (!argv) return json(res, 400, { error: 'unknown target' });
+        const file = resolveOnPath(target.command);
+        const command = formatCommand(target.command, argv.add, defaultShellFor(process.platform));
+        if (!file) {
+          const miss: ConnectResult = {
+            ok: false, target: target.id, command, output: '',
+            error: `${target.command} isn't on this machine's PATH.`,
+          };
+          return json(res, 200, miss);
+        }
+        // Clear a previous `hypergate` entry first so re-connecting (after a
+        // token change, say) succeeds instead of erroring on a duplicate name.
+        if (argv.reset) await runClientCli(file, argv.reset);
+        const run = await runClientCli(file, argv.add);
+        const result: ConnectResult = {
+          ok: run.ok,
+          target: target.id,
+          command,
+          output: run.output.slice(0, 4000),
+          error: run.ok ? undefined : `${target.name} rejected the command.`,
+        };
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
+      }
+    }
+
+    // Enable or disable ONE server for ONE agent: the per-agent toggles in the
+    // UI (both on the agent row and under a server's "Agents" panel).
+    //
+    // Deliberately not a whole-allow-list PATCH: turning a server off for an
+    // agent scoped to `'*'` means writing out the servers that exist *now* minus
+    // that one, and only the daemon knows the full roster. A UI computing that
+    // from a stale list would silently revoke a server it hadn't heard of yet.
+    const permM = /^\/api\/clients\/([^/]+)\/servers\/([^/]+)$/.exec(pathname);
+    if (permM && req.method === 'POST') {
+      const agent = clients.find((c) => c.id === permM[1]);
+      if (!agent) return json(res, 404, { error: 'not_found' });
+      const serverId = decodeURIComponent(permM[2]);
+      try {
+        const b = JSON.parse(await readBody(req)) as SetAgentServerRequest;
+        if (typeof b.allowed !== 'boolean') return json(res, 400, { error: 'allowed must be true or false' });
+        // Granting access needs a server that exists; revoking never does, because an
+        // agent listing a server that was since removed must still be clearable.
+        if (b.allowed && !servers.some((s) => s.id === serverId)) return json(res, 404, { error: 'unknown_server' });
+        // Mutating the live object is the point: the gateway reads the agent's
+        // scope per request, so the next tools/list already reflects this.
+        agent.servers = setServerAllowed(
+          agent.servers,
+          serverId,
+          b.allowed,
+          servers.map((s) => s.id),
+        );
+        saveClients(clients);
+        return json(res, 200, agentInfo(agent));
+      } catch {
+        return json(res, 400, { error: 'invalid_json' });
+      }
+    }
+
     const clientM = /^\/api\/clients\/([^/]+)$/.exec(pathname);
     if (clientM && req.method === 'PATCH') {
       const agent = clients.find((c) => c.id === clientM[1]);
       if (!agent) return json(res, 404, { error: 'not_found' });
       try {
         const b = JSON.parse(await readBody(req)) as { name?: string; servers?: unknown };
-        if (typeof b.name === 'string' && b.name.trim()) agent.name = b.name.trim();
+        // An agent created from the catalog is that product: its name is the
+        // product's name, and renaming it would leave a "Cursor" row that is
+        // Cursor's token but says something else. Permissions stay editable.
+        if (typeof b.name === 'string' && b.name.trim()) {
+          if (agent.target) return json(res, 409, { error: 'an official agent cannot be renamed' });
+          agent.name = b.name.trim();
+        }
         if (b.servers !== undefined) agent.servers = normServers(b.servers);
         saveClients(clients);
         return json(res, 200, agentInfo(agent));
@@ -802,7 +1629,7 @@ if (process.argv.includes('--stdio')) {
       return json(res, 200, { ok: true });
     }
 
-    if (pathname === '/api/servers' && req.method === 'GET') return json(res, 200, supervisor.list());
+    if (pathname === '/api/servers' && req.method === 'GET') return json(res, 200, withLastLog(withAccounts(supervisor.list())));
 
     // add a server (custom config, or a registry entry merged with overrides)
     if (pathname === '/api/servers' && req.method === 'POST') {
@@ -843,15 +1670,42 @@ if (process.argv.includes('--stdio')) {
       }
     }
 
+    // Server logs. Durable rows survive restarts, so they're preferred; the
+    // in-memory ring is the fallback when the store is unavailable. Flushing
+    // first means the queue can't hide log lines from the last couple of seconds.
     const logsM = /^\/api\/servers\/([^/]+)\/logs$/.exec(pathname);
-    if (logsM && req.method === 'GET') return json(res, 200, { logs: supervisor.logs(logsM[1]) });
+    if (logsM && req.method === 'GET') {
+      const id = logsM[1];
+      const limit = Math.min(10_000, Math.max(1, Number(url.searchParams.get('limit')) || 500));
+      if (store) {
+        flushStore();
+        const rows = store.logs(id, limit);
+        if (rows.length) return json(res, 200, { logs: rows.map((l) => l.line), entries: rows });
+      }
+      return json(res, 200, { logs: supervisor.logs(id) });
+    }
 
+    // Remove: everything this server was, gone. Stop it, forget its OAuth
+    // grant, drop the config row, and take it out of the agent allow-lists it
+    // appears in — so nothing is left pointing at an id that no longer exists,
+    // and re-adding it starts from a clean sign-in rather than resurrecting
+    // somebody's old grant.
     const rmM = /^\/api\/servers\/([^/]+)$/.exec(pathname);
     if (rmM && req.method === 'DELETE') {
       const id = rmM[1];
       await supervisor.remove(id);
+      deleteOAuth(id);
       servers = servers.filter((s) => s.id !== id);
       saveConfig(servers);
+      // `'*'` needs no pruning: it means "every server there is", and this one
+      // no longer is one.
+      let scopesChanged = false;
+      for (const agent of clients) {
+        if (agent.servers === '*' || !agent.servers.includes(id)) continue;
+        agent.servers = agent.servers.filter((s) => s !== id);
+        scopesChanged = true;
+      }
+      if (scopesChanged) saveClients(clients);
       return json(res, 200, { ok: true });
     }
 
@@ -874,19 +1728,6 @@ if (process.argv.includes('--stdio')) {
       return json(res, 200, { ...supervisor.status(cfg.id), authUrl: result.authUrl, error: result.error } as ServerStatus);
     }
 
-    // disconnect: sign out (drop stored OAuth tokens) and stop the server.
-    const discM = /^\/api\/servers\/([^/]+)\/disconnect$/.exec(pathname);
-    if (discM && req.method === 'POST') {
-      const cfg = servers.find((s) => s.id === discM[1]);
-      if (!cfg) return json(res, 404, { error: 'not_found' });
-      await supervisor.stop(cfg.id);
-      makeProvider(cfg).invalidateCredentials('all');
-      cfg.enabled = false;
-      saveConfig(servers);
-      supervisor.markAuthorizing(cfg);
-      return json(res, 200, supervisor.status(cfg.id));
-    }
-
     const m = /^\/api\/servers\/([^/]+)\/(start|stop|restart)$/.exec(pathname);
     if (m && req.method === 'POST') {
       const [, id, action] = m;
@@ -907,5 +1748,36 @@ if (process.argv.includes('--stdio')) {
     // Anything else is the web UI.
     return serveUi(res, pathname);
   });
-  server.listen(PORT, '127.0.0.1', () => process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`));
+  /**
+   * Take the daemon down cleanly. Idempotent, because the response callback that
+   * triggers it can fire alongside a signal handler.
+   *
+   * Order matters: stop listening first so nothing new arrives, then stop the
+   * managed servers. Their child processes are ours, and exiting without closing
+   * them leaks a process tree, which is the very thing `hypergate stop`'s
+   * `taskkill /T` has to clean up when the daemon is killed from outside.
+   */
+  let shuttingDown = false;
+  const shutdown = (reason: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stdout.write(`hypergated stopping: ${reason}\n`);
+    server.close();
+    void supervisor
+      .stopAll()
+      .catch(() => {
+        /* a server that was already gone must not block the exit */
+      })
+      .finally(() => {
+        flushStore();
+        store?.close();
+        process.exit(0);
+      });
+  };
+
+  void booted.then(() =>
+    server.listen(PORT, '127.0.0.1', () =>
+      process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`),
+    ),
+  );
 }

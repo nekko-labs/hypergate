@@ -3,10 +3,11 @@
 // Boots the daemon on a scratch port/data-dir, exercises each, then restarts
 // the daemon (same data-dir) to prove analytics survive a restart.
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { shutdown, removeDir } from './smoke-lib.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 7878;
@@ -19,7 +20,7 @@ let daemon;
 const fail = (m) => {
   console.error(`✗ ${m}`);
   if (daemon) daemon.kill();
-  rmSync(DIR, { recursive: true, force: true });
+  removeDir(DIR);
   process.exit(1);
 };
 
@@ -86,6 +87,34 @@ let analytics = await (await fetch(`${BASE}/api/analytics`)).json();
 if (!(analytics.totalCalls >= 1)) fail(`no calls recorded: ${JSON.stringify(analytics.totals)}`);
 ok(`analytics recorded a call (totalCalls=${analytics.totalCalls})`);
 
+// ── durable usage history (SQLite store) ────────────────────────────────────
+// The itemised feed behind "management of MCP usage". Unlike the old in-memory
+// ring this is durable and filterable, so assert both the row and the filters.
+const usage = await (await fetch(`${BASE}/api/usage/events?limit=50`)).json();
+if (!Array.isArray(usage) || usage.length < 1) fail(`no durable usage events: ${JSON.stringify(usage)}`);
+const echoCall = usage.find((e) => e.serverId === 'echo' && e.tool === 'echo');
+if (!echoCall) fail(`durable feed missing the echo call: ${JSON.stringify(usage.slice(0, 3))}`);
+for (const field of ['at', 'client', 'ms', 'bytesIn', 'bytesOut']) {
+  if (echoCall[field] === undefined) fail(`durable usage event missing ${field}`);
+}
+if (echoCall.ok !== true) fail(`durable usage event should have ok=true: ${JSON.stringify(echoCall)}`);
+ok(`durable usage history recorded the call (${usage.length} event(s), client="${echoCall.client}")`);
+
+const filtered = await (await fetch(`${BASE}/api/usage/events?server=echo&limit=50`)).json();
+const wrongServer = await (await fetch(`${BASE}/api/usage/events?server=nope&limit=50`)).json();
+if (filtered.length < 1) fail('server filter dropped matching events');
+if (wrongServer.length !== 0) fail(`server filter matched an unknown server: ${wrongServer.length}`);
+ok('durable usage history filters by server');
+
+if (!Array.isArray(analytics.series) || analytics.series.length !== 24) fail('analytics series is not 24 hourly buckets');
+if (analytics.series.at(-1).calls < 1) fail('current hour bucket did not count the call');
+ok('hourly series bucketed in SQL (current hour has the call)');
+
+// Logs now come from the store, with timestamps, and survive a restart.
+const logs = await (await fetch(`${BASE}/api/servers/echo/logs`)).json();
+if (!Array.isArray(logs.logs)) fail(`logs endpoint shape changed: ${JSON.stringify(logs).slice(0, 120)}`);
+ok(`logs endpoint returned ${logs.logs.length} line(s)${logs.entries ? ' (durable, timestamped)' : ' (in-memory fallback)'}`);
+
 // ── per-agent permissions ───────────────────────────────────────────────────
 const blocked = await (await fetch(`${BASE}/api/clients`, {
   method: 'POST', headers: { 'content-type': 'application/json' },
@@ -116,6 +145,52 @@ analytics = await (await fetch(`${BASE}/api/analytics`)).json();
 if (!analytics.clients.some((c) => c.client === 'echo-agent')) fail(`analytics did not attribute the call to echo-agent: ${JSON.stringify(analytics.clients.map((c) => c.client))}`);
 ok('analytics attributes calls to the named agent');
 
+// ── enable/disable one server for one agent (the per-agent toggle) ──────────
+// The UI's switch is this endpoint, and what it changes must be visible through
+// the gateway immediately, which is the whole point of the permission.
+const setPerm = async (agentId, serverId, allowedFlag) => {
+  const res = await fetch(`${BASE}/api/clients/${agentId}/servers/${encodeURIComponent(serverId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ allowed: allowedFlag }),
+  });
+  return { status: res.status, body: res.status === 200 ? await res.json() : await res.text() };
+};
+
+const off = await setPerm(allowed.id, 'echo', false);
+if (off.status !== 200 || (off.body.servers ?? []).includes('echo')) fail(`disabling echo for the agent failed: ${JSON.stringify(off)}`);
+const offList = await mcp(allowed.token, 'tools/list', {});
+if ((offList.body?.result?.tools ?? []).some((t) => t.name === 'echo__echo')) fail('a server disabled for an agent must vanish from its tools/list');
+const offCall = await mcp(allowed.token, 'tools/call', { name: 'echo__echo', arguments: { text: 'x' } });
+if (!(offCall.body?.error || offCall.body?.result?.isError)) fail(`a disabled server must refuse tools/call: ${JSON.stringify(offCall.body)}`);
+ok('disabling a server for an agent takes effect on the live gateway');
+
+const on = await setPerm(allowed.id, 'echo', true);
+if (on.status !== 200 || !(on.body.servers ?? []).includes('echo')) fail(`re-enabling echo failed: ${JSON.stringify(on)}`);
+const onCall = await mcp(allowed.token, 'tools/call', { name: 'echo__echo', arguments: { text: 'back' } });
+if (onCall.body?.result?.content?.[0]?.text !== 'back') fail(`re-enabled server should answer: ${JSON.stringify(onCall.body)}`);
+ok('re-enabling it restores the tool immediately');
+
+// An "all servers" agent has no way to say "all but this one", so turning one
+// off must materialise the wildcard into the explicit list it stood for.
+const wild = await (await fetch(`${BASE}/api/clients`, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ name: 'wildcard-agent', servers: '*' }),
+})).json();
+const pinned = await setPerm(wild.id, 'echo', false);
+if (pinned.body.servers === '*' || (pinned.body.servers ?? []).includes('echo'))
+  fail(`wildcard agent was not pinned to an explicit list: ${JSON.stringify(pinned.body.servers)}`);
+await session(wild.token, 'wildcard-agent');
+const wildList = await mcp(wild.token, 'tools/list', {});
+if ((wildList.body?.result?.tools ?? []).some((t) => t.name === 'echo__echo')) fail('pinned wildcard agent should not see echo');
+ok('disabling a server on an "all servers" agent pins it to the rest');
+
+const bogus = await setPerm(allowed.id, 'no-such-server', true);
+if (bogus.status !== 404) fail(`granting access to an unknown server should 404, got ${bogus.status}`);
+const revokeBogus = await setPerm(allowed.id, 'no-such-server', false);
+if (revokeBogus.status !== 200) fail(`revoking an unknown server should still work, got ${revokeBogus.status}`);
+ok('granting an unknown server 404s; revoking one is always allowed');
+
 // ── registry search (network; soft-asserted so it passes offline) ───────────
 try {
   const results = await (await fetch(`${BASE}/api/registry/search?q=github`)).json();
@@ -135,7 +210,61 @@ const after = await (await fetch(`${BASE}/api/analytics`)).json();
 if (!(after.totalCalls >= before)) fail(`analytics did not persist: before=${before} after=${after.totalCalls}`);
 ok(`analytics persisted across restart (totalCalls ${before} → ${after.totalCalls})`);
 
+// The itemised history must survive too — this is the part the old 2000-event
+// in-memory ring could never guarantee. (The kill above is a hard terminate on
+// Windows, so this also exercises SQLite's WAL recovery.)
+const usageAfter = await (await fetch(`${BASE}/api/usage/events?limit=50`)).json();
+if (!Array.isArray(usageAfter) || usageAfter.length < 1) fail('durable usage history did not survive the restart');
+ok(`durable usage history survived the restart (${usageAfter.length} event(s))`);
+
+// ── a stopped server survives a restart ─────────────────────────────────────
+// Stopping a server persists `enabled: false`; it must still be in the roster
+// after a boot (it used to vanish from /api/servers and so from the UI), and it
+// must still be startable.
+await (await fetch(`${BASE}/api/servers/echo/stop`, { method: 'POST' })).json();
+await new Promise((r) => setTimeout(r, 300));
 daemon.kill();
-rmSync(DIR, { recursive: true, force: true });
+await new Promise((r) => setTimeout(r, 600));
+daemon = await boot();
+const roster = await (await fetch(`${BASE}/api/servers`)).json();
+const seated = roster.find((s) => s.id === 'echo');
+if (!seated) fail(`a stopped server vanished after the restart: ${JSON.stringify(roster.map((s) => s.id))}`);
+if (seated.state !== 'stopped') fail(`a stopped server should come back stopped, got ${seated.state}`);
+ok('a stopped server is still in the roster after a restart');
+const restarted = await (await fetch(`${BASE}/api/servers/echo/start`, { method: 'POST' })).json();
+if (restarted.state !== 'ready') fail(`could not start the stopped server again: ${JSON.stringify(restarted)}`);
+ok('and can be started again from the UI');
+
+// ── stopping the daemon from the API (the UI's Stop button) ─────────────────
+// Guards first: the route is the one that ends everything, so an unauthenticated
+// caller and a foreign web page must both be turned away before we use it.
+const masterAfter = await gwToken();
+const noToken = await fetch(`${BASE}/api/shutdown`, { method: 'POST' });
+if (noToken.status !== 401) fail(`shutdown without a token should 401, got ${noToken.status}`);
+const agentToken = await fetch(`${BASE}/api/shutdown`, {
+  method: 'POST',
+  headers: { authorization: `Bearer ${allowed.token}` },
+});
+if (agentToken.status !== 401) fail(`an agent token must not stop the daemon, got ${agentToken.status}`);
+const foreign = await fetch(`${BASE}/api/shutdown`, {
+  method: 'POST',
+  headers: { authorization: `Bearer ${masterAfter}`, origin: 'https://evil.example' },
+});
+if (foreign.status !== 403) fail(`a cross-origin page must not stop the daemon, got ${foreign.status}`);
+ok('shutdown refuses no token, an agent token, and a foreign origin');
+
+const exited = new Promise((r) => daemon.once('exit', r));
+const stopRes = await fetch(`${BASE}/api/shutdown`, {
+  method: 'POST',
+  headers: { authorization: `Bearer ${masterAfter}`, origin: BASE },
+});
+const stopBody = await stopRes.json();
+if (stopRes.status !== 200 || stopBody.ok !== true) fail(`shutdown was not accepted: ${stopRes.status} ${JSON.stringify(stopBody)}`);
+const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r('timeout'), 10_000))]);
+if (code === 'timeout') fail('the daemon did not exit after accepting the shutdown');
+if (await fetch(`${BASE}/health`).then((r) => r.ok).catch(() => false)) fail('the daemon is still answering after shutdown');
+ok(`daemon stopped itself on request (exit ${code}, ${stopBody.servers} managed server(s) taken down)`);
+
+await shutdown(daemon, DIR);
 console.log('\nFeature smoke: all green');
 process.exit(0);
