@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, delimiter, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,14 +18,30 @@ import { fileURLToPath } from 'node:url';
 let cached: { path: string | undefined } | undefined;
 
 /**
- * Find the `hypergate` binary: an explicit override, then `PATH`, then the
- * cargo build output for development. Shell-free lookups only.
+ * Find the `hypergate` binary: an explicit override, then the platform package
+ * beside us, then `PATH`, then the cargo build output for development.
+ * Shell-free lookups only.
  */
 const locate = (): string | undefined => {
   const override = process.env.HYPERGATE_SHELL_BIN;
   if (override && existsSync(override)) return override;
 
   const exe = process.platform === 'win32' ? 'hypergate.exe' : 'hypergate';
+
+  // A global npm install, which is the common case and the one PATH cannot
+  // answer: `npm bin -g` holds `hypergate.cmd`/`.ps1`/a shell script, never
+  // `hypergate.exe` — the real binary lives inside the per-platform optional
+  // dependency. Resolve it exactly the way the CLI shim does (see
+  // packaging/npm/bin/hypergate.mjs), which works whether npm hoisted the
+  // package or nested it.
+  try {
+    const pkg = `hypergate-shell-${process.platform}-${process.arch}`;
+    const candidate = join(dirname(createRequire(import.meta.url).resolve(`${pkg}/package.json`)), 'bin', exe);
+    if (existsSync(candidate)) return candidate;
+  } catch {
+    /* not an npm install, or no build for this platform */
+  }
+
   for (const dir of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
     const candidate = join(dir, exe);
     try {

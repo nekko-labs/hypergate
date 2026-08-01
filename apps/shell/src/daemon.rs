@@ -49,6 +49,15 @@ fn command() -> Result<Command, String> {
     })?;
     let mut cmd = Command::new(program);
     cmd.args(args);
+    // Tell the daemon where we are, so it never has to guess. It can work this
+    // out for itself (see `locate` in apps/daemon/src/shell.ts), but only for
+    // layouts it knows: a global npm install puts `hypergate.cmd` on PATH and
+    // the real binary inside the platform package, so a PATH scan alone finds
+    // nothing and one-click updates quietly stop working. When we started the
+    // daemon, the answer is simply our own path.
+    if let Ok(exe) = std::env::current_exe() {
+        cmd.env("HYPERGATE_SHELL_BIN", exe);
+    }
     Ok(cmd)
 }
 

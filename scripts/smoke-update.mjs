@@ -172,16 +172,23 @@ feed = createServer((req, res) => {
 await new Promise((r) => feed.listen(FEED_PORT, '127.0.0.1', r));
 ok(`stub registry serving ${NEWER} + its tarballs on :${FEED_PORT}`);
 
-// A global npm install puts `hypergate` on PATH, which is how the daemon finds
-// the shell binary it delegates to. This layout has no PATH entry, so point at
-// the binary inside the platform package instead: the same executable, named.
+// The daemon has to find the shell binary **by itself**, from the node_modules
+// layout, with nothing pointing at it.
+//
+// This used to set HYPERGATE_SHELL_BIN, and that convenience hid a real bug for
+// three releases: a global npm install puts `hypergate.cmd`/`.ps1` on PATH and
+// the actual executable inside the platform package, so the daemon's PATH scan
+// found nothing and one-click updates failed on the only channel they are
+// offered on. The override is exactly what a user never has, so the test must
+// not have it either.
 const shellBin = join(PROJECT, 'node_modules', shellPkg, 'bin', WIN ? 'hypergate.exe' : 'hypergate');
 if (!existsSync(shellBin)) fail(`the platform shell binary is missing at ${shellBin}`);
 
 const env = {
   ...process.env,
+  // Deliberately no HYPERGATE_SHELL_BIN: see above. PATH carries only the fake
+  // npm, and `hypergate.exe` is not on it, exactly as on a real install.
   PATH: `${BIN}${WIN ? ';' : ':'}${process.env.PATH}`,
-  HYPERGATE_SHELL_BIN: shellBin,
   HYPERGATE_DIR: DATA,
   HYPERGATE_PORT: String(PORT),
   HYPERGATE_UPDATE_NPM_URL: `http://localhost:${FEED_PORT}/hypergated`,
@@ -282,6 +289,20 @@ const getJson = async (path, init) => {
 const auth = { authorization: `Bearer ${master}`, origin: BASE };
 
 // ── awareness ────────────────────────────────────────────────────────────────
+// The regression guard for the bug this smoke used to hide: the daemon must
+// locate the shell binary from a plain node_modules layout, with nothing
+// pointing at it. `startupVia` is the cheapest honest witness — it reads
+// `shell.hasShell()` directly, and asking here costs no state, whereas the
+// other route to the same answer is an apply that would really update.
+const settings = await getJson('/api/settings');
+if (settings.body.startupVia !== 'shell') {
+  fail(
+    `the daemon did not find the shell binary in a node_modules layout (startupVia=${settings.body.startupVia}), ` +
+      'so one-click updates would fail on a real npm install',
+  );
+}
+ok('the daemon finds the shell binary by itself, with nothing pointing at it');
+
 const before = await getJson('/api/update');
 if (before.body.channel !== 'npm') fail(`expected the npm channel from a node_modules layout, got "${before.body.channel}"`);
 if (before.body.canApply !== true) fail('an npm install should be updatable in place');
