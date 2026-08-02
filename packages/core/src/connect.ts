@@ -32,7 +32,7 @@ export const ENTRY_NAME = 'hypergate';
 /**
  * Clients Hypergate knows how to connect.
  *
- * Order is deliberate and only two entries deep: Kotrain first because it is
+ * Order is deliberate and only two entries deep: Nekkos first because it is
  * ours and the pairing we can vouch for end to end, then Claude Code as the
  * harness most people arrive already running. Everything after those two is
  * alphabetical: a flat list nobody has to argue about, rather than a ranking
@@ -40,12 +40,12 @@ export const ENTRY_NAME = 'hypergate';
  */
 export const CONNECT_TARGETS: ConnectTarget[] = [
   {
-    id: 'kotrain',
-    name: 'Kotrain',
+    id: 'nekkos',
+    name: 'Nekkos',
     method: 'config',
     blurb: 'Local-first AI chat, cowork and coding in one window (Nekko Labs).',
-    hint: 'Or add it in Kotrain: Settings → MCP servers → add an HTTP server.',
-    homepage: 'https://kotrain.com',
+    hint: 'Or add it in Nekkos: Settings → MCP servers → add an HTTP server.',
+    homepage: 'https://nekkos.app',
   },
   {
     id: 'claude-code',
@@ -158,8 +158,8 @@ export const configPathFor = (id: string, platform: string): string | undefined 
       return '~/.gemini/config/mcp_config.json';
     case 'cursor':
       return '~/.cursor/mcp.json';
-    case 'kotrain':
-      return '~/.kotrain/settings.json';
+    case 'nekkos':
+      return '~/.nekkos/settings.json';
     case 'openclaw':
       return '~/.openclaw/openclaw.json';
     case 'hermes':
@@ -296,9 +296,9 @@ export const connectSnippet = (id: string, ctx: ConnectContext): string | undefi
         null,
         2,
       );
-    // Kotrain's mcpServers is an array of configs, each carrying its own bearer
+    // Nekkos' mcpServers is an array of configs, each carrying its own bearer
     // token rather than a headers map — its own shape, not the portable one.
-    case 'kotrain':
+    case 'nekkos':
       return JSON.stringify(
         {
           mcpServers: [

@@ -1,4 +1,4 @@
-/* Hypergate — Nekko Labs design language (violet→cyan era, matches Open Paw).
+/* Hypergate — Nekko Labs design language (violet→cyan era, matches Nekkos).
    Three themes; MEDIUM is the shipped default (a calm mid-slate). Light + Dark
    are opt-in via the topbar switch (data-theme on <html>). */
 :root {
@@ -610,7 +610,7 @@ pre.logs { max-height: 220px; }
 .ag-mark.small { width: 24px; height: 24px; border-radius: 7px; }
 .ag-mark.small svg { width: 13px; height: 13px; }
 .ag-mark.small .ag-glyph { font-size: 10px; }
-.ag-mark-kotrain { color: #6d5efc; background: color-mix(in srgb, #6d5efc 17%, var(--card)); }
+.ag-mark-nekkos { color: #6d5efc; background: color-mix(in srgb, #6d5efc 17%, var(--card)); }
 .ag-mark-claude-code { color: #df7956; background: color-mix(in srgb, #df7956 15%, var(--card)); }
 .ag-mark-antigravity { color: #3186ff; background: color-mix(in srgb, #3186ff 15%, var(--card)); }
 .ag-mark-cursor { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, var(--card)); }

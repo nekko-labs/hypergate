@@ -43,16 +43,16 @@ describe('connect targets', () => {
   it('offers the popular agents by name', () => {
     const ids = CONNECT_TARGETS.map((t) => t.id);
     for (const id of [
-      'claude-code', 'cursor', 'kotrain', 'devin', 'hermes', 'odysseus', 'openclaw', 'warp', 'antigravity',
+      'claude-code', 'cursor', 'nekkos', 'devin', 'hermes', 'odysseus', 'openclaw', 'warp', 'antigravity',
     ]) {
       expect(ids, id).toContain(id);
     }
   });
 
-  it('leads with Kotrain then Claude Code, and sorts the rest by name', () => {
+  it('leads with Nekkos then Claude Code, and sorts the rest by name', () => {
     // The picker renders the catalog in array order, so the order *is* the UI.
     const [first, second, ...rest] = CONNECT_TARGETS;
-    expect(first.id).toBe('kotrain');
+    expect(first.id).toBe('nekkos');
     expect(second.id).toBe('claude-code');
     // `.mcp.json` files under "m", the way anyone reading the list says it,
     // rather than under the dot. That is the only reason for the sort key.
@@ -63,7 +63,7 @@ describe('connect targets', () => {
 
   it('only claims a config path for clients that read one', () => {
     expect(configPathFor('cursor', 'linux')).toBe('~/.cursor/mcp.json');
-    expect(configPathFor('kotrain', 'linux')).toBe('~/.kotrain/settings.json');
+    expect(configPathFor('nekkos', 'linux')).toBe('~/.nekkos/settings.json');
     expect(configPathFor('openclaw', 'linux')).toBe('~/.openclaw/openclaw.json');
     expect(configPathFor('hermes', 'linux')).toBe('~/.hermes/config.yaml');
     expect(configPathFor('warp', 'linux')).toBe('~/.warp/.mcp.json');
@@ -112,10 +112,10 @@ describe('connect commands', () => {
     expect(JSON.parse(connectSnippet('vscode', ctx)!).servers[ENTRY_NAME].url).toBe(ctx.url);
     // OpenClaw nests under `mcp.servers` and names its transport explicitly.
     expect(JSON.parse(connectSnippet('openclaw', ctx)!).mcp.servers[ENTRY_NAME].transport).toBe('streamable-http');
-    // Kotrain's list is an array of configs, each carrying its own bearer token.
-    const kotrain = JSON.parse(connectSnippet('kotrain', ctx)!).mcpServers;
-    expect(Array.isArray(kotrain)).toBe(true);
-    expect(kotrain[0]).toMatchObject({ id: ENTRY_NAME, url: ctx.url, token: ctx.token, enabled: true });
+    // Nekkos' list is an array of configs, each carrying its own bearer token.
+    const nekkos = JSON.parse(connectSnippet('nekkos', ctx)!).mcpServers;
+    expect(Array.isArray(nekkos)).toBe(true);
+    expect(nekkos[0]).toMatchObject({ id: ENTRY_NAME, url: ctx.url, token: ctx.token, enabled: true });
     // Warp reads the same portable shape Cursor does.
     expect(JSON.parse(connectSnippet('warp', ctx)!).mcpServers[ENTRY_NAME].url).toBe(ctx.url);
     // Antigravity rejects `url` and `httpUrl` outright; the key is `serverUrl`.
@@ -163,7 +163,7 @@ describe('a helper command instead of a stored token', () => {
   it('leaves every other client on the token, since only Claude Code runs helpers', () => {
     // `.mcp.json` in particular is read by harnesses that would choke on a field
     // they don't know, so the portable snippet stays portable.
-    for (const id of ['mcp-json', 'cursor', 'vscode', 'gemini-cli', 'openclaw', 'kotrain', 'hermes']) {
+    for (const id of ['mcp-json', 'cursor', 'vscode', 'gemini-cli', 'openclaw', 'nekkos', 'hermes']) {
       expect(connectSnippet(id, helped) ?? '', id).not.toContain('headersHelper');
     }
     expect(connectArgv('gemini-cli', helped)!.add).toContain('Authorization: Bearer deadbeef');

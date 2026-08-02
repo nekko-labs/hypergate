@@ -58,7 +58,7 @@ const added = await add.json();
 if (added.state !== 'ready') fail(`echo server not ready: ${JSON.stringify(added)}`);
 ok('echo server added and ready');
 
-// MCP over streamable HTTP, hand-rolled (mirrors what Open Paw's client does).
+// MCP over streamable HTTP, hand-rolled (mirrors what Nekkos' client does).
 let rpcId = 0;
 const mcp = async (method, params, { auth = true, notify = false } = {}) => {
   const body = { jsonrpc: '2.0', method, params };

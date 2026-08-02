@@ -627,11 +627,11 @@ mod tests {
 
     fn entry() -> RegistryEntry {
         serde_json::from_value(json!({
-            "id": "kotrain",
-            "name": "Kotrain",
+            "id": "nekkos",
+            "name": "Nekkos",
             "description": "Drive the local agent",
             "runtime": "process",
-            "command": "kotrain",
+            "command": "nekkos",
             "args": ["mcp"],
             "official": true,
             "recommended": true,
@@ -697,9 +697,9 @@ mod tests {
     #[test]
     fn builds_a_catalog_entry_verbatim() {
         let cfg = build_add_config(Some(&entry()), &opts(), &no_env).unwrap();
-        assert_eq!(cfg["id"], json!("kotrain"));
-        assert_eq!(cfg["name"], json!("Kotrain"));
-        assert_eq!(cfg["command"], json!("kotrain"));
+        assert_eq!(cfg["id"], json!("nekkos"));
+        assert_eq!(cfg["name"], json!("Nekkos"));
+        assert_eq!(cfg["command"], json!("nekkos"));
         assert_eq!(cfg["args"], json!(["mcp"]));
         assert_eq!(cfg["runtime"], json!("process"));
         assert_eq!(cfg["enabled"], json!(true));
@@ -708,15 +708,15 @@ mod tests {
     #[test]
     fn overrides_beat_the_catalog_entry() {
         let o = AddOptions {
-            id: Some("kotrain-dev".into()),
-            name: Some("Kotrain (dev)".into()),
+            id: Some("nekkos-dev".into()),
+            name: Some("Nekkos (dev)".into()),
             command: Some("node".into()),
             args: vec!["cli.js".into(), "mcp".into()],
             env: vec!["LOG=debug".into()],
             ..opts()
         };
         let cfg = build_add_config(Some(&entry()), &o, &no_env).unwrap();
-        assert_eq!(cfg["id"], json!("kotrain-dev"));
+        assert_eq!(cfg["id"], json!("nekkos-dev"));
         assert_eq!(cfg["command"], json!("node"));
         assert_eq!(cfg["args"], json!(["cli.js", "mcp"]));
         assert_eq!(cfg["env"]["LOG"], json!("debug"));
@@ -856,7 +856,7 @@ mod tests {
         assert!(!terms.iter().any(|t| t == "mcp"));
 
         // A plain id is just itself.
-        assert_eq!(search_terms("kotrain"), vec!["kotrain"]);
+        assert_eq!(search_terms("nekkos"), vec!["nekkos"]);
     }
 
     #[test]

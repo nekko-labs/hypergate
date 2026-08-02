@@ -37,7 +37,7 @@ export const KNOWN_CLIS: CliTool[] = [
   { id: 'gcloud', name: 'Google Cloud CLI', command: 'gcloud', category: 'cloud', description: 'Google Cloud CLI (auth/config for GCP servers).', homepage: 'https://cloud.google.com/sdk/gcloud', install: 'https://cloud.google.com/sdk/docs/install' },
 
   // MCP / agent tooling
-  { id: 'kotrain', name: 'Kotrain', command: 'kotrain', category: 'mcp', description: "Kotrain CLI — exposes this machine's local agent as an MCP server (`kotrain mcp`).", homepage: 'https://github.com/nekko-labs/kotrain', install: 'Build from github.com/nekko-labs/kotrain' },
+  { id: 'nekkos', name: 'Nekkos', command: 'nekkos', category: 'mcp', description: "Nekkos CLI — exposes this machine's local agent as an MCP server (`nekkos mcp`).", homepage: 'https://github.com/nekko-labs/nekkos', install: 'Build from github.com/nekko-labs/nekkos' },
   { id: 'nekko-vault-mcp', name: 'Nekko Vault MCP', command: 'nekko-vault-mcp', category: 'mcp', description: 'Nekko Notes vault as an MCP server (memory + RAG).', homepage: 'https://github.com/nekko-labs/nekko-notes', install: 'Ships with Nekko Notes' },
   { id: 'claude', name: 'Claude Code', command: 'claude', category: 'mcp', description: 'Anthropic Claude Code CLI — a first-class Hypergate gateway client.', homepage: 'https://docs.anthropic.com/en/docs/claude-code', install: 'npm i -g @anthropic-ai/claude-code' },
 ];
