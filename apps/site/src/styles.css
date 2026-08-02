@@ -190,18 +190,6 @@ html[data-download-platform="mobile"] .hero-snippet { display: none; }
 .hero-snippet button:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }
 .c-dim { color: var(--dim); }
 .c-out { color: var(--dim); }
-.hero-stats {
-  position: relative; z-index: 1;
-  display: flex; gap: clamp(28px, 6vw, 84px);
-  margin-top: clamp(48px, 8vh, 90px);
-  flex-wrap: wrap; justify-content: center;
-}
-.hero-stats div { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.hero-stats strong {
-  font-family: var(--font-d); font-size: 34px; font-weight: 700;
-  background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent;
-}
-.hero-stats span { font-size: 13.5px; color: var(--dim); }
 
 /* ── agent strip ─────────────────────────────────────────── */
 .strip {
