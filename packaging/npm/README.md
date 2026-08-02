@@ -54,6 +54,17 @@ Point an agent at the gateway:
 claude mcp add -t http hypergate http://localhost:7777/mcp -H "Authorization: Bearer $(hypergate gateway --token-only)"
 ```
 
+Or install the Claude Code plugin, which stores no credential at all — it fetches
+one at every connection, so nothing breaks when a token rotates:
+
+```bash
+claude plugin marketplace add nekko-labs/hypergate
+```
+
+```bash
+claude plugin install hypergate@nekko-labs
+```
+
 ## Requirements
 
 - **Node 20+** to run. Node **22.5+** is recommended: durable usage history and logs use the built-in `node:sqlite`, and on older runtimes Hypergate degrades to in-memory analytics rather than refusing to start.

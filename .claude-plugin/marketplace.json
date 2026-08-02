@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "nekko-labs",
+  "description": "Nekko Labs plugins for Claude Code.",
+  "owner": {
+    "name": "Nekko Labs",
+    "email": "hello@nekkolabs.com",
+    "url": "https://github.com/nekko-labs"
+  },
+  "plugins": [
+    {
+      "name": "hypergate",
+      "source": "./plugins/hypergate",
+      "displayName": "Hypergate",
+      "description": "Every MCP server Hypergate runs on this machine, through one local gateway.",
+      "version": "0.17.0",
+      "author": { "name": "Nekko Labs", "url": "https://hypergate.app" },
+      "homepage": "https://hypergate.app",
+      "repository": "https://github.com/nekko-labs/hypergate",
+      "license": "MIT",
+      "category": "tools",
+      "keywords": ["mcp", "gateway", "local-first", "hypergate"]
+    }
+  ]
+}

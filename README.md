@@ -173,6 +173,10 @@ hypergate tools                      # every tool the gateway exposes
 hypergate tools --server kotrain     # just one server's
 hypergate call kotrain__open_paw_status
 hypergate call echo__echo '{"text":"nyaa"}'
+
+# what a connected client fetches instead of storing a token
+hypergate mcp-headers claude-code            # {"Authorization":"Bearer …"} and nothing else
+hypergate mcp-headers claude-code --create   # …making the agent if this machine has none
 hypergate call some__tool --arg count=3 --arg path=/tmp/x
 hypergate gateway                    # the endpoint + token to paste into a harness
 
@@ -217,9 +221,31 @@ claude mcp add -t http hypergate http://localhost:7777/mcp -H "Authorization: Be
 
 or stdio: `{ "mcpServers": { "hypergate": { "command": "hypergated", "args": ["--stdio"] } } }`
 
+**Claude Code, in one line.** There is also a plugin, which needs no token, no port and no JSON:
+
+```bash
+claude plugin marketplace add nekko-labs/hypergate
+```
+
+```bash
+claude plugin install hypergate@nekko-labs
+```
+
+It works because the entry names a *command* rather than a credential — `hypergate mcp-headers claude-code --create` — which Claude Code runs at every connection and again whenever a call comes back `401`. So rotating the gateway token, deleting and re-creating the agent, or moving the daemon to another port costs a reconnect instead of a config file that is quietly wrong. The connect button uses the same mechanism when the `hypergate` CLI is on your `PATH`.
+
+**Claude Desktop** gets a double-clickable extension instead: `npm run build:mcpb` produces `dist-mcpb/hypergate.mcpb`, which Desktop installs from Settings → Extensions. It runs the daemon in `--stdio` mode, so it attaches to the gateway you already have running rather than starting a second copy of every server, and it shows up in **Connected agents** as *Claude Desktop*, revocable on its own.
+
+> A note on **claude.ai custom connectors**: that dialog cannot reach Hypergate, and no setting will change it. Anthropic's cloud opens the connection to the URL you give it, so the server must be public and `https://` — which is the one thing a local-first gateway is not. Use the plugin, the extension, or `mcp add`.
+
 **Scoped agents.** Every connected agent has its own token and its own allow-list: pick which servers it may use (or all of them), and it will only see and call those. Its calls show up under its name in Analytics, and you can revoke it without touching anything else. The master token in the gateway bar always reaches every server — prefer an agent token for a real client. Same thing over the API: `POST /api/clients`, then `POST /api/clients/:id/connect`.
 
 **Kotrain** auto-detects a running daemon: Settings → MCP servers → **Connect gateway** (one click), plus an **Open manager** button that opens this UI in a workbench pane.
+
+### Privacy Policy
+
+Hypergate has no backend, no account and no telemetry: everything it stores stays
+on your machine, and the only network calls are ones you trigger. The full policy —
+what is stored, where, and for how long — is in [PRIVACY.md](PRIVACY.md).
 
 ## Analytics: visibility for free
 Because every tool call fans through the one gateway, Hypergate records it: server, tool, caller (from the MCP handshake), success/error, latency, and bytes in/out. The web UI's **Analytics** tab turns that into headline metrics, a 24h call-volume sparkline, usage-by-server, a who's-calling breakdown, and a live recent-calls feed, served from `/api/analytics` and persisted across restarts. It's a private audit trail with nothing to wire up and no data leaving your machine.

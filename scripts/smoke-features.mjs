@@ -235,6 +235,65 @@ const restarted = await (await fetch(`${BASE}/api/servers/echo/start`, { method:
 if (restarted.state !== 'ready') fail(`could not start the stopped server again: ${JSON.stringify(restarted)}`);
 ok('and can be started again from the UI');
 
+// ── resolving an agent from a key, and the stdio proxy ─────────────────────
+// The pair that keeps a connected client working: a key resolves to the agent
+// that exists *now* (so a config outlives the id it was written against), and a
+// stdio spawn attaches to this daemon instead of starting its own servers.
+const resolve_ = (key, create) =>
+  fetch(`${BASE}/api/clients/resolve`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key, create }),
+  });
+
+const byName = await (await resolve_('echo-agent')).json();
+if (byName.token !== allowed.token) fail(`resolving by name found the wrong agent: ${JSON.stringify(byName.id)}`);
+const byStaleId = await (await resolve_(`${allowed.id.replace(/-[0-9a-f]{4}$/, '')}-0000`)).json();
+if (byStaleId.token !== allowed.token) fail(`a dead id should resolve to its replacement, got ${JSON.stringify(byStaleId)}`);
+const missing = await resolve_('never-connected-anything');
+if (missing.status !== 404) fail(`an unknown key should 404, got ${missing.status}`);
+const created = await (await resolve_('desktop-probe', true)).json();
+if (!created.token || created.created !== true) fail(`create should mint an agent: ${JSON.stringify(created)}`);
+if (created.servers !== '*') fail(`a created agent should reach every server, got ${JSON.stringify(created.servers)}`);
+const again = await (await resolve_('desktop-probe', true)).json();
+if (again.id !== created.id) fail('create should reuse the agent it made, not stack duplicates');
+ok('an agent resolves by name, by a dead id, and is created on demand exactly once');
+
+const proxy = spawn(
+  process.execPath,
+  ['--experimental-strip-types', join(ROOT, 'apps/daemon/src/index.ts'), '--stdio'],
+  {
+    env: { ...process.env, HYPERGATE_DIR: DIR, PORT: String(PORT), HYPERGATE_STDIO_AGENT: 'desktop-probe' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  },
+);
+let proxyErr = '';
+let proxyOut = '';
+proxy.stderr.on('data', (x) => (proxyErr += x));
+proxy.stdout.on('data', (x) => (proxyOut += x));
+const rpc = (msg) => proxy.stdin.write(`${JSON.stringify(msg)}\n`);
+rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'smoke', version: '0' } } });
+rpc({ jsonrpc: '2.0', method: 'notifications/initialized' });
+rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+const proxied = await Promise.race([
+  new Promise((r) => {
+    const tick = setInterval(() => {
+      const line = proxyOut.split('\n').find((l) => l.includes('"id":2'));
+      if (line) {
+        clearInterval(tick);
+        r(JSON.parse(line));
+      }
+    }, 100);
+  }),
+  new Promise((r) => setTimeout(() => r('timeout'), 20_000)),
+]);
+proxy.kill();
+if (proxied === 'timeout') fail(`the stdio proxy never answered tools/list: ${proxyErr}`);
+if (!/resident daemon/.test(proxyErr)) fail(`--stdio started its own gateway instead of proxying: ${proxyErr}`);
+const proxiedTools = proxied.result.tools.map((t) => t.name);
+if (!proxiedTools.includes('echo__echo')) fail(`the proxy did not expose the daemon's tools: ${JSON.stringify(proxiedTools)}`);
+ok(`--stdio proxied to the running daemon (${proxiedTools.length} tool(s)) instead of starting its own servers`);
+
 // ── stopping the daemon from the API (the UI's Stop button) ─────────────────
 // Guards first: the route is the one that ends everything, so an unauthenticated
 // caller and a foreign web page must both be turned away before we use it.

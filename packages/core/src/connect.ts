@@ -159,9 +159,33 @@ export interface ConnectContext {
   url: string;
   /** The agent's scoped bearer token. */
   token: string;
+  /**
+   * A command that prints this agent's auth headers as JSON, for a client that
+   * can run one at connect time rather than storing a credential.
+   *
+   * Set only when the command has been shown to work on this machine — a client
+   * pointed at a helper that isn't there is worse off than one holding a token
+   * that might go stale. Today only Claude Code reads it (`headersHelper`),
+   * which is also the only client that re-runs the helper on a 401, so a
+   * rotated token costs it a reconnect rather than a support question.
+   */
+  headersHelper?: string;
 }
 
 const authHeader = (token: string): string => `Authorization: Bearer ${token}`;
+
+/**
+ * Claude Code's entry for the gateway: a helper command when we have one, the
+ * bearer token when we don't. One builder for both the `add-json` argv and the
+ * snippet, so the button and the copy-paste can never describe different things.
+ */
+const claudeCodeEntry = (ctx: ConnectContext): Record<string, unknown> => ({
+  type: 'http',
+  url: ctx.url,
+  ...(ctx.headersHelper
+    ? { headersHelper: ctx.headersHelper }
+    : { headers: { Authorization: `Bearer ${ctx.token}` } }),
+});
 
 /**
  * The client CLI invocation that adds the gateway, and the one that removes a
@@ -174,7 +198,12 @@ export const connectArgv = (id: string, ctx: ConnectContext): { add: string[]; r
     case 'claude-code':
       return {
         reset: ['mcp', 'remove', ENTRY_NAME, '-s', 'user'],
-        add: ['mcp', 'add', '-t', 'http', ENTRY_NAME, ctx.url, '-H', authHeader(ctx.token), '-s', 'user'],
+        // With a helper, the entry names a command instead of carrying a token,
+        // which `mcp add` has no flag for — hence `add-json`, whose payload is
+        // the same object `connectSnippet` renders.
+        add: ctx.headersHelper
+          ? ['mcp', 'add-json', ENTRY_NAME, JSON.stringify(claudeCodeEntry(ctx)), '-s', 'user']
+          : ['mcp', 'add', '-t', 'http', ENTRY_NAME, ctx.url, '-H', authHeader(ctx.token), '-s', 'user'],
       };
     case 'gemini-cli':
       return {
@@ -207,8 +236,13 @@ export const connectArgv = (id: string, ctx: ConnectContext): { add: string[]; r
 export const connectSnippet = (id: string, ctx: ConnectContext): string | undefined => {
   const headers = { Authorization: `Bearer ${ctx.token}` };
   switch (id) {
-    case 'mcp-json':
+    // Claude Code is the one client that can run a helper command, so it is the
+    // one whose snippet may carry no credential at all.
     case 'claude-code':
+      return JSON.stringify({ mcpServers: { [ENTRY_NAME]: claudeCodeEntry(ctx) } }, null, 2);
+    // `.mcp.json` is read by half a dozen harnesses, most of which would choke
+    // on a field only Claude Code understands, so this one keeps the token.
+    case 'mcp-json':
     case 'gemini-cli':
       return JSON.stringify({ mcpServers: { [ENTRY_NAME]: { type: 'http', url: ctx.url, headers } } }, null, 2);
     case 'cursor':

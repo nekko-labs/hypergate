@@ -30,12 +30,14 @@
     "shell:test": "cargo test --manifest-path apps/shell/Cargo.toml",
     "tray": "cargo run --release --manifest-path apps/shell/Cargo.toml -- tray",
     "typecheck": "tsc -b --noEmit || true",
-    "smoke:update": "node scripts/smoke-update.mjs"
+    "smoke:update": "node scripts/smoke-update.mjs",
+    "build:mcpb": "node scripts/build-mcpb.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
     "esbuild": "^0.28.1",
     "postject": "^1.0.0-alpha.6"
   }

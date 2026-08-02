@@ -566,6 +566,61 @@ pub fn start(opts: &StartOptions) -> Result<(), String> {
     Ok(())
 }
 
+// ── mcp-headers: the credential a client fetches instead of storing ─────────
+//
+// A harness that supports a headers helper (Claude Code's `headersHelper`) runs
+// a command at every connection and sends whatever JSON it prints. That turns
+// the gateway token from something copied into a config file once — and stale
+// the moment it rotates — into something resolved fresh each time, so a token
+// change, a re-created agent, or a moved port costs a reconnect rather than a
+// silent "failed to connect" the user has to go diagnose.
+//
+// This is the command they run. Its whole contract is: one JSON object of
+// headers on stdout, nothing else, ever.
+
+/// The JSON object a headers helper writes to stdout.
+///
+/// Built with `serde_json` rather than `format!` so a token that somehow
+/// contained a quote produces valid JSON instead of a parse error at the far end.
+pub fn headers_json(token: &str) -> String {
+    json!({ "Authorization": format!("Bearer {token}") }).to_string()
+}
+
+/// Resolve `key` to an agent and print its headers.
+///
+/// Errors go to stderr and a non-zero exit, never to stdout: the caller parses
+/// stdout as JSON, so an explanation printed there would be read as a header.
+pub fn mcp_headers(key: &str, create: bool) -> Result<String, String> {
+    if !api::is_up() {
+        return Err(format!(
+            "no daemon is answering at {} — start one with `hypergate start`",
+            api::ui_url()
+        ));
+    }
+    let agent = api::resolve_client(key, create).map_err(|e| explain_resolve(key, &e))?;
+    // Minting a credential is not something to do silently. stderr, because
+    // stdout belongs to the client parsing this.
+    if agent.created {
+        eprintln!(
+            "hypergate: created connected agent \"{}\" ({}), with access to every server",
+            agent.name, agent.id
+        );
+    }
+    Ok(headers_json(&agent.token))
+}
+
+/// Turn the daemon's machine-readable refusal into the sentence that says what
+/// to do about it. The status codes come from `/api/clients/resolve`.
+fn explain_resolve(key: &str, err: &str) -> String {
+    if err.contains("not_found") {
+        format!("no connected agent matches \"{key}\" — connect one in the manager, or pass --create to make it now")
+    } else if err.contains("ambiguous") {
+        format!("\"{key}\" matches more than one connected agent — name the one you mean by its id")
+    } else {
+        err.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -809,5 +864,36 @@ mod tests {
         assert_eq!(clip("hello", 10), "hello");
         assert_eq!(clip("hello world", 8), "hello w…");
         assert_eq!(clip("日本語テスト", 4), "日本語…");
+    }
+
+    #[test]
+    fn headers_json_is_one_object_a_client_can_parse() {
+        let out = headers_json("deadbeef");
+        let parsed: Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(parsed["Authorization"], "Bearer deadbeef");
+        // Exactly one key: anything else would be sent as a header too.
+        assert_eq!(parsed.as_object().unwrap().len(), 1);
+        // Single line, so a helper's output is never split across records.
+        assert!(!out.contains('\n'));
+    }
+
+    #[test]
+    fn headers_json_escapes_rather_than_breaking() {
+        let parsed: Value = serde_json::from_str(&headers_json("we\"ird\\")).expect("valid JSON");
+        assert_eq!(parsed["Authorization"], "Bearer we\"ird\\");
+    }
+
+    #[test]
+    fn resolve_failures_say_what_to_do_next() {
+        let miss = explain_resolve("claude-code", "/api/clients/resolve failed (404): not_found");
+        assert!(miss.contains("--create"), "{miss}");
+        assert!(miss.contains("claude-code"), "{miss}");
+
+        let twins = explain_resolve("claude-code", "/api/clients/resolve failed (409): ambiguous");
+        assert!(twins.contains("more than one"), "{twins}");
+
+        // Anything else is passed through rather than guessed at.
+        let other = explain_resolve("claude-code", "connection refused");
+        assert_eq!(other, "connection refused");
     }
 }

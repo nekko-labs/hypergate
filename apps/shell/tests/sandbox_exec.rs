@@ -175,9 +175,29 @@ fn help_lists_every_subcommand() {
         "server",
         "tools",
         "call",
+        "mcp-headers",
     ] {
         assert!(help.contains(cmd), "`{cmd}` missing from --help:\n{help}");
     }
+}
+
+/// A headers helper's stdout is parsed as JSON by the client that ran it, so a
+/// failure has to leave stdout empty rather than explain itself there.
+#[test]
+fn mcp_headers_keeps_stdout_clean_when_it_fails() {
+    let out = Command::new(BIN)
+        .args(["mcp-headers", "claude-code"])
+        .env("HYPERGATE_PORT", "7999")
+        .output()
+        .expect("could not run the hypergate binary");
+    assert!(!out.status.success(), "no daemon should be a failure");
+    assert!(
+        out.stdout.is_empty(),
+        "stdout was: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("hypergate start"), "stderr was: {err}");
 }
 
 /// The commands that reach the daemon must fail with a readable message, not a
