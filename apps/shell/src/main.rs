@@ -9,6 +9,7 @@
 //!   • `hypergate sandbox-exec` the resource-limit launcher the supervisor uses
 //!   • `hypergate update`       check for a newer release, and install it
 //!   • `hypergate secret`       OS keychain access, including for the daemon
+//!   • `hypergate mcp-headers`  the credential a connected client fetches
 //!
 //! Nothing here reimplements daemon logic. The CLI is a client of the same API
 //! the web UI calls, so there is exactly one source of truth for behaviour.
@@ -163,6 +164,15 @@ enum Command {
         /// Print only the bearer token.
         #[arg(long)]
         token_only: bool,
+    },
+    /// Print one agent's auth headers as JSON, for a client's headers helper.
+    #[command(name = "mcp-headers")]
+    McpHeaders {
+        /// The agent: its id, its name, or the id it used to have.
+        agent: String,
+        /// Create the agent if this machine has no match yet.
+        #[arg(long)]
+        create: bool,
     },
     /// Write the Hypergate mark to a file, for packaging.
     Icon {
@@ -501,6 +511,13 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
                 println!("stdio   {}", g.stdio_command);
                 println!("UI      {}", if g.ui_url.is_empty() { api::ui_url() } else { g.ui_url });
             }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        // stdout is the client's input here: one JSON object and nothing else,
+        // which is why this prints the string rather than reporting anything.
+        Command::McpHeaders { agent, create } => {
+            println!("{}", commands::mcp_headers(&agent, create)?);
             Ok(ExitCode::SUCCESS)
         }
 

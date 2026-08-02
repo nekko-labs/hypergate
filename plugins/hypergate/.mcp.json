@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gateway": {
+      "type": "http",
+      "url": "http://localhost:${HYPERGATE_PORT:-7777}/mcp",
+      "headersHelper": "hypergate mcp-headers claude-code --create"
+    }
+  }
+}
