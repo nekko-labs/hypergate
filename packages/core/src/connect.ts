@@ -29,8 +29,24 @@ import type {
 /** The MCP entry name clients end up with. Constant, so re-connecting replaces it. */
 export const ENTRY_NAME = 'hypergate';
 
-/** Clients Hypergate knows how to connect, best-supported first. */
+/**
+ * Clients Hypergate knows how to connect.
+ *
+ * Order is deliberate and only two entries deep: Kotrain first because it is
+ * ours and the pairing we can vouch for end to end, then Claude Code as the
+ * harness most people arrive already running. Everything after those two is
+ * alphabetical: a flat list nobody has to argue about, rather than a ranking
+ * that quietly ages into a lie as clients come and go.
+ */
 export const CONNECT_TARGETS: ConnectTarget[] = [
+  {
+    id: 'kotrain',
+    name: 'Kotrain',
+    method: 'config',
+    blurb: 'Local-first AI chat, cowork and coding in one window (Nekko Labs).',
+    hint: 'Or add it in Kotrain: Settings → MCP servers → add an HTTP server.',
+    homepage: 'https://kotrain.com',
+  },
   {
     id: 'claude-code',
     name: 'Claude Code',
@@ -42,6 +58,14 @@ export const CONNECT_TARGETS: ConnectTarget[] = [
     install: 'npm i -g @anthropic-ai/claude-code',
   },
   {
+    id: 'antigravity',
+    name: 'Antigravity',
+    method: 'config',
+    blurb: "Google's agentic IDE.",
+    hint: 'One config serves the IDE and the CLI, or add it in Settings → Customizations → Open MCP Config.',
+    homepage: 'https://antigravity.google/docs/mcp',
+  },
+  {
     id: 'cursor',
     name: 'Cursor',
     method: 'config',
@@ -50,21 +74,15 @@ export const CONNECT_TARGETS: ConnectTarget[] = [
     homepage: 'https://docs.cursor.com/context/model-context-protocol',
   },
   {
-    id: 'kotrain',
-    name: 'Kotrain',
-    method: 'config',
-    blurb: 'Local-first AI chat, cowork and coding in one window (Nekko Labs).',
-    hint: 'Or add it in Kotrain: Settings → MCP servers → add an HTTP server.',
-    homepage: 'https://kotrain.com',
-  },
-  {
-    id: 'openclaw',
-    name: 'OpenClaw',
-    method: 'cli',
-    command: 'openclaw',
-    blurb: 'Open-source agent runtime with per-agent tool routing.',
-    hint: 'Added to the global server list; per-agent routing can narrow it later.',
-    homepage: 'https://docs.openclaw.ai/cli/mcp',
+    id: 'devin',
+    name: 'Devin',
+    method: 'manual',
+    blurb: "Cognition's cloud software engineer.",
+    hint: 'Settings → Connections → MCP servers → Add a custom MCP, transport HTTP.',
+    // Worth saying before someone spends ten minutes on it: Devin's VM is not
+    // on this machine, so `localhost:7777` means *its* localhost, not yours.
+    note: 'Devin runs in the cloud and cannot reach a localhost gateway. Expose Hypergate on a public URL (a tunnel or a reachable host) first, then use that URL below.',
+    homepage: 'https://docs.devin.ai/work-with-devin/mcp',
   },
   {
     id: 'gemini-cli',
@@ -84,14 +102,7 @@ export const CONNECT_TARGETS: ConnectTarget[] = [
     hint: 'Hermes reads its MCP servers from YAML; merge this under `mcp_servers`.',
     homepage: 'https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp',
   },
-  {
-    id: 'vscode',
-    name: 'VS Code',
-    method: 'config',
-    blurb: 'Copilot Chat in VS Code.',
-    hint: 'Copilot Chat reads MCP servers from this file.',
-    homepage: 'https://code.visualstudio.com/docs/copilot/chat/mcp-servers',
-  },
+  // Filed under "m", where someone scanning the list would look for it.
   {
     id: 'mcp-json',
     name: '.mcp.json',
@@ -108,15 +119,29 @@ export const CONNECT_TARGETS: ConnectTarget[] = [
     homepage: 'https://github.com/nekko-labs/odysseus',
   },
   {
-    id: 'devin',
-    name: 'Devin',
-    method: 'manual',
-    blurb: "Cognition's cloud software engineer.",
-    hint: 'Settings → Connections → MCP servers → Add a custom MCP, transport HTTP.',
-    // Worth saying before someone spends ten minutes on it: Devin's VM is not
-    // on this machine, so `localhost:7777` means *its* localhost, not yours.
-    note: 'Devin runs in the cloud and cannot reach a localhost gateway. Expose Hypergate on a public URL (a tunnel or a reachable host) first, then use that URL below.',
-    homepage: 'https://docs.devin.ai/work-with-devin/mcp',
+    id: 'openclaw',
+    name: 'OpenClaw',
+    method: 'cli',
+    command: 'openclaw',
+    blurb: 'Open-source agent runtime with per-agent tool routing.',
+    hint: 'Added to the global server list; per-agent routing can narrow it later.',
+    homepage: 'https://docs.openclaw.ai/cli/mcp',
+  },
+  {
+    id: 'vscode',
+    name: 'VS Code',
+    method: 'config',
+    blurb: 'Copilot Chat in VS Code.',
+    hint: 'Copilot Chat reads MCP servers from this file.',
+    homepage: 'https://code.visualstudio.com/docs/copilot/chat/mcp-servers',
+  },
+  {
+    id: 'warp',
+    name: 'Warp',
+    method: 'config',
+    blurb: 'The agentic terminal.',
+    hint: 'Global Warp servers auto-spawn, or paste it in Settings → Agents → MCP servers → + Add.',
+    homepage: 'https://docs.warp.dev/knowledge-and-collaboration/mcp',
   },
 ];
 
@@ -127,6 +152,10 @@ export const configPathFor = (id: string, platform: string): string | undefined 
   switch (id) {
     case 'mcp-json':
       return '<your project>/.mcp.json';
+    case 'antigravity':
+      // One file for both surfaces: Antigravity's IDE and its CLI read the same
+      // global config, so there is nothing to repeat per-surface.
+      return '~/.gemini/config/mcp_config.json';
     case 'cursor':
       return '~/.cursor/mcp.json';
     case 'kotrain':
@@ -135,6 +164,8 @@ export const configPathFor = (id: string, platform: string): string | undefined 
       return '~/.openclaw/openclaw.json';
     case 'hermes':
       return '~/.hermes/config.yaml';
+    case 'warp':
+      return '~/.warp/.mcp.json';
     case 'vscode':
       return platform === 'win32'
         ? '%APPDATA%\\Code\\User\\mcp.json'
@@ -246,7 +277,13 @@ export const connectSnippet = (id: string, ctx: ConnectContext): string | undefi
     case 'gemini-cli':
       return JSON.stringify({ mcpServers: { [ENTRY_NAME]: { type: 'http', url: ctx.url, headers } } }, null, 2);
     case 'cursor':
+    // Warp reads the portable shape, inferring HTTP from `url`.
+    case 'warp':
       return JSON.stringify({ mcpServers: { [ENTRY_NAME]: { url: ctx.url, headers } } }, null, 2);
+    // Antigravity is the odd one out: same `mcpServers` root, but the endpoint
+    // key is `serverUrl`, and it rejects `url`/`httpUrl` outright.
+    case 'antigravity':
+      return JSON.stringify({ mcpServers: { [ENTRY_NAME]: { serverUrl: ctx.url, headers } } }, null, 2);
     case 'vscode':
       return JSON.stringify({ servers: { [ENTRY_NAME]: { type: 'http', url: ctx.url, headers } } }, null, 2);
     case 'openclaw':

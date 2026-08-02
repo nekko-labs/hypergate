@@ -601,21 +601,36 @@ pre.logs { max-height: 220px; }
 }
 .ag-mark svg { width: 21px; height: 21px; overflow: visible; }
 .ag-mark svg path { fill: currentColor; }
-.ag-mark-openclaw svg path, .ag-mark-hermes svg path, .ag-mark-custom svg path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* Parts a logo draws as a line rather than a shape, such as OpenClaw's
+   antennae. A class, not a `fill="none"` attribute, because the rule above
+   is CSS and would win over the attribute. */
+.ag-mark svg path.ag-stroke { fill: none; stroke: currentColor; stroke-linecap: round; }
+.ag-mark-custom svg path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .ag-glyph { font-size: 16px; font-weight: 750; letter-spacing: -0.5px; }
 .ag-mark.small { width: 24px; height: 24px; border-radius: 7px; }
 .ag-mark.small svg { width: 13px; height: 13px; }
 .ag-mark.small .ag-glyph { font-size: 10px; }
+.ag-mark-kotrain { color: #6d5efc; background: color-mix(in srgb, #6d5efc 17%, var(--card)); }
 .ag-mark-claude-code { color: #df7956; background: color-mix(in srgb, #df7956 15%, var(--card)); }
+.ag-mark-antigravity { color: #3186ff; background: color-mix(in srgb, #3186ff 15%, var(--card)); }
 .ag-mark-cursor { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, var(--card)); }
+.ag-mark-devin { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, var(--card)); }
 .ag-mark-gemini-cli { color: #8b7cff; background: color-mix(in srgb, #8b7cff 15%, var(--card)); }
-.ag-mark-vscode { color: #32a7ed; background: color-mix(in srgb, #32a7ed 15%, var(--card)); }
-.ag-mark-kotrain { color: #fff; background: var(--grad); }
-.ag-mark-openclaw { color: #ed6b66; background: color-mix(in srgb, #ed6b66 14%, var(--card)); }
-.ag-mark-hermes { color: #d2a34f; background: color-mix(in srgb, #d2a34f 15%, var(--card)); }
 .ag-mark-mcp-json { color: var(--ink-2); background: var(--card); box-shadow: inset 0 0 0 1px var(--line-2); }
 .ag-mark-odysseus { color: #22d3ee; background: color-mix(in srgb, #22d3ee 14%, var(--card)); }
-.ag-mark-devin { color: #9b87ff; background: color-mix(in srgb, #9b87ff 16%, var(--card)); }
+.ag-mark-openclaw { color: #ed6b66; background: color-mix(in srgb, #ed6b66 14%, var(--card)); }
+.ag-mark-vscode { color: #32a7ed; background: color-mix(in srgb, #32a7ed 15%, var(--card)); }
+.ag-mark-warp { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, var(--card)); }
+/* Hermes' logo is Nous Research's engraved portrait: artwork, not a silhouette,
+   so it fills the tile like an app icon instead of sitting in it as a glyph.
+   It is pure black on white, which only works on the light theme; everywhere
+   else it is inverted rather than left glowing like a sticker. */
+.ag-mark-hermes { overflow: hidden; }
+.ag-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Scaled just past the tile to crop the frame the source artwork is drawn in,
+   which would otherwise read as a border the other marks don't have. */
+.ag-mark-hermes img { filter: invert(1); transform: scale(1.08); }
+:root[data-theme='light'] .ag-mark-hermes img { filter: none; }
 .ag-added .ag-mark { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--success) 58%, transparent); }
 
 /* A custom agent's name is edited where it is shown; there is no Edit button. */

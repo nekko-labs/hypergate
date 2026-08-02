@@ -42,9 +42,23 @@ describe('connect targets', () => {
 
   it('offers the popular agents by name', () => {
     const ids = CONNECT_TARGETS.map((t) => t.id);
-    for (const id of ['claude-code', 'cursor', 'kotrain', 'devin', 'hermes', 'odysseus', 'openclaw']) {
+    for (const id of [
+      'claude-code', 'cursor', 'kotrain', 'devin', 'hermes', 'odysseus', 'openclaw', 'warp', 'antigravity',
+    ]) {
       expect(ids, id).toContain(id);
     }
+  });
+
+  it('leads with Kotrain then Claude Code, and sorts the rest by name', () => {
+    // The picker renders the catalog in array order, so the order *is* the UI.
+    const [first, second, ...rest] = CONNECT_TARGETS;
+    expect(first.id).toBe('kotrain');
+    expect(second.id).toBe('claude-code');
+    // `.mcp.json` files under "m", the way anyone reading the list says it,
+    // rather than under the dot. That is the only reason for the sort key.
+    const key = (s: string): string => s.replace(/^\W+/, '').toLowerCase();
+    const names = rest.map((t) => t.name);
+    expect(names).toEqual([...names].sort((a, b) => key(a).localeCompare(key(b))));
   });
 
   it('only claims a config path for clients that read one', () => {
@@ -52,6 +66,9 @@ describe('connect targets', () => {
     expect(configPathFor('kotrain', 'linux')).toBe('~/.kotrain/settings.json');
     expect(configPathFor('openclaw', 'linux')).toBe('~/.openclaw/openclaw.json');
     expect(configPathFor('hermes', 'linux')).toBe('~/.hermes/config.yaml');
+    expect(configPathFor('warp', 'linux')).toBe('~/.warp/.mcp.json');
+    // Antigravity's IDE and CLI share one global config, on every platform.
+    expect(configPathFor('antigravity', 'win32')).toBe('~/.gemini/config/mcp_config.json');
     expect(configPathFor('vscode', 'win32')).toContain('APPDATA');
     expect(configPathFor('vscode', 'darwin')).toContain('Library');
     // Devin keeps its MCP list in the cloud, so there is no file to point at.
@@ -99,6 +116,11 @@ describe('connect commands', () => {
     const kotrain = JSON.parse(connectSnippet('kotrain', ctx)!).mcpServers;
     expect(Array.isArray(kotrain)).toBe(true);
     expect(kotrain[0]).toMatchObject({ id: ENTRY_NAME, url: ctx.url, token: ctx.token, enabled: true });
+    // Warp reads the same portable shape Cursor does.
+    expect(JSON.parse(connectSnippet('warp', ctx)!).mcpServers[ENTRY_NAME].url).toBe(ctx.url);
+    // Antigravity rejects `url` and `httpUrl` outright; the key is `serverUrl`.
+    const antigravity = JSON.parse(connectSnippet('antigravity', ctx)!).mcpServers[ENTRY_NAME];
+    expect(antigravity).toEqual({ serverUrl: ctx.url, headers: { Authorization: `Bearer ${ctx.token}` } });
     // Hermes is YAML, with every value quoted so a numeric-looking token stays a string.
     expect(connectSnippet('hermes', ctx)).toContain(`Authorization: "Bearer ${ctx.token}"`);
   });
