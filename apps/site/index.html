@@ -62,6 +62,8 @@
         "downloadUrl": "https://github.com/nekko-labs/hypergate/releases",
         "codeRepository": "https://github.com/nekko-labs/hypergate",
         "featureList": [
+          "Access control: per-agent allow-lists over which MCP servers and tools each agent may reach, revocable per agent",
+          "Credential custody: server secrets and OAuth tokens held by Hypergate and injected at launch, never written into agent configs",
           "Aggregating MCP gateway: every server's tools behind one endpoint, over streamable HTTP or stdio",
           "Per-server isolation: process sandbox (default), Docker container, or remote hosted endpoint",
           "Curated catalog of first-party MCP servers with verified launch configs and trust chips",
@@ -97,7 +99,7 @@
     </a>
     <nav class="nav-links">
       <a href="#features" data-scroll>Features</a>
-      <a href="#isolation" data-scroll>Security</a>
+      <a href="#control" data-scroll>Security</a>
       <a href="#analytics" data-scroll>Analytics</a>
       <a href="/release-notes.html">Release notes</a>
       <a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">GitHub ↗</a>
@@ -148,11 +150,6 @@
           <button type="button" data-copy-install aria-label="Copy install command">Copy</button>
         </div>
       </div>
-      <div class="hero-stats reveal" data-delay="420">
-        <div><strong>1</strong><span>gateway URL for every agent</span></div>
-        <div><strong>3</strong><span>isolation modes, your choice</span></div>
-        <div><strong>0</strong><span>bytes leave your machine</span></div>
-      </div>
     </section>
 
     <!-- ═══════════ ORBIT STRIP ═══════════ -->
@@ -166,22 +163,24 @@
     <!-- ═══════════ FEATURES ═══════════ -->
     <section id="features" class="features">
 
-      <article class="feat">
+      <article class="feat" id="control">
         <div class="feat-copy reveal">
-          <p class="feat-k">The gateway</p>
-          <h2>One endpoint, every agent</h2>
-          <p>Run six servers or sixty: your agents see a single MCP endpoint with every
-             tool namespaced behind it. Copy a ready-made snippet for Claude Code,
-             <code>.mcp.json</code>, stdio, or Open Paw, and hand scoped tokens to each
-             agent with per-server allow-lists.</p>
+          <p class="feat-k">Security</p>
+          <h2>Control what every agent can reach</h2>
+          <p>Agents accumulate MCP servers quietly, and most setups can't answer the basic
+             questions: which servers are installed, what is actually being called, and
+             which agent is doing the calling. Every call runs through a gate you own, so
+             those answers are always one screen away, and access is a switch you flip
+             rather than a config file you go hunting for.</p>
           <ul>
-            <li>Streamable HTTP and stdio transports</li>
-            <li>Bearer-token auth, generated and enforced by default</li>
-            <li>Scoped tokens per connected agent</li>
+            <li>Per-agent allow-lists: grant, scope, or revoke a server in one click</li>
+            <li>Every tool call attributed to an agent, timed, and logged on your machine</li>
+            <li>Server credentials and OAuth tokens stay in Hypergate, never in agent configs</li>
+            <li>Each agent gets its own bearer token, so revoking one leaves the rest running</li>
           </ul>
         </div>
-        <figure class="shot reveal" data-parallax="0.05" data-title="Connect an agent">
-          <img src="/demos/gateway.png" alt="Hypergate gateway bar with connect snippets for Claude Code, .mcp.json, stdio, and Open Paw" width="1360" height="850" loading="lazy" />
+        <figure class="shot reveal" data-parallax="0.05" data-title="Access control">
+          <img src="/demos/gateway.png" alt="Hypergate showing a masked gateway token, MCP servers including an OAuth-protected GitHub server awaiting sign-in, and connected agents scoped with per-server allow-lists" width="1360" height="850" loading="lazy" />
         </figure>
       </article>
 
