@@ -37,6 +37,11 @@ function normalizeArchitecture(value: string): Architecture {
   return /arm|aarch64/i.test(value) ? 'arm64' : 'x64';
 }
 
+function isMobileBrowser(): boolean {
+  const uaData = (navigator as Navigator & { userAgentData?: { mobile: boolean } }).userAgentData;
+  return !!uaData?.mobile || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 export async function detectDevice(): Promise<Device> {
   const ua = navigator.userAgent;
   const uaData = (navigator as Navigator & {
@@ -47,9 +52,7 @@ export async function detectDevice(): Promise<Device> {
     };
   }).userAgentData;
 
-  if (uaData?.mobile || /Android|iPhone|iPad|iPod/i.test(ua)) {
-    return { platform: 'mobile', architecture: 'arm64' };
-  }
+  if (isMobileBrowser()) return { platform: 'mobile', architecture: 'arm64' };
 
   const platformText = `${uaData?.platform ?? ''} ${navigator.platform} ${ua}`;
   const platform: Platform = /Windows/i.test(platformText)
@@ -115,6 +118,14 @@ function platformName(platform: Platform): string {
   if (platform === 'macos') return 'macOS';
   if (platform === 'linux') return 'Linux';
   return 'your computer';
+}
+
+export function installerUrlFor(device: Device): string | null {
+  const arch = device.architecture;
+  if (device.platform === 'windows') return `${LATEST_ASSET}/hypergate-windows-${arch}-setup.exe`;
+  if (device.platform === 'macos') return `${LATEST_ASSET}/hypergate-macos-${arch}.pkg`;
+  if (device.platform === 'linux') return `${LATEST_ASSET}/hypergate-linux-${arch}.deb`;
+  return null;
 }
 
 export function installCommandFor(device: Device): InstallCommand | null {
@@ -198,13 +209,21 @@ function macPicker(release: GithubRelease): HTMLDetailsElement {
 export async function hydrateDownloadCtas(): Promise<void> {
   const groups = [...document.querySelectorAll<HTMLElement>('[data-download-group]')];
   if (!groups.length) return;
+  if (isMobileBrowser()) document.documentElement.dataset.downloadPlatform = 'mobile';
 
   const device = await detectDevice();
   hydrateInstallCommand(device);
   if (device.platform === 'mobile') {
     for (const group of groups) group.hidden = true;
-    document.documentElement.dataset.downloadPlatform = 'mobile';
     return;
+  }
+
+  const fallbackUrl = installerUrlFor(device);
+  for (const group of groups) {
+    const link = group.querySelector<HTMLAnchorElement>('[data-download-primary]');
+    const label = group.querySelector<HTMLElement>('[data-download-label]');
+    if (link) link.href = fallbackUrl ?? RELEASES_URL;
+    if (label) label.textContent = fallbackUrl ? `Download for ${platformName(device.platform)}` : 'View latest downloads';
   }
 
   try {
@@ -214,8 +233,8 @@ export async function hydrateDownloadCtas(): Promise<void> {
       const link = group.querySelector<HTMLAnchorElement>('[data-download-primary]');
       const label = group.querySelector<HTMLElement>('[data-download-label]');
       const version = group.querySelector<HTMLElement>('[data-download-version]');
-      if (link) link.href = asset?.browser_download_url ?? release.html_url;
-      if (label) label.textContent = asset ? `Download for ${platformName(device.platform)}` : 'View latest downloads';
+      if (link) link.href = asset?.browser_download_url ?? fallbackUrl ?? release.html_url;
+      if (label) label.textContent = asset || fallbackUrl ? `Download for ${platformName(device.platform)}` : 'View latest downloads';
       if (version) version.textContent = release.tag_name;
     }
 
@@ -246,8 +265,8 @@ export async function hydrateDownloadCtas(): Promise<void> {
       const link = group.querySelector<HTMLAnchorElement>('[data-download-primary]');
       const label = group.querySelector<HTMLElement>('[data-download-label]');
       const version = group.querySelector<HTMLElement>('[data-download-version]');
-      if (link) link.href = RELEASES_URL;
-      if (label) label.textContent = 'View latest downloads';
+      if (!fallbackUrl && link) link.href = RELEASES_URL;
+      if (!fallbackUrl && label) label.textContent = 'View latest downloads';
       if (version) version.textContent = '';
     }
   }

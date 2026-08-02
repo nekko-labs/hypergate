@@ -13,11 +13,6 @@
       <stop offset="0.6" stop-color="#22d3ee" stop-opacity="0.08"/>
       <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="core" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="0.45" stop-color="#a5f3fc"/>
-      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
-    </radialGradient>
     <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
       <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#000" flood-opacity="0.5"/>
     </filter>
@@ -41,7 +36,6 @@
   <g transform="translate(84, 166)">
     <g transform="translate(0,-26)">
       <circle cx="16" cy="16" r="13" fill="none" stroke="url(#accent)" stroke-width="4.5"/>
-      <circle cx="16" cy="16" r="6" fill="url(#core)"/>
     </g>
     <text x="52" y="0" font-size="28" font-weight="700" fill="#8a93b8" letter-spacing="4">HYPERGATE</text>
     <text x="-3" y="102" font-size="66" font-weight="800" letter-spacing="-1.5" fill="#f2f5ff">Every MCP server.</text>
@@ -86,7 +80,6 @@
     <!-- the gate: a warp ring -->
     <g transform="translate(316,142)">
       <circle r="50" fill="none" stroke="url(#accent)" stroke-width="10"/>
-      <circle r="24" fill="url(#core)"/>
     </g>
 
     <!-- gate → agent -->

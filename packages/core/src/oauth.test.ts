@@ -4,10 +4,14 @@ import { MemoryOAuthStore, HypergateOAuthProvider } from './oauth.js';
 const REDIRECT = 'http://localhost:7777/oauth/callback';
 
 describe('HypergateOAuthProvider', () => {
-  it('advertises a public-client metadata with our redirect', () => {
+  it('advertises the Hypergate identity as public-client metadata', () => {
     const p = new HypergateOAuthProvider(new MemoryOAuthStore(), { redirectUrl: REDIRECT });
     const meta = p.clientMetadata;
     expect(meta.redirect_uris).toEqual([REDIRECT]);
+    expect(meta.client_name).toBe('Hypergate');
+    expect(meta.client_uri).toBe('https://hypergate.app/');
+    expect(meta.logo_uri).toBe('https://hypergate.app/favicon.svg?v=2');
+    expect(meta.software_id).toBe('app.hypergate');
     expect(meta.token_endpoint_auth_method).toBe('none');
     expect(meta.grant_types).toContain('authorization_code');
     expect(meta.grant_types).toContain('refresh_token');

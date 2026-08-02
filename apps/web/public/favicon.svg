@@ -1,9 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Hypergate">
   <!--
     The gate, as the hero shader draws it: a violet-to-cyan ring swept round to
-    ice at its brightest point, a halo bleeding past the stroke, and an event
-    horizon glowing in the middle. No entry streaks — they read as scratches
-    once this is 16px in a browser tab, and the ring alone is the mark.
+    ice at its brightest point, with a halo bleeding past the stroke and a clear
+    opening through the middle. No entry streaks, since the ring alone is the mark.
   -->
   <defs>
     <linearGradient id="hgRing" x1="0.08" y1="0.05" x2="0.92" y2="0.95">
@@ -17,18 +16,12 @@
       <stop offset="0.74" stop-color="#7c6bff" stop-opacity="0.55"/>
       <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="hgCore" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="0.42" stop-color="#a5f3fc"/>
-      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
-    </radialGradient>
   </defs>
   <!-- deep space tile -->
   <rect x="4" y="4" width="92" height="92" rx="23" fill="#05060f"/>
   <!-- the glow the ring throws onto the space around it -->
   <circle cx="50" cy="50" r="44" fill="url(#hgHalo)"/>
-  <!-- event horizon -->
-  <circle cx="50" cy="50" r="17" fill="url(#hgCore)"/>
+  <!-- the center stays open so the mark reads as a portal -->
   <!-- the gate itself -->
   <circle cx="50" cy="50" r="27" fill="none" stroke="url(#hgRing)" stroke-width="9.5"/>
   <!-- the hot arc, where the shader folds violet through to ice -->

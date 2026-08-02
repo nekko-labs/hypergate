@@ -40,11 +40,21 @@ const K_VERIFIER = 'verifier'; // PKCE code_verifier
 const K_STATE = 'state'; // CSRF state — also how the callback maps back to a server
 const K_AUTH_URL = 'authUrl'; // the last authorization URL we asked the user to open
 
+export const HYPERGATE_OAUTH_IDENTITY = {
+  clientName: 'Hypergate',
+  clientUri: 'https://hypergate.app/',
+  logoUri: 'https://hypergate.app/favicon.svg?v=2',
+  softwareId: 'app.hypergate',
+} as const;
+
 export interface HypergateOAuthProviderOpts {
   /** The daemon's OAuth callback, e.g. `http://localhost:7777/oauth/callback`. */
   redirectUrl: string;
   /** Client name presented at dynamic registration. */
   clientName?: string;
+  clientUri?: string;
+  logoUri?: string;
+  softwareId?: string;
   /** Optional scope requested at registration/authorization. */
   scope?: string;
   /**
@@ -87,7 +97,10 @@ export class HypergateOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: this.opts.clientName ?? 'Hypergate',
+      client_name: this.opts.clientName ?? HYPERGATE_OAUTH_IDENTITY.clientName,
+      client_uri: this.opts.clientUri ?? HYPERGATE_OAUTH_IDENTITY.clientUri,
+      logo_uri: this.opts.logoUri ?? HYPERGATE_OAUTH_IDENTITY.logoUri,
+      software_id: this.opts.softwareId ?? HYPERGATE_OAUTH_IDENTITY.softwareId,
       redirect_uris: [this.opts.redirectUrl],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],

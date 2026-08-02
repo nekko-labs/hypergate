@@ -1,5 +1,5 @@
-// Rasterize docs/splash.svg → docs/splash.png (a reliable README banner on
-// GitHub). Uses the Playwright Chromium already installed in the sibling
+// Rasterize docs/splash.svg into the README banner and social preview.
+// Uses the Playwright Chromium already installed in the sibling
 // nekko-notes repo, so no new dependency here. Run from repo root:
 //   node scripts/gen-splash.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -18,5 +18,6 @@ const page = await browser.newPage({ viewport: { width: W, height: H }, deviceSc
 await page.setContent(`<!doctype html><html><body style="margin:0">${svg}</body></html>`, { waitUntil: 'networkidle' });
 const buf = await page.screenshot({ clip: { x: 0, y: 0, width: W, height: H } });
 writeFileSync(fileURLToPath(new URL('../docs/splash.png', import.meta.url)), buf);
+writeFileSync(fileURLToPath(new URL('../apps/site/public/og.png', import.meta.url)), buf);
 await browser.close();
-console.log('wrote docs/splash.png');
+console.log('wrote docs/splash.png and apps/site/public/og.png');

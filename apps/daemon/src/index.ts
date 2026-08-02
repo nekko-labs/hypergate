@@ -25,6 +25,7 @@ import {
   formatCommand,
   shellsFor,
   HypergateOAuthProvider,
+  HYPERGATE_OAUTH_IDENTITY,
   setServerAllowed,
   assetsFromGithub,
   assetsFromNpm,
@@ -689,7 +690,10 @@ const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined => c
 const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
   new HypergateOAuthProvider(secretStore(cfg.id), {
     redirectUrl: OAUTH_REDIRECT,
-    clientName: 'Hypergate',
+    clientName: HYPERGATE_OAUTH_IDENTITY.clientName,
+    clientUri: HYPERGATE_OAUTH_IDENTITY.clientUri,
+    logoUri: HYPERGATE_OAUTH_IDENTITY.logoUri,
+    softwareId: HYPERGATE_OAUTH_IDENTITY.softwareId,
     clientId: resolvedClientId(cfg),
     clientSecret: resolvedClientSecret(cfg),
     scope: cfg.scope,
@@ -1030,12 +1034,13 @@ if (STDIO_MODE) {
   const oauthPage = (res: ServerResponse, ok: boolean, message: string): void => {
     const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
     res.writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Hypergate · ${ok ? 'Connected' : 'Sign-in failed'}</title>
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hypergate · ${ok ? 'Connected' : 'Sign-in failed'}</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.5 system-ui,sans-serif;background:#0f1117;color:#e7e9ee}
 .card{max-width:420px;padding:32px 34px;border-radius:16px;background:#171a23;border:1px solid #262b38;text-align:center}
-.mark{font-size:38px}.h{font-size:19px;font-weight:600;margin:14px 0 6px;background:linear-gradient(90deg,#8b5cf6,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
+.mark{display:block;width:62px;height:62px;margin:0 auto 14px}.h{font-size:19px;font-weight:600;margin:0 0 6px;color:#a5f3fc}
 .m{color:#aab0be}.ok{color:#34d399}.err{color:#f87171}</style></head>
-<body><div class="card"><div class="mark">${ok ? '🐾' : '⚠️'}</div>
+<body><div class="card"><img class="mark" src="/favicon.svg" alt="">
 <div class="h">${ok ? 'Connected' : 'Sign-in failed'}</div>
 <p class="m ${ok ? 'ok' : 'err'}">${esc(message)}</p>
 <p class="m">This window can be closed.</p></div>

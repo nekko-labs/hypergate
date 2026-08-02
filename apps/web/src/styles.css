@@ -114,7 +114,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
   scrollbar-width: none;
 }
 .view::-webkit-scrollbar { display: none; }
-.view.servers-view { scroll-behavior: smooth; scroll-snap-type: y proximity; }
+.view.servers-view { scroll-behavior: smooth; }
 /* Chrome (headings, the gateway bar, section titles) keeps its natural height … */
 .view > *,
 .view > .duo > section > * { flex: none; }
@@ -139,10 +139,9 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .view > .panel > .catalog-search { flex: none; }
 .dashboard-section {
   flex: none; min-height: max(320px, calc(100% - 72px));
-  padding: 18px 0 64px; scroll-snap-align: start; scroll-margin-top: 18px;
+  padding: 18px 0 64px; scroll-margin-top: 18px;
 }
 .dashboard-section:last-child { min-height: max(320px, calc(100% - 24px)); }
-.servers-view > .pagehead { scroll-snap-align: start; }
 .dashboard-section > .section-title:first-child { margin-top: 0; }
 .dashboard-section .ag-grid { border-top: 0; gap: 6px 22px; }
 .dashboard-section .ag-card { border-bottom: 0; border-radius: 10px; }
@@ -186,33 +185,20 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
   background: var(--paper);
 }
 .topbar-in { max-width: 1360px; margin: 0 auto; padding: 14px 28px; display: flex; align-items: center; gap: 12px; }
-/* The gate mark: the hero shader's ring, rebuilt for 28px. The ring is a conic
-   gradient behind an annular mask — a stroked circle can only be spun as a
-   shape, and what actually reads here is the colour travelling round it. */
-.gate-mark { position: relative; width: 28px; height: 28px; flex: none; display: block; }
-.gate-ring {
-  position: absolute; inset: 0; border-radius: 50%;
+/* The gate mark: the hero shader's hollow ring, rebuilt for 28px. The conic
+   gradient moves colour around an open portal instead of filling its center. */
+.gate-mark {
+  width: 28px; height: 28px; flex: none; display: block; border-radius: 50%;
   background: conic-gradient(from 0turn, #6d5efc, #22d3ee 28%, #a5f3fc 44%, #22d3ee 62%, #6d5efc 100%);
   -webkit-mask: radial-gradient(closest-side, transparent 55%, #000 64%);
   mask: radial-gradient(closest-side, transparent 55%, #000 64%);
   filter: drop-shadow(0 0 5px color-mix(in srgb, var(--violet, #6d5efc) 60%, transparent));
-  animation: gate-spin 7s linear infinite;
 }
-/* Event horizon. Inset rather than sized so it tracks the mark if it resizes. */
-.gate-core {
-  position: absolute; inset: 31%; border-radius: 50%;
-  background: radial-gradient(circle, #ffffff 0%, #a5f3fc 46%, rgba(34, 211, 238, 0) 100%);
-  animation: gate-breathe 3.4s ease-in-out infinite;
-}
+.gate-ring { animation: gate-spin 7s linear infinite; }
 @keyframes gate-spin { to { transform: rotate(1turn); } }
-@keyframes gate-breathe {
-  0%, 100% { opacity: 0.72; transform: scale(0.9); }
-  50%      { opacity: 1;    transform: scale(1.06); }
-}
 /* A mark that spins forever is exactly the kind of thing this setting is for. */
 @media (prefers-reduced-motion: reduce) {
-  .gate-ring, .gate-core { animation: none; }
-  .gate-core { opacity: 0.95; transform: none; }
+  .gate-ring { animation: none; }
   .view.servers-view { scroll-behavior: auto; }
 }
 .wordmark { font-weight: 700; font-size: 15.5px; letter-spacing: -0.3px; }
@@ -548,6 +534,20 @@ pre.logs { max-height: 220px; }
 
 /* ── connected agents ───────────────────────────────────────────────────── */
 .tok { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink-3); }
+.list-row.expandable:has(.agent-presence) .row-ident { gap: 8px 10px; }
+.list-row.expandable:has(.agent-presence) .row-actions { gap: 8px; }
+.agent-presence {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: 11.5px; font-weight: 650; color: var(--ink-3);
+}
+.agent-presence-led {
+  width: 7px; height: 7px; flex: none; border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+}
+.agent-presence-active { color: var(--success); }
+.agent-presence-online { color: var(--accent); }
+.agent-presence-offline { color: var(--ink-3); }
+.agent-last-used { white-space: nowrap; }
 .perm-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 9px; }
 .perm-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; max-height: 240px; overflow: auto; }
 .perm-check { display: flex; align-items: center; gap: 9px; padding: 5px 2px; cursor: pointer; font-size: 13px; color: var(--ink); font-weight: 400; }
@@ -601,21 +601,36 @@ pre.logs { max-height: 220px; }
 }
 .ag-mark svg { width: 21px; height: 21px; overflow: visible; }
 .ag-mark svg path { fill: currentColor; }
-.ag-mark-openclaw svg path, .ag-mark-hermes svg path, .ag-mark-custom svg path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* Parts a logo draws as a line rather than a shape, such as OpenClaw's
+   antennae. A class, not a `fill="none"` attribute, because the rule above
+   is CSS and would win over the attribute. */
+.ag-mark svg path.ag-stroke { fill: none; stroke: currentColor; stroke-linecap: round; }
+.ag-mark-custom svg path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .ag-glyph { font-size: 16px; font-weight: 750; letter-spacing: -0.5px; }
 .ag-mark.small { width: 24px; height: 24px; border-radius: 7px; }
 .ag-mark.small svg { width: 13px; height: 13px; }
 .ag-mark.small .ag-glyph { font-size: 10px; }
+.ag-mark-kotrain { color: #6d5efc; background: color-mix(in srgb, #6d5efc 17%, var(--card)); }
 .ag-mark-claude-code { color: #df7956; background: color-mix(in srgb, #df7956 15%, var(--card)); }
+.ag-mark-antigravity { color: #3186ff; background: color-mix(in srgb, #3186ff 15%, var(--card)); }
 .ag-mark-cursor { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, var(--card)); }
+.ag-mark-devin { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, var(--card)); }
 .ag-mark-gemini-cli { color: #8b7cff; background: color-mix(in srgb, #8b7cff 15%, var(--card)); }
-.ag-mark-vscode { color: #32a7ed; background: color-mix(in srgb, #32a7ed 15%, var(--card)); }
-.ag-mark-kotrain { color: #fff; background: var(--grad); }
-.ag-mark-openclaw { color: #ed6b66; background: color-mix(in srgb, #ed6b66 14%, var(--card)); }
-.ag-mark-hermes { color: #d2a34f; background: color-mix(in srgb, #d2a34f 15%, var(--card)); }
 .ag-mark-mcp-json { color: var(--ink-2); background: var(--card); box-shadow: inset 0 0 0 1px var(--line-2); }
 .ag-mark-odysseus { color: #22d3ee; background: color-mix(in srgb, #22d3ee 14%, var(--card)); }
-.ag-mark-devin { color: #9b87ff; background: color-mix(in srgb, #9b87ff 16%, var(--card)); }
+.ag-mark-openclaw { color: #ed6b66; background: color-mix(in srgb, #ed6b66 14%, var(--card)); }
+.ag-mark-vscode { color: #32a7ed; background: color-mix(in srgb, #32a7ed 15%, var(--card)); }
+.ag-mark-warp { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, var(--card)); }
+/* Hermes' logo is Nous Research's engraved portrait: artwork, not a silhouette,
+   so it fills the tile like an app icon instead of sitting in it as a glyph.
+   It is pure black on white, which only works on the light theme; everywhere
+   else it is inverted rather than left glowing like a sticker. */
+.ag-mark-hermes { overflow: hidden; }
+.ag-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Scaled just past the tile to crop the frame the source artwork is drawn in,
+   which would otherwise read as a border the other marks don't have. */
+.ag-mark-hermes img { filter: invert(1); transform: scale(1.08); }
+:root[data-theme='light'] .ag-mark-hermes img { filter: none; }
 .ag-added .ag-mark { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--success) 58%, transparent); }
 
 /* A custom agent's name is edited where it is shown; there is no Edit button. */
@@ -629,6 +644,19 @@ pre.logs { max-height: 220px; }
 .agent-name-input.bad { border-color: var(--danger); }
 
 /* Per-agent connect panel: one client's own way in (no tab strip of the rest). */
+.connect-disclosure { margin-top: 17px; padding-top: 12px; border-top: 1px solid var(--line); }
+.connect-disclosure-toggle {
+  width: 100%; min-height: 38px; display: flex; align-items: center; gap: 9px;
+  padding: 5px 4px; border: 0; border-radius: 9px; background: transparent;
+  color: var(--ink-2); font-family: inherit; text-align: left; cursor: pointer;
+}
+.connect-disclosure-toggle:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.connect-disclosure-toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+.connect-disclosure-caret { width: 18px; display: grid; place-items: center; color: var(--ink-3); }
+.connect-disclosure-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.connect-disclosure-copy strong { font-size: 12.5px; font-weight: 650; }
+.connect-disclosure-copy span { font-size: 11.5px; color: var(--ink-3); }
+.connect-disclosure-panel { margin-top: 7px; }
 .connect-panel { margin-top: 11px; border: 1px solid var(--line); border-radius: 11px; padding: 10px 13px 13px; background: var(--paper-2); }
 .conn-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .conn-title { font-weight: 600; font-size: 13px; letter-spacing: -0.2px; }
@@ -759,7 +787,6 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .modal:focus-visible { box-shadow: var(--overlay-shadow), 0 0 0 3px var(--ring); }
 @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.985) } to { opacity: 1; transform: none } }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.modal-mark { font-size: 26px; line-height: 1; }
 .modal-title { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; letter-spacing: -0.3px; margin: 0; }
 .modal-x { flex: none; }
 .modal-desc { margin: 8px 0 0; }
@@ -890,6 +917,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
   .feed-row { grid-template-columns: 1fr; gap: 3px; }
   .feed-row .f-meta { justify-content: flex-start; }
   .ag-grid { grid-template-columns: 1fr; }
+  .agent-last-used { display: none; }
   /* The topbar keeps only product and utility controls while the primary nav
      stays in its compact rail, so it can remain one line at the shell minimum. */
   .topbar-in { padding: 10px 16px; }

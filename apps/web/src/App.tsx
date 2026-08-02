@@ -103,6 +103,18 @@ const fmtRel = (iso?: string): string => {
 };
 const fmtClock = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour12: false });
 
+type AgentPresence = { id: 'active' | 'online' | 'offline'; label: 'Active' | 'Online' | 'Offline'; title: string };
+
+const agentPresence = (lastUsed?: string): AgentPresence => {
+  if (!lastUsed) return { id: 'offline', label: 'Offline', title: 'No authenticated calls yet' };
+  const usedAt = new Date(lastUsed).getTime();
+  if (!Number.isFinite(usedAt)) return { id: 'offline', label: 'Offline', title: 'No recent authenticated calls' };
+  const age = Math.max(0, Date.now() - usedAt);
+  if (age <= 60_000) return { id: 'active', label: 'Active', title: 'Authenticated activity within the last minute' };
+  if (age <= 15 * 60_000) return { id: 'online', label: 'Online', title: 'Authenticated activity within the last 15 minutes' };
+  return { id: 'offline', label: 'Offline', title: 'No authenticated activity in the last 15 minutes' };
+};
+
 /**
  * Open a provider's OAuth sign-in, wherever this page happens to be running.
  *
@@ -661,7 +673,7 @@ function CloseChoice() {
   if (!open) return null;
   return (
     <Dialog
-      title={<><span className="modal-mark" aria-hidden="true">🐾</span>When you close this window…</>}
+      title={<><GateMark />When you close this window…</>}
       onClose={cancel}
       width={520}
       description={<>Hypergate can stay in the tray with the gateway running, so your agents keep their tools — or shut down completely. We'll remember which you pick; you can change it in <b>Settings → Startup &amp; desktop</b>.</>}
@@ -710,21 +722,15 @@ function NavIcon({ view }: { view: View }) {
  *
  * The marketing site draws this as a liquid ring in a WebGL shader; a 28px
  * mark in a topbar cannot justify a GL context, so it is rebuilt out of the
- * two things that actually carry the look — a conic sweep from violet through
- * cyan to ice, and an event horizon breathing in the middle. The ring is a
- * masked conic gradient rather than an SVG stroke because only a conic can
- * rotate the *colour* around the circle instead of rotating a shape.
+ * thing that actually carries the look: a hollow conic sweep from violet
+ * through cyan to ice. The masked conic gradient lets the *colour* travel
+ * around the portal instead of rotating a static shape.
  *
- * Both animations stop under `prefers-reduced-motion` (styles.css), which is
+ * The animation stops under `prefers-reduced-motion` (styles.css), which is
  * the same courtesy the site's shader extends by freezing its clock.
  */
 function GateMark() {
-  return (
-    <span className="gate-mark" aria-hidden="true">
-      <span className="gate-ring" />
-      <span className="gate-core" />
-    </span>
-  );
+  return <span className="gate-mark gate-ring" aria-hidden="true" />;
 }
 
 /** The official GitHub mark — the one footer link that needs no label. */
@@ -2175,24 +2181,128 @@ const METHOD_LABEL: Record<string, string> = {
   manual: 'In-app setup',
 };
 
-const AGENT_BRAND_PATH: Record<string, string> = {
-    'claude-code': 'm4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z',
-    cursor: 'M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23',
-    'gemini-cli': 'M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81',
-  vscode: 'M23.15 2.587 18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z',
+/**
+ * A client's own logo, redrawn as geometry rather than a picture of one.
+ *
+ * Each mark keeps the viewBox the brand drew it in. Normalising every logo to
+ * 24×24 would mean re-fitting curves by hand, and a lobster squashed by 4% is a
+ * worse likeness than one that simply scales. `fill` uses the even-odd rule so a
+ * subpath sitting inside another (OpenClaw's eyes) knocks a hole through the
+ * silhouette instead of painting over it, which is what keeps these single-
+ * colour: the tile tints the whole mark with the brand's colour, and holes read
+ * as detail at 21px where a second fill colour would just read as mud.
+ */
+type BrandMark = {
+  box: string;
+  fill?: string[];
+  /** Shapes the brand draws as a line, with its width in the box's own units. */
+  stroke?: { d: string; width: number }[];
+  /** Logos that are artwork, not geometry, where the file is the only option. */
+  img?: string;
+};
+
+const AGENT_BRAND: Record<string, BrandMark> = {
+  // The Kotrain paw, at the proportions its own favicon uses. Cropped to the
+  // paw itself: the favicon's 32×32 includes its rounded tile, and keeping that
+  // padding would render the paw a fifth smaller than every mark beside it.
+  kotrain: {
+    box: '5 5.5 22 20.5',
+    fill: [
+      'M23 20a7 5.5 0 0 1-14 0a7 5.5 0 0 1 14 0Z',
+      'M11.5 12.5a3 3 0 0 1-6 0a3 3 0 0 1 6 0Z',
+      'M16.6 9a3.1 3.1 0 0 1-6.2 0a3.1 3.1 0 0 1 6.2 0Z',
+      'M22.1 9a3.1 3.1 0 0 1-6.2 0a3.1 3.1 0 0 1 6.2 0Z',
+      'M27 12.5a3 3 0 0 1-6 0a3 3 0 0 1 6 0Z',
+    ],
+  },
+  // Antigravity's arch, lifted out of its wordmark lockup.
+  antigravity: {
+    box: '9 18 93 80',
+    fill: [
+      'M89.6992 93.695C94.3659 97.195 101.366 94.8617 94.9492 88.445C75.6992 69.7783 79.7825 18.445 55.8659 18.445C31.9492 18.445 36.0325 69.7783 16.7825 88.445C9.78251 95.445 17.3658 97.195 22.0325 93.695C40.1159 81.445 38.9492 59.8617 55.8659 59.8617C72.7825 59.8617 71.6159 81.445 89.6992 93.695Z',
+    ],
+  },
+  // Likewise cropped to the glyph: Devin's 425×425 artboard is mostly margin.
+  devin: {
+    box: '70 49 287 329',
+    fill: [
+      'M70 159.333V91.3471C70 88.3592 71.594 85.5983 74.1816 84.1044L133.043 50.1205C135.631 48.6265 138.819 48.6265 141.407 50.1205L200.269 84.1044C202.856 85.5983 204.45 88.3592 204.45 91.3471V126.068C204.708 137.606 210.806 148.734 221.531 154.926C232.256 161.117 244.942 160.834 255.063 155.289L285.132 137.929C287.719 136.435 290.907 136.435 293.495 137.929L352.357 171.913C354.944 173.406 356.538 176.167 356.538 179.155V247.123C356.538 250.111 354.944 252.872 352.357 254.366L293.495 288.35C290.907 289.844 287.719 289.844 285.132 288.35L255.306 271.13C245.146 265.456 232.344 265.117 221.534 271.358C210.809 277.55 204.711 288.678 204.453 300.215V334.926C204.453 337.914 202.859 340.675 200.271 342.169L141.41 376.153C138.822 377.647 135.634 377.647 133.046 376.153L74.1845 342.169C71.5969 340.675 70.0028 337.914 70.0028 334.926V266.959C70.0029 263.971 71.5969 261.21 74.1845 259.716L133.046 225.732C135.634 224.238 138.822 224.238 141.41 225.732L171.547 243.132C181.656 248.638 194.306 248.906 205.005 242.729C215.815 236.488 221.922 225.231 222.088 213.595C221.83 202.057 215.732 189.737 205.008 183.545C194.283 177.353 181.597 177.636 171.476 183.181L141.269 200.72C138.67 202.229 135.461 202.228 132.864 200.716L74.1576 166.562C71.5835 165.065 70 162.311 70 159.333Z',
+    ],
+  },
+  // Hermes has no icon mark of its own. Nous Research's portrait is the logo,
+  // and it is an engraving, not a shape, so ship the artwork; see styles.css
+  // for how it survives a dark tile.
+  hermes: { box: '', img: '/marks/hermes.png' },
+  // The OpenClaw lobster: body (eyes punched out), both claws, both antennae.
+  openclaw: {
+    box: '0 0 120 120',
+    fill: [
+      // Body and eyes are one path on purpose: `evenodd` only knocks a hole
+      // through subpaths of the *same* path, and without the eyes the lobster
+      // is just a blob at this size. The claws stay separate because they
+      // overlap the body, where merging would punch holes instead.
+      'M60 10 C30 10 15 35 15 55 C15 75 30 95 45 100 L45 110 L55 110 L55 100 C55 100 60 102 65 100 L65 110 L75 110 L75 100 C90 95 105 75 105 55 C105 35 90 10 60 10Z'
+        + 'M51 35a6 6 0 0 1-12 0a6 6 0 0 1 12 0Z'
+        + 'M81 35a6 6 0 0 1-12 0a6 6 0 0 1 12 0Z',
+      'M20 45 C5 40 0 50 5 60 C10 70 20 65 25 55 C28 48 25 45 20 45Z',
+      'M100 45 C115 40 120 50 115 60 C110 70 100 65 95 55 C92 48 95 45 100 45Z',
+    ],
+    stroke: [
+      { d: 'M45 15 Q35 5 30 8', width: 5 },
+      { d: 'M75 15 Q85 5 90 8', width: 5 },
+    ],
+  },
+  warp: {
+    box: '0 0 268 214',
+    fill: [
+      'M136.68 0.549481C136.758 0.227082 137.046 0 137.378 0H237.714C254.047 0 267.288 13.6823 267.288 30.5603V149.206C267.288 166.084 254.047 179.766 237.714 179.766H94.234C93.7688 179.766 93.4263 179.331 93.5357 178.879L136.68 0.549481Z',
+      'M110.392 34.9425C110.5 34.4908 110.158 34.0565 109.693 34.0565H29.3224C13.1281 34.0565 0 47.7388 0 64.6167V183.262C0 200.14 13.1281 213.823 29.3224 213.823H128.797C129.129 213.823 129.418 213.595 129.495 213.272L133.162 197.984C133.271 197.533 132.928 197.098 132.464 197.098H72.4064C71.9418 197.098 71.5994 196.664 71.7078 196.212L110.392 34.9425Z',
+    ],
+  },
+  'claude-code': { box: '0 0 24 24', fill: ['m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z'] },
+  cursor: { box: '0 0 24 24', fill: ['M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23'] },
+  'gemini-cli': { box: '0 0 24 24', fill: ['M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81'] },
+  vscode: { box: '0 0 24 24', fill: ['M23.15 2.587 18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z'] },
+};
+
+/**
+ * An agent created before the catalog existed carries a name but no target id,
+ * so its name is the only handle left to find its logo by.
+ */
+const AGENT_ID_BY_NAME: Record<string, string> = {
+  Kotrain: 'kotrain',
+  'Claude Code': 'claude-code',
+  Antigravity: 'antigravity',
+  Cursor: 'cursor',
+  Devin: 'devin',
+  'Gemini CLI': 'gemini-cli',
+  Hermes: 'hermes',
+  '.mcp.json': 'mcp-json',
+  Odysseus: 'odysseus',
+  OpenClaw: 'openclaw',
+  'VS Code': 'vscode',
+  Warp: 'warp',
 };
 
 function AgentMark({ id, name, small = false }: { id?: string; name?: string; small?: boolean }) {
-  const resolved = id ?? ({ 'Claude Code': 'claude-code', Cursor: 'cursor', Kotrain: 'kotrain', OpenClaw: 'openclaw', 'Gemini CLI': 'gemini-cli', Hermes: 'hermes', 'VS Code': 'vscode', '.mcp.json': 'mcp-json', Odysseus: 'odysseus', Devin: 'devin' }[name ?? '']);
+  const resolved = id ?? AGENT_ID_BY_NAME[name ?? ''];
   const className = `ag-mark ag-mark-${resolved ?? 'custom'} ${small ? 'small' : ''}`;
-  const path = resolved ? AGENT_BRAND_PATH[resolved] : undefined;
-  if (path) return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24"><path d={path} /></svg></span>;
-  if (resolved === 'openclaw') return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 17c1-5 3-8 7-10m0 10c0-5 1-9 4-12m1 12c1-4 2-6 4-8M4 18c4 2 10 2 16 0" /></svg></span>;
-  if (resolved === 'hermes') return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7c4 0 6 2 7 5 1-3 3-5 7-5-1 4-3 6-7 6-4 0-6-2-7-6Zm7 6v7m-3-3h6" /></svg></span>;
+  const brand = resolved ? AGENT_BRAND[resolved] : undefined;
+  if (brand?.img) return <span className={className} aria-hidden="true"><img src={brand.img} alt="" /></span>;
+  if (brand) {
+    return (
+      <span className={className} aria-hidden="true">
+        <svg viewBox={brand.box}>
+          {brand.fill?.map((d) => <path key={d} d={d} fillRule="evenodd" />)}
+          {brand.stroke?.map((s) => <path key={s.d} className="ag-stroke" d={s.d} strokeWidth={s.width} />)}
+        </svg>
+      </span>
+    );
+  }
+  // No logo of its own: the portable file and Odysseus fall back to a
+  // letterform, and anything we don't recognise to the "+" tile.
   if (resolved === 'mcp-json') return <span className={className} aria-hidden="true"><span className="ag-glyph">{'{ }'}</span></span>;
-  if (resolved === 'kotrain') return <span className={className} aria-hidden="true"><span className="ag-glyph">K</span></span>;
   if (resolved === 'odysseus') return <span className={className} aria-hidden="true"><span className="ag-glyph">O</span></span>;
-  if (resolved === 'devin') return <span className={className} aria-hidden="true"><span className="ag-glyph">D</span></span>;
   return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></span>;
 }
 
@@ -2443,6 +2553,50 @@ function AgentName({ agent, onChange }: { agent: AgentClientInfo; onChange: () =
   );
 }
 
+function AgentPresenceBadge({ lastUsed }: { lastUsed?: string }) {
+  const presence = agentPresence(lastUsed);
+  return (
+    <span className={`agent-presence agent-presence-${presence.id}`} title={presence.title}>
+      <span className="agent-presence-led" aria-hidden="true" />
+      {presence.label}
+    </span>
+  );
+}
+
+function AgentConnectDisclosure({
+  agent, connect,
+}: {
+  agent: AgentClientInfo;
+  connect: { id: string; target?: string; run?: boolean } | null;
+}) {
+  const [open, setOpen] = useState(!!connect);
+  const panelId = useId();
+  useEffect(() => { if (connect) setOpen(true); }, [connect]);
+  const verb = agent.lastUsed ? 'Reconnect' : 'Connect';
+
+  return (
+    <div className={`connect-disclosure ${open ? 'open' : ''}`}>
+      <button
+        className="connect-disclosure-toggle"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="connect-disclosure-caret"><Caret open={open} /></span>
+        <span className="connect-disclosure-copy">
+          <strong>{verb} {agent.name}</strong>
+          <span>Client setup and connection instructions</span>
+        </span>
+      </button>
+      {open && (
+        <div id={panelId} className="connect-disclosure-panel">
+          <AgentConnect agent={agent} initialTarget={connect?.target} autoRun={connect?.run} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentRow({
   agent, servers, connect, onConnect, onChange,
 }: {
@@ -2511,7 +2665,8 @@ function AgentRow({
       }
       actions={
         <>
-          <span className="small muted">{agent.lastUsed ? `used ${fmtRel(agent.lastUsed)}` : 'never used'}</span>
+          <AgentPresenceBadge lastUsed={agent.lastUsed} />
+          <span className="small muted agent-last-used">{agent.lastUsed ? `used ${fmtRel(agent.lastUsed)}` : 'never used'}</span>
           <IconBtn icon="trash" label={`Remove ${agent.name}`} tone="danger" onClick={() => { void api.removeClient(agent.id).then(onChange); }} />
         </>
       }
@@ -2568,7 +2723,7 @@ function AgentRow({
         </div>
       </Block>
 
-      <AgentConnect agent={agent} initialTarget={connect?.target} autoRun={connect?.run} />
+      <AgentConnectDisclosure agent={agent} connect={connect} />
     </ExpandRow>
   );
 }
@@ -2595,6 +2750,7 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ConnectResult | null>(null);
   const [copied, copy] = useCopy();
+  const verb = agent.lastUsed ? 'Reconnect' : 'Connect';
   /** Guards the quick-connect auto-install so a re-render can't fire it twice. */
   const ran = useRef(false);
 
@@ -2632,7 +2788,7 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
     <div className="connect-panel">
       <div className="conn-head">
         {info.target ? (
-          <span className="conn-title">Connect {t?.name ?? info.target}</span>
+          <span className="conn-title">{verb} {t?.name ?? info.target}</span>
         ) : (
           <label className="conn-pick small muted">
             This agent's client
@@ -2664,7 +2820,7 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
             <>
               <div className="row wrap-gap" style={{ marginTop: 10 }}>
                 <button className="btn btn-primary" disabled={!t.found || busy} onClick={() => void run(t.id)}>
-                  {busy ? 'Connecting…' : `⚡ Connect ${t.name}`}
+                  {busy ? `${verb}ing…` : `${verb} ${t.name}`}
                 </button>
                 {t.found ? (
                   <span className="small muted">

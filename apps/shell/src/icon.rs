@@ -1,9 +1,9 @@
 //! The tray icon, drawn in code rather than shipped as an asset.
 //!
-//! It reproduces the Hypergate warp-gate mark (a violet→cyan gradient ring with
-//! a glowing core) as raw RGBA. Generating it means no `.ico`/`.png` to embed,
-//! decode, or keep in sync across three platforms, and the brand colours live in
-//! one place next to the CSS tokens they mirror.
+//! It reproduces the Hypergate warp-gate mark (a hollow violet→cyan gradient
+//! ring) as raw RGBA. Generating it means no `.ico`/`.png` to embed, decode, or
+//! keep in sync across three platforms, and the brand colours live in one place
+//! next to the CSS tokens they mirror.
 
 use tray_icon::Icon;
 
@@ -12,8 +12,8 @@ const SIZE: u32 = 32;
 /// crisp mark and a jagged one in a 16px tray slot.
 const SAMPLES: u32 = 3;
 
-/// `#8b5cf6` — the violet end of the brand gradient.
-const VIOLET: [f32; 3] = [139.0, 92.0, 246.0];
+/// `#6d5efc` — the violet end of the brand gradient.
+const VIOLET: [f32; 3] = [109.0, 94.0, 252.0];
 /// `#22d3ee` — the cyan end.
 const CYAN: [f32; 3] = [34.0, 211.0, 238.0];
 
@@ -42,8 +42,6 @@ fn sample(x: f32, y: f32, size: u32) -> ([f32; 3], f32) {
     // scale so a large icon gets a crisp edge instead of a blurry one.
     let feather = 1.2 / k.max(1.0);
     let ring = smoothstep(8.6, 8.6 + feather, r) * (1.0 - smoothstep(14.6 - feather, 14.6, r));
-    // The core: a soft glowing centre.
-    let core = 1.0 - smoothstep(1.8, 5.2, r);
 
     // Hue sweeps violet→cyan around the ring, so the gradient reads as motion.
     let angle = dy.atan2(dx); // -PI..PI
@@ -56,21 +54,10 @@ fn sample(x: f32, y: f32, size: u32) -> ([f32; 3], f32) {
         VIOLET[1] + (CYAN[1] - VIOLET[1]) * t,
         VIOLET[2] + (CYAN[2] - VIOLET[2]) * t,
     ];
-    // The core is a brighter, whiter cyan so it reads as "lit" against the ring.
-    let core_rgb = [186.0, 246.0, 255.0];
-
-    let alpha = (ring + core).min(1.0);
-    if alpha <= 0.0 {
+    if ring <= 0.0 {
         return ([0.0; 3], 0.0);
     }
-    // Composite core over ring by their relative weights.
-    let core_weight = (core / (ring + core).max(f32::EPSILON)).clamp(0.0, 1.0);
-    let rgb = [
-        ring_rgb[0] + (core_rgb[0] - ring_rgb[0]) * core_weight,
-        ring_rgb[1] + (core_rgb[1] - ring_rgb[1]) * core_weight,
-        ring_rgb[2] + (core_rgb[2] - ring_rgb[2]) * core_weight,
-    ];
-    ([rgb[0] * alpha, rgb[1] * alpha, rgb[2] * alpha], alpha)
+    ([ring_rgb[0] * ring, ring_rgb[1] * ring, ring_rgb[2] * ring], ring)
 }
 
 /// Render the mark to RGBA8.
@@ -226,7 +213,6 @@ pub fn svg() -> String {
     </linearGradient>
   </defs>
   <circle cx="16" cy="16" r="11.6" fill="none" stroke="url(#gate)" stroke-width="6"/>
-  <circle cx="16" cy="16" r="3.5" fill="#baf6ff"/>
 </svg>
 "##,
         violet = hex(VIOLET),
@@ -250,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn corners_are_transparent_and_the_centre_is_lit() {
+    fn corners_and_centre_are_transparent() {
         let buf = rgba(false);
         let at = |x: u32, y: u32| {
             let i = ((y * SIZE + x) * 4) as usize;
@@ -258,16 +244,16 @@ mod tests {
         };
         assert_eq!(at(0, 0).3, 0, "top-left corner should be transparent");
         assert_eq!(at(SIZE - 1, SIZE - 1).3, 0, "bottom-right corner should be transparent");
-        assert!(at(SIZE / 2, SIZE / 2).3 > 200, "the core should be opaque");
+        assert_eq!(at(SIZE / 2, SIZE / 2).3, 0, "the gate opening should be transparent");
     }
 
     #[test]
-    fn the_ring_is_drawn_and_the_gap_between_ring_and_core_is_clear() {
+    fn the_hollow_ring_is_drawn() {
         let buf = rgba(false);
         let alpha_at = |x: u32, y: u32| buf[(((y * SIZE + x) * 4) + 3) as usize];
-        // y = centre, x sweeping right: core (16), gap (~23), ring (~27), outside (31).
-        assert!(alpha_at(16, 16) > 200, "core");
-        assert!(alpha_at(23, 16) < 60, "gap between core and ring");
+        // y = centre, x sweeping right: opening (16), inner gap (~23), ring (~27), outside (31).
+        assert_eq!(alpha_at(16, 16), 0, "gate opening");
+        assert!(alpha_at(23, 16) < 60, "space inside the ring");
         assert!(alpha_at(27, 16) > 200, "ring");
         assert_eq!(alpha_at(31, 16), 0, "outside the ring");
     }
@@ -281,7 +267,7 @@ mod tests {
             (0, 0, 0),
             "template RGB must be black"
         );
-        assert!(buf[i + 3] > 200, "template alpha must carry the shape");
+        assert_eq!(buf[i + 3], 0, "template center must preserve the gate opening");
     }
 
     #[test]
@@ -291,7 +277,11 @@ mod tests {
             assert_eq!(buf.len(), (size * size * 4) as usize, "{size}px buffer");
             let alpha = |x: u32, y: u32| buf[(((y * size + x) * 4) + 3) as usize];
             assert_eq!(alpha(0, 0), 0, "{size}px: corner should be transparent");
-            assert!(alpha(size / 2, size / 2) > 200, "{size}px: core should be lit");
+            assert_eq!(
+                alpha(size / 2, size / 2),
+                0,
+                "{size}px: gate opening should be transparent"
+            );
         }
     }
 
@@ -344,10 +334,7 @@ mod tests {
 
         // The centre pixel of a 16px image, counting rows from the bottom.
         let centre = off + ((16 - 1 - 8) * 16 + 8) * 4;
-        let (b, g, r, a) = (ico[centre], ico[centre + 1], ico[centre + 2], ico[centre + 3]);
-        assert!(a > 200, "core should be opaque");
-        // The core is a pale cyan (#baf6ff-ish), so blue >= green > red in BGRA.
-        assert!(b >= g && g > r, "core colour looks wrong: b={b} g={g} r={r}");
+        assert_eq!(ico[centre + 3], 0, "gate opening should be transparent");
     }
 
     #[test]
@@ -355,8 +342,9 @@ mod tests {
         let svg = svg();
         assert!(svg.starts_with("<svg"), "must be a bare SVG document");
         assert!(svg.contains("viewBox=\"0 0 32 32\""));
-        assert!(svg.contains("#8b5cf6"), "violet stop missing");
+        assert!(svg.contains("#6d5efc"), "violet stop missing");
         assert!(svg.contains("#22d3ee"), "cyan stop missing");
+        assert!(!svg.contains("#baf6ff"), "the hollow gate must not render a core");
         assert!(svg.contains("</svg>"));
     }
 

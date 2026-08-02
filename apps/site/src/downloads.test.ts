@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { installCommandFor } from './downloads.ts';
+import { installerUrlFor, installCommandFor } from './downloads.ts';
+
+test('keeps a direct Windows installer fallback before release metadata loads', () => {
+  assert.equal(
+    installerUrlFor({ platform: 'windows', architecture: 'x64' }),
+    'https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-windows-x64-setup.exe',
+  );
+});
 
 test('builds a PowerShell install and launch command for Windows', () => {
   const install = installCommandFor({ platform: 'windows', architecture: 'arm64' });
