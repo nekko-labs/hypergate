@@ -149,7 +149,7 @@ enum Command {
     },
     /// Call a tool through the gateway, exactly as an agent would.
     Call {
-        /// Namespaced tool name, e.g. `nekkos__open_paw_status`.
+        /// Namespaced tool name, e.g. `nekkos__nekkos_status`.
         tool: String,
         /// Arguments as a JSON object.
         args: Option<String>,

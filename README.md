@@ -171,7 +171,7 @@ hypergate logs <id>                  # a server's logs
 # using the gateway, exactly as an agent would
 hypergate tools                      # every tool the gateway exposes
 hypergate tools --server nekkos      # just one server's
-hypergate call nekkos__open_paw_status
+hypergate call nekkos__nekkos_status
 hypergate call echo__echo '{"text":"nyaa"}'
 
 # what a connected client fetches instead of storing a token
