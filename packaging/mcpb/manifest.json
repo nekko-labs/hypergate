@@ -1,0 +1,44 @@
+{
+  "manifest_version": "0.3",
+  "name": "hypergate",
+  "display_name": "Hypergate",
+  "version": "0.0.0",
+  "description": "Every MCP server Hypergate runs on this machine, through one local gateway.",
+  "long_description": "Hypergate is a local-first runtime and manager for MCP servers: it launches them in sandboxed processes or Docker, supervises them, keeps their secrets in the OS keychain, and exposes all of them through a single gateway. This extension connects Claude Desktop to that gateway, so every server you add in Hypergate is available here with nothing further to configure.\n\nIt attaches to the Hypergate daemon already running on this machine, and falls back to running the servers itself when there is none. Which servers it may reach is yours to set, per client, in the Hypergate manager.",
+  "author": { "name": "Nekko Labs", "url": "https://hypergate.app" },
+  "homepage": "https://hypergate.app",
+  "documentation": "https://github.com/nekko-labs/hypergate#readme",
+  "support": "https://github.com/nekko-labs/hypergate/issues",
+  "repository": { "type": "git", "url": "https://github.com/nekko-labs/hypergate" },
+  "license": "MIT",
+  "keywords": ["mcp", "gateway", "local-first", "hypergate", "tools"],
+  "privacy_policies": ["https://github.com/nekko-labs/hypergate/blob/main/PRIVACY.md"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/hypergated.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/hypergated.mjs", "--stdio"],
+      "env": {
+        "HYPERGATE_PORT": "${user_config.port}",
+        "HYPERGATE_STDIO_AGENT": "claude-desktop"
+      }
+    }
+  },
+  "user_config": {
+    "port": {
+      "type": "number",
+      "title": "Gateway port",
+      "description": "The port the Hypergate daemon serves on. Leave this alone unless you set HYPERGATE_PORT yourself.",
+      "default": 7777,
+      "min": 1,
+      "max": 65535,
+      "required": false
+    }
+  },
+  "tools_generated": true,
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=20.0.0" }
+  }
+}

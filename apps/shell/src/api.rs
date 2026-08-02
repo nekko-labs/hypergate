@@ -59,6 +59,19 @@ pub struct Logs {
     pub logs: Vec<String>,
 }
 
+/// One connected agent: a scoped gateway token with a name. Only the fields the
+/// CLI needs; the daemon owns the rest.
+#[derive(Debug, Deserialize)]
+pub struct AgentClient {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    pub token: String,
+    /// Set when this call is what brought the agent into existence.
+    #[serde(default)]
+    pub created: bool,
+}
+
 /// A catalog entry, curated or from a registry search. Only the fields the CLI
 /// prints or copies into an add payload; the daemon owns the full shape.
 #[derive(Debug, Clone, Deserialize)]
@@ -277,6 +290,20 @@ pub fn gateway() -> Result<GatewayInfo, String> {
 
 pub fn analytics() -> Result<Analytics, String> {
     get("/api/analytics")
+}
+
+/// Find the connected agent a key names, optionally creating it.
+///
+/// The key is an agent id, its display name, or the stem of an id that no longer
+/// exists — the daemon owns that resolution (see `matchAgents` in core) so the
+/// CLI and the web UI can never disagree about which agent a config meant.
+pub fn resolve_client(key: &str, create: bool) -> Result<AgentClient, String> {
+    let body = send(
+        "/api/clients/resolve",
+        Some(&serde_json::json!({ "key": key, "create": create })),
+        TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from /api/clients/resolve: {e}"))
 }
 
 /// What the daemon last knew about updates. Never hits the network.

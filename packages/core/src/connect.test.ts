@@ -134,6 +134,52 @@ describe('connect commands', () => {
   });
 });
 
+describe('a helper command instead of a stored token', () => {
+  const helped = { ...ctx, headersHelper: 'hypergate mcp-headers claude-code-a8ce' };
+
+  it('gives Claude Code the helper, and no copy of the token anywhere', () => {
+    const argv = connectArgv('claude-code', helped)!;
+    expect(argv.add.slice(0, 3)).toEqual(['mcp', 'add-json', ENTRY_NAME]);
+    expect(argv.add).toEqual(expect.arrayContaining(['-s', 'user']));
+    expect(argv.reset).toContain('remove');
+    const entry = JSON.parse(argv.add[3]).mcpServers?.[ENTRY_NAME] ?? JSON.parse(argv.add[3]);
+    expect(entry).toEqual({ type: 'http', url: ctx.url, headersHelper: helped.headersHelper });
+    expect(argv.add.join(' ')).not.toContain(ctx.token);
+  });
+
+  it('renders the same entry in the snippet as in the command', () => {
+    const fromCommand = JSON.parse(connectArgv('claude-code', helped)!.add[3]);
+    const fromSnippet = JSON.parse(connectSnippet('claude-code', helped)!).mcpServers[ENTRY_NAME];
+    expect(fromSnippet).toEqual(fromCommand);
+  });
+
+  it('falls back to the bearer token when there is no helper to run', () => {
+    expect(connectArgv('claude-code', ctx)!.add).toContain('-H');
+    expect(JSON.parse(connectSnippet('claude-code', ctx)!).mcpServers[ENTRY_NAME].headers).toEqual({
+      Authorization: `Bearer ${ctx.token}`,
+    });
+  });
+
+  it('leaves every other client on the token, since only Claude Code runs helpers', () => {
+    // `.mcp.json` in particular is read by harnesses that would choke on a field
+    // they don't know, so the portable snippet stays portable.
+    for (const id of ['mcp-json', 'cursor', 'vscode', 'gemini-cli', 'openclaw', 'kotrain', 'hermes']) {
+      expect(connectSnippet(id, helped) ?? '', id).not.toContain('headersHelper');
+    }
+    expect(connectArgv('gemini-cli', helped)!.add).toContain('Authorization: Bearer deadbeef');
+  });
+
+  it('survives every shell the command can be pasted into', () => {
+    // The JSON payload is one argument full of quotes; each shell has to be
+    // handed it in a form that reassembles into exactly the same string.
+    const argv = connectArgv('claude-code', helped)!.add;
+    const rendered = formatCommands('claude', argv);
+    expect(rendered.bash).toContain(`'${argv[3].replaceAll("'", `'\\''`)}'`);
+    expect(rendered.powershell).toContain(`'${argv[3]}'`);
+    expect(rendered.cmd).toContain(argv[3].replaceAll('"', '""'));
+  });
+});
+
 describe('shell quoting', () => {
   const argv = connectArgv('claude-code', ctx)!.add;
 

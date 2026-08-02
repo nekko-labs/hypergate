@@ -8,10 +8,16 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import {
   Supervisor,
   createGateway,
+  createProxy,
+  agentNameFromKey,
+  agentSlug,
+  matchAgents,
   REGISTRY,
   searchRegistry,
   KNOWN_CLIS,
@@ -968,14 +974,108 @@ const runOAuth = async (
 const serverForState = (state: string): ManagedServerConfig | undefined =>
   servers.find((s) => s.runtime === 'remote' && secretStore(s.id).load('state') === state);
 
+/**
+ * Is a resident daemon already serving on our port?
+ *
+ * Deliberately cheap and deliberately quiet: one `/health` GET on a short leash,
+ * and any failure at all means "no daemon", because the only thing riding on the
+ * answer is whether a stdio spawn proxies or runs its own servers.
+ */
+const residentDaemon = async (): Promise<boolean> => {
+  try {
+    const res = await fetch(`http://localhost:${PORT}/health`, { signal: AbortSignal.timeout(1500) });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { ok?: boolean };
+    return body.ok === true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The credential a stdio spawn presents to the resident gateway.
+ *
+ * `HYPERGATE_TOKEN` when the shell launched us, else — if the spawn declared a
+ * name via `HYPERGATE_STDIO_AGENT` — a scoped agent token fetched from the
+ * daemon, else the master token from the keychain.
+ *
+ * The middle case is what a packaged bundle uses (the .mcpb runs `--stdio` with
+ * `HYPERGATE_STDIO_AGENT=claude-desktop`). It matters because the alternative is
+ * the master token: an agent shows up in the manager under its own name, reaches
+ * only the servers it's allowed, and can be revoked on its own. It is created on
+ * first use, which is the same bargain the connect button makes.
+ *
+ * Only when the spawn asks for it, though: a bare `hypergated --stdio` keeps the
+ * master token it has always used, rather than quietly minting an identity
+ * nobody asked for.
+ */
+const stdioToken = async (): Promise<string> => {
+  if (process.env.HYPERGATE_TOKEN) return process.env.HYPERGATE_TOKEN;
+  const key = process.env.HYPERGATE_STDIO_AGENT?.trim();
+  if (key) {
+    try {
+      const res = await fetch(`http://localhost:${PORT}/api/clients/resolve`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key, create: true }),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        const agent = (await res.json()) as { token?: string };
+        if (agent.token) return agent.token;
+      }
+    } catch {
+      /* fall through to the master token */
+    }
+  }
+  return loadToken();
+};
+
+/**
+ * The stdio gateway, attached to the daemon that is already running.
+ *
+ * Returns false when there is nothing to attach to, so the caller can fall back
+ * to being a standalone gateway.
+ */
+const startStdioProxy = async (): Promise<boolean> => {
+  if (process.env.HYPERGATE_STDIO_PROXY === '0') return false;
+  if (!(await residentDaemon())) return false;
+  try {
+    const token = await stdioToken();
+    const transport = new StreamableHTTPClientTransport(new URL(`http://localhost:${PORT}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const upstream = new Client({ name: 'hypergate-stdio-proxy', version: VERSION }, { capabilities: {} });
+    await upstream.connect(transport);
+    const proxy = createProxy(upstream, { name: 'hypergate-gateway', version: VERSION });
+    await proxy.connect(new StdioServerTransport());
+    const { tools } = await upstream.listTools();
+    process.stderr.write(`hypergated gateway (stdio → resident daemon on ${PORT}) up — ${tools.length} tool(s)\n`);
+    return true;
+  } catch (e) {
+    // A daemon that answered /health but refused the gateway is worth saying out
+    // loud: the usual cause is a token mismatch, and silently starting a second
+    // fleet instead would hide it behind tools that mysteriously work.
+    process.stderr.write(`hypergated: could not attach to the daemon on ${PORT} (${e instanceof Error ? e.message : e}); starting a private gateway instead\n`);
+    return false;
+  }
+};
+
 // ── stdio gateway mode (the single aggregated endpoint for harnesses) ──────
+//
+// Two shapes, decided at spawn time: proxy to the resident daemon when there is
+// one (so every harness on the machine shares one fleet of servers), else start
+// the enabled servers here and be the gateway (so `hypergated --stdio` still
+// works on a machine where nothing else is running).
 //
 // Boot is sequenced with promises rather than top-level `await` throughout this
 // file. Not style: a CommonJS module cannot express top-level await, and the
 // standalone build (Node SEA, see scripts/build-standalone.mjs) requires its
 // entry point to be CommonJS. The ordering guarantees are identical.
 if (STDIO_MODE) {
-  void startEnabled().then(async () => {
+  void startStdioProxy().then(async (proxied) => {
+    if (proxied) return;
+    await startEnabled();
     const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller: 'stdio (local)' });
     await gateway.connect(new StdioServerTransport());
     // stdout is the MCP channel now; logs must go to stderr only.
@@ -1146,10 +1246,49 @@ if (STDIO_MODE) {
     };
   };
 
+  /**
+   * The command a client can run to fetch this agent's headers, when running it
+   * here actually works.
+   *
+   * Two conditions, both necessary. `hypergate` has to be on PATH, because the
+   * client will resolve the same bare word later. And it has to *answer*: an
+   * older shell binary on PATH has no `mcp-headers` subcommand, and writing a
+   * config that calls it would leave the client unable to connect at all —
+   * strictly worse than the token it would otherwise have stored. So we run it
+   * once, for real, and only hand it out if headers come back.
+   *
+   * Memoised per daemon run (the answer is about the binary, not the agent),
+   * with a short TTL so installing the CLI mid-session is noticed.
+   */
+  let helperMemo: { at: number; ok: boolean } | undefined;
+  const HELPER_TTL = 60_000;
+  const helperCommandFor = (a: AgentClient): string => `hypergate mcp-headers ${a.id}`;
+  const headersHelperFor = async (a: AgentClient): Promise<string | undefined> => {
+    const file = resolveOnPath('hypergate');
+    if (!file) return undefined;
+    if (!helperMemo || Date.now() - helperMemo.at > HELPER_TTL) {
+      let ok = false;
+      try {
+        const opts = { timeout: 5000, windowsHide: true, maxBuffer: 100_000 } as const;
+        const low = file.toLowerCase();
+        const viaCmd = WIN && (low.endsWith('.cmd') || low.endsWith('.bat'));
+        const { stdout } = viaCmd
+          ? await pexecFile(process.env.ComSpec ?? 'cmd.exe', ['/c', file, 'mcp-headers', a.id], opts)
+          : await pexecFile(file, ['mcp-headers', a.id], opts);
+        const parsed = JSON.parse(stdout) as Record<string, unknown>;
+        ok = typeof parsed?.Authorization === 'string' && parsed.Authorization.startsWith('Bearer ');
+      } catch {
+        ok = false;
+      }
+      helperMemo = { at: Date.now(), ok };
+    }
+    return helperMemo.ok ? helperCommandFor(a) : undefined;
+  };
+
   /** Everything the UI needs to connect one agent to any client we know about. */
   const agentConnectInfo = async (a: AgentClient): Promise<AgentConnectInfo> => {
     const url = `http://localhost:${PORT}/mcp`;
-    const ctx = { url, token: a.token };
+    const ctx = { url, token: a.token, headersHelper: await headersHelperFor(a) };
     return {
       agentId: a.id,
       entryName: ENTRY_NAME,
@@ -1164,8 +1303,6 @@ if (STDIO_MODE) {
     };
   };
 
-  const slugId = (s: string): string =>
-    s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || 'agent';
   /** Normalize a servers allow-list from a request body to `'*' | string[]`. */
   const normServers = (v: unknown): '*' | string[] =>
     v === '*' ? '*' : Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
@@ -1503,7 +1640,7 @@ if (STDIO_MODE) {
         const name = ((b.name ?? '') || (picked?.name ?? '')).trim();
         if (!name) return json(res, 400, { error: 'name required' });
         const agent: AgentClient = {
-          id: `${slugId(name)}-${randomBytes(2).toString('hex')}`,
+          id: `${agentSlug(name)}-${randomBytes(2).toString('hex')}`,
           name,
           token: randomBytes(24).toString('hex'),
           servers: normServers(b.servers),
@@ -1515,6 +1652,46 @@ if (STDIO_MODE) {
         clients.push(agent);
         saveClients(clients);
         return json(res, 200, agentInfo(agent));
+      } catch {
+        return json(res, 400, { error: 'invalid_json' });
+      }
+    }
+    /**
+     * Find one agent from a key that may have outlived its exact id, and
+     * optionally create it. This is what `hypergate mcp-headers` calls, which is
+     * in turn what a client's headers helper runs at every connection.
+     *
+     * `create` exists for configuration nobody edits per machine — the Claude
+     * Code plugin ships one line naming a key, and the agent it refers to is
+     * made here on first use, scoped like the quick-connect button's.
+     */
+    if (pathname === '/api/clients/resolve' && req.method === 'POST') {
+      try {
+        const b = JSON.parse(await readBody(req)) as { key?: unknown; create?: unknown };
+        const key = typeof b.key === 'string' ? b.key.trim() : '';
+        if (!key) return json(res, 400, { error: 'key required' });
+        const found = matchAgents(clients, key);
+        if (found.length === 1) return json(res, 200, agentInfo(found[0]));
+        // Two agents by the same name is the user's to resolve: picking one
+        // would hand out a credential on a coin flip.
+        if (found.length > 1) return json(res, 409, { error: 'ambiguous', ids: found.map((a) => a.id) });
+        if (b.create !== true) return json(res, 404, { error: 'not_found' });
+        const picked = connectTarget(agentSlug(key));
+        const name = picked?.name ?? agentNameFromKey(key);
+        const agent: AgentClient = {
+          id: `${agentSlug(name)}-${randomBytes(2).toString('hex')}`,
+          name,
+          token: randomBytes(24).toString('hex'),
+          servers: '*',
+          createdAt: new Date().toISOString(),
+          ...(picked ? { target: picked.id } : {}),
+        };
+        clients.push(agent);
+        saveClients(clients);
+        // `created` so the caller can say a credential was just minted rather
+        // than found — the CLI prints that, since silence would be the wrong
+        // amount of noise for handing out a new token.
+        return json(res, 200, { ...agentInfo(agent), created: true });
       } catch {
         return json(res, 400, { error: 'invalid_json' });
       }
@@ -1547,7 +1724,11 @@ if (STDIO_MODE) {
         const target = connectTarget(b.target ?? '');
         if (!target || target.method !== 'cli' || !target.command)
           return json(res, 400, { error: 'unknown or non-runnable target' });
-        const argv = connectArgv(target.id, { url: `http://localhost:${PORT}/mcp`, token: agent.token });
+        const argv = connectArgv(target.id, {
+          url: `http://localhost:${PORT}/mcp`,
+          token: agent.token,
+          headersHelper: await headersHelperFor(agent),
+        });
         if (!argv) return json(res, 400, { error: 'unknown target' });
         const file = resolveOnPath(target.command);
         const command = formatCommand(target.command, argv.add, defaultShellFor(process.platform));
