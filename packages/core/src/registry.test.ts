@@ -19,7 +19,7 @@ describe('REGISTRY catalog', () => {
   });
 
   it('includes the requested official servers, flagged official', () => {
-    for (const id of ['supabase', 'linear', 'figma', 'atlassian', 'azure', 'aws', 'gcp-toolbox', 'cloudflare', 'higgsfield', 'meta-ads', 'kotrain', 'vercel']) {
+    for (const id of ['supabase', 'linear', 'figma', 'atlassian', 'azure', 'aws', 'gcp-toolbox', 'cloudflare', 'higgsfield', 'meta-ads', 'nekkos', 'vercel']) {
       const e = registryEntry(id);
       expect(e, id).toBeDefined();
       expect(e!.official, id).toBe(true);
@@ -99,7 +99,7 @@ describe('KNOWN_CLIS', () => {
   it('has unique ids and covers the common MCP prerequisites', () => {
     const ids = KNOWN_CLIS.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const id of ['node', 'npx', 'uvx', 'docker', 'flyctl', 'kotrain']) {
+    for (const id of ['node', 'npx', 'uvx', 'docker', 'flyctl', 'nekkos']) {
       expect(knownCli(id), id).toBeDefined();
     }
   });
