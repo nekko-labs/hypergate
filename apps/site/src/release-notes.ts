@@ -76,7 +76,8 @@ function appendInline(parent: HTMLElement, text: string) {
 function releaseBody(text: string): HTMLElement {
   const body = document.createElement('div');
   body.className = 'release-body';
-  for (const block of text.trim().split(/\n\s*\n/)) {
+  // A body edited in GitHub's web UI comes back with CRLF line endings.
+  for (const block of text.replace(/\r\n/g, '\n').trim().split(/\n\s*\n/)) {
     const lines = block.split('\n');
     // `### Features` and friends. Everything lands on h3: the release title is
     // the h2 above, so a note's own heading level should not compete with it.
