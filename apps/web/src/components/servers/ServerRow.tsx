@@ -6,7 +6,7 @@ import { useToast } from '../../toast';
 import { ToolList } from '../ToolList';
 import { LogConsole } from '../LogConsole';
 
-export function ServerRow({ s, onChange }: { s: ServerStatus; onChange: () => void }) {
+export function ServerRow({ s, onChange, onToken }: { s: ServerStatus; onChange: () => void; onToken: (server: ServerStatus) => void }) {
   const [logs, setLogs] = useState<string[] | null>(null);
   const [showTools, setShowTools] = useState(false);
   const toast = useToast();
@@ -25,6 +25,10 @@ export function ServerRow({ s, onChange }: { s: ServerStatus; onChange: () => vo
     onChange();
   };
   const signIn = async () => {
+    if (s.error?.toLowerCase().includes('personal access token') || s.error?.toLowerCase().includes('token rejected')) {
+      onToken(s);
+      return;
+    }
     const st = await api.authorize(s.id).catch(() => null);
     if (st?.authUrl) openAuth(st.authUrl);
     else toast.show(`Could not start sign-in for ${s.name}`, 'error');
@@ -58,7 +62,7 @@ export function ServerRow({ s, onChange }: { s: ServerStatus; onChange: () => vo
         </div>
         <div className="row">
           {authorizing ? (
-            <button className="btn sm btn-primary" onClick={() => void signIn()}>🔐 Sign in</button>
+            <button className="btn sm btn-primary" onClick={() => void signIn()}>{s.error?.toLowerCase().includes('personal access token') || s.error?.toLowerCase().includes('token rejected') ? '🔑 Enter token' : '🔐 Sign in'}</button>
           ) : s.state === 'ready' ? (
             <button className="btn sm btn-warn" onClick={() => void act('stop')}>Stop</button>
           ) : (
@@ -71,7 +75,7 @@ export function ServerRow({ s, onChange }: { s: ServerStatus; onChange: () => vo
       </div>
       {authorizing && (
         <p className="small muted" style={{ margin: '8px 0 0' }}>
-          Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.
+          {s.error?.toLowerCase().includes('personal access token') || s.error?.toLowerCase().includes('token rejected') ? <>Paste a new token to reconnect {s.name}.</> : <>Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.</>}
         </p>
       )}
       {s.error && !authorizing && <p className="small" style={{ color: 'var(--danger)', margin: '8px 0 0' }}>{s.error}</p>}

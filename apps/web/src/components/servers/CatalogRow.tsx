@@ -5,6 +5,7 @@ import { RUNTIME_CHIP } from '../../lib/format';
 export function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry) => void }) {
   const runnable = e.runnable !== false;
   const oauth = e.runtime === 'remote' && e.auth === 'oauth';
+  const token = e.runtime === 'remote' && e.auth === 'token';
   return (
     <div className="list-row">
       <div className="row between wrap-gap">
@@ -20,6 +21,7 @@ export function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: Regist
             )}
             <span className="chip">{RUNTIME_CHIP[e.runtime] ?? '⚡ process'}</span>
             {oauth && <span className="chip chip-accent">🔐 OAuth</span>}
+            {token && <span className="chip chip-accent">🔑 Token</span>}
             {e.source === 'registry' && <span className="chip chip-accent">registry</span>}
             {(e.requires ?? []).map((r) => <span key={r} className="chip mono">{r}</span>)}
           </div>
@@ -28,8 +30,8 @@ export function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: Regist
         </div>
         <div className="row">
           {e.homepage && <a className="small muted" href={e.homepage} target="_blank" rel="noreferrer">docs</a>}
-          <button className={`btn ${oauth ? 'btn-primary' : ''}`} onClick={() => onPick(e)} disabled={!runnable} title={runnable ? '' : e.note ?? 'Not locally runnable'}>
-            {oauth ? '🔐 Sign in & add' : '+ Add'}
+          <button className={`btn ${oauth || token ? 'btn-primary' : ''}`} onClick={() => onPick(e)} disabled={!runnable} title={runnable ? '' : e.note ?? 'Not locally runnable'}>
+            {oauth ? '🔐 Sign in & add' : token ? '🔑 Add with token' : '+ Add'}
           </button>
         </div>
       </div>

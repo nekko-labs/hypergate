@@ -36,10 +36,19 @@ export const api = {
   gateway: () => j<GatewayInfo>('/api/gateway'),
   analytics: () => j<AnalyticsSummary>('/api/analytics'),
   logs: (id: string) => j<{ logs: string[] }>(`/api/servers/${id}/logs`),
-  add: (cfg: Partial<ManagedServerConfig>) => j<ServerStatus>('/api/servers', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }),
+  add: (cfg: Partial<ManagedServerConfig> & { token?: string }) =>
+    j<ServerStatus>('/api/servers', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }),
   action: (id: string, action: 'start' | 'stop' | 'restart') => j<ServerStatus>(`/api/servers/${id}/${action}`, { method: 'POST' }),
   // Remote OAuth: (re)start the browser login. Returns { authUrl } to open.
   authorize: (id: string) => j<ServerStatus>(`/api/servers/${id}/authorize`, { method: 'POST' }),
+  // Remote bearer auth: the token is sent only in this request body and is never
+  // returned by the daemon or included in ManagedServerConfig.
+  setToken: (id: string, token: string) =>
+    j<ServerStatus>(`/api/servers/${id}/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    }),
   // Remove is the whole eraser: the server, its OAuth grant, and its place in
   // every agent's allow-list. There is no separate sign-out.
   remove: (id: string) => j<{ ok: boolean }>(`/api/servers/${id}`, { method: 'DELETE' }),

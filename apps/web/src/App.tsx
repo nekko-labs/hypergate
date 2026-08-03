@@ -30,6 +30,7 @@ import { Dialog } from './components/Dialog';
 import { EmptyState } from './components/EmptyState';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogConsole } from './components/LogConsole';
+import { TokenDialog } from './components/servers/TokenDialog';
 import { useToast } from './toast';
 
 type View = 'servers' | 'analytics' | 'settings';
@@ -367,6 +368,7 @@ export function App() {
   const [agents, setAgents] = useState<AgentClientInfo[]>([]);
   const [offline, setOffline] = useState(false);
   const [adding, setAdding] = useState<RegistryEntry | 'custom' | null>(null);
+  const [tokenTarget, setTokenTarget] = useState<{ id?: string; name: string; label?: string; url?: string; entry?: RegistryEntry } | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
   const [version, setVersion] = useState('');
   const [activeSection, setActiveSection] = useState<ServerSection>('agents');
@@ -407,9 +409,9 @@ export function App() {
   const running = servers?.filter((s) => s.state === 'ready').length ?? 0;
   const tools = servers?.reduce((n, s) => n + s.tools.length, 0) ?? 0;
 
-  // One-click OAuth: add the remote server and pop the provider's login. No form,
-  // no token to paste — the whole point of the feature. Falls back to /authorize
-  // if the server was already added (e.g. a half-finished earlier attempt).
+  // One-click OAuth remains for providers that support it. Token-auth entries
+  // take the small credential dialog instead, because the token never belongs
+  // in the persisted server config or an API response.
   const quickAddOAuth = useCallback(async (e: RegistryEntry) => {
     const popup = reserveAuthWindow();
     setShowCatalog(false);
@@ -432,6 +434,12 @@ export function App() {
 
   const handlePick = useCallback((e: RegistryEntry | 'custom') => {
     if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'oauth') { void quickAddOAuth(e); return; }
+    if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'token') {
+      setShowCatalog(false);
+      setAdding(null);
+      setTokenTarget({ name: e.name, label: e.tokenLabel, url: e.tokenUrl, entry: e });
+      return;
+    }
     setAdding(e);
   }, [quickAddOAuth]);
 
@@ -574,7 +582,10 @@ export function App() {
                     </EmptyState>
                   ) : servers && servers.length > 0 ? (
                     <div className="panel"><div className="list">
-                      {servers.map((s) => <ServerRow key={s.id} s={s} agents={agents} onChange={refresh} />)}
+                      {servers.map((s) => <ServerRow key={s.id} s={s} agents={agents} onChange={refresh} onToken={(server) => {
+                        const entry = registry.find((e) => e.id === server.id);
+                        setTokenTarget({ id: server.id, name: server.name, label: entry?.tokenLabel, url: entry?.tokenUrl });
+                      }} />)}
                     </div></div>
                   ) : null}
 
@@ -585,6 +596,31 @@ export function App() {
                       entry={adding === 'custom' ? null : adding}
                       onClose={() => setAdding(null)}
                       onAdded={() => { setAdding(null); setShowCatalog(false); void refresh(); }}
+                    />
+                  )}
+                  {tokenTarget && (
+                    <TokenDialog
+                      name={tokenTarget.name}
+                      label={tokenTarget.label}
+                      url={tokenTarget.url}
+                      onClose={() => setTokenTarget(null)}
+                      onSubmit={async (token) => {
+                        if (tokenTarget.id) {
+                          const status = await api.setToken(tokenTarget.id, token);
+                          if (status.state === 'authorizing') throw new Error('token rejected');
+                          toast.show(`Connected ${tokenTarget.name}`, 'success');
+                        } else if (tokenTarget.entry) {
+                          const e = tokenTarget.entry;
+                          const status = await api.add({
+                            id: e.id, name: e.name, runtime: 'remote', command: '',
+                            url: e.url, transport: e.transport ?? 'http', auth: 'token', token, enabled: true,
+                          });
+                          if (status.state === 'authorizing') throw new Error(status.error ?? 'token rejected');
+                          toast.show(`Connected ${e.name}`, 'success');
+                        }
+                        setTokenTarget(null);
+                        void refresh();
+                      }}
                     />
                   )}
                 </section>
@@ -1176,7 +1212,7 @@ function LogPane({ lines }: { lines: string[] | null }) {
   return <LogConsole lines={lines} />;
 }
 
-function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClientInfo[]; onChange: () => void }) {
+function ServerRow({ s, agents, onChange, onToken }: { s: ServerStatus; agents: AgentClientInfo[]; onChange: () => void; onToken: (server: ServerStatus) => void }) {
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<string[] | null>(null);
   const [armed, setArmed] = useState(false);
@@ -1196,6 +1232,10 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
     onChange();
   };
   const signIn = async () => {
+    if (isRemote && s.state === 'authorizing' && (s.error?.toLowerCase().includes('personal access token') || s.error?.toLowerCase().includes('token rejected'))) {
+      onToken(s);
+      return;
+    }
     const popup = reserveAuthWindow();
     const st = await api.authorize(s.id).catch(() => null);
     openAuth(st?.authUrl, popup);
@@ -1247,7 +1287,7 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
         <>
           {authorizing && (
             <p className="small muted row-note">
-              Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.
+              {s.error?.toLowerCase().includes('token') ? <>Paste a new token to reconnect {s.name}.</> : <>Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.</>}
             </p>
           )}
           {s.error && !authorizing && <p className="small row-note" style={{ color: 'var(--danger)' }}>{s.error}</p>}
@@ -1260,7 +1300,7 @@ function ServerRow({ s, agents, onChange }: { s: ServerStatus; agents: AgentClie
       actions={
         <>
           {authorizing ? (
-            <button className="btn sm btn-primary" onClick={() => void signIn()}>🔐 Sign in</button>
+            <button className="btn sm btn-primary" onClick={() => void signIn()}>{s.error?.toLowerCase().includes('token') ? '🔑 Enter token' : '🔐 Sign in'}</button>
           ) : (
             /* Up/down is one bit of state, so it gets one control. It reads as on
                while starting — that is where the click is taking it — and stays
@@ -2057,6 +2097,7 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
 function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry) => void }) {
   const runnable = e.runnable !== false;
   const oauth = e.runtime === 'remote' && e.auth === 'oauth';
+  const token = e.runtime === 'remote' && e.auth === 'token';
   return (
     <div className="list-row">
       <div className="row between wrap-gap">
@@ -2072,6 +2113,7 @@ function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry
             )}
             <span className="chip">{RUNTIME_CHIP[e.runtime] ?? '⚡ process'}</span>
             {oauth && <span className="chip chip-accent">🔐 OAuth</span>}
+            {token && <span className="chip chip-accent">🔑 Token</span>}
             {e.source === 'registry' && <span className="chip chip-accent">registry</span>}
             {(e.requires ?? []).map((r) => <span key={r} className="chip mono">{r}</span>)}
           </div>
@@ -2080,8 +2122,8 @@ function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry
         </div>
         <div className="row">
           {e.homepage && <a className="small muted" href={e.homepage} target="_blank" rel="noreferrer">docs</a>}
-          <button className={`btn btn-catalog-add ${oauth ? 'btn-primary' : ''}`} onClick={() => onPick(e)} disabled={!runnable} title={runnable ? '' : e.note ?? 'Not locally runnable'}>
-            {oauth ? '🔐 Sign in & add' : '+ Add'}
+          <button className={`btn btn-catalog-add ${oauth || token ? 'btn-primary' : ''}`} onClick={() => onPick(e)} disabled={!runnable} title={runnable ? '' : e.note ?? 'Not locally runnable'}>
+            {oauth ? '🔐 Sign in & add' : token ? '🔑 Add with token' : '+ Add'}
           </button>
         </div>
       </div>

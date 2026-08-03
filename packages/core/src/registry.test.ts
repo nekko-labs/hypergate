@@ -36,6 +36,19 @@ describe('REGISTRY catalog', () => {
     });
   });
 
+  it('uses a bearer token for the GitHub remote entry', () => {
+    expect(registryEntry('github')).toMatchObject({
+      runtime: 'remote',
+      url: 'https://api.githubcopilot.com/mcp/',
+      transport: 'http',
+      auth: 'token',
+      tokenLabel: 'GitHub personal access token',
+      tokenUrl: 'https://github.com/settings/personal-access-tokens',
+      official: true,
+      homepage: 'https://github.com/github/github-mcp-server',
+    });
+  });
+
   it('has the whole recommended set present + flagged recommended', () => {
     for (const id of RECOMMENDED_IDS) {
       const e = registryEntry(id);

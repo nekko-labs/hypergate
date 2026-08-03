@@ -93,17 +93,16 @@ export const REGISTRY: RegistryEntry[] = [
   {
     id: 'github',
     name: 'GitHub',
-    description: 'Official remote GitHub MCP server: repos, issues, PRs, code, Actions. Browser sign-in — no token to paste.',
+    description: 'Official remote GitHub MCP server: repos, issues, PRs, code, Actions. Paste a GitHub personal access token.',
     runtime: 'remote',
     command: '',
     url: 'https://api.githubcopilot.com/mcp/',
     transport: 'http',
-    auth: 'oauth',
+    auth: 'token',
     official: true,
-    // GitHub has no dynamic client registration and requires client auth at the
-    // token endpoint even with PKCE, so it needs a pre-registered app id + secret:
-    // set HYPERGATE_CLIENTID_GITHUB and HYPERGATE_CLIENTSECRET_GITHUB.
-    note: 'Needs a registered GitHub OAuth app (set HYPERGATE_CLIENTID_GITHUB + HYPERGATE_CLIENTSECRET_GITHUB) — GitHub has no automatic app registration.',
+    tokenLabel: 'GitHub personal access token',
+    tokenUrl: 'https://github.com/settings/personal-access-tokens',
+    note: 'Use a fine-grained or classic GitHub PAT. Grant the repository, organization, project, package, gist, notification, workflow, and Codespaces scopes your tools need.',
     homepage: 'https://github.com/github/github-mcp-server',
   },
   {
