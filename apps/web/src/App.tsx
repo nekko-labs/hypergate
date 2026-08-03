@@ -48,8 +48,8 @@ const ANALYTICS_SECTIONS: { id: AnalyticsSection; label: string }[] = [
   { id: 'usage-by-server', label: 'Usage by server' },
   { id: 'callers', label: "Who's calling" },
   { id: 'tools', label: 'Tool ranking' },
-  { id: 'security', label: 'Security' },
   { id: 'recent-calls', label: 'Recent calls' },
+  { id: 'security', label: 'Security' },
 ];
 
 /**
