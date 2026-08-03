@@ -1,6 +1,6 @@
 # Hypergate
 
-> Local-first runtime and manager for MCP (Model Context Protocol) servers. Hypergate runs your MCP servers on your own machine, sandboxed and supervised, and aggregates all of their tools behind **one gateway endpoint** any agent harness can use (Claude Code, Cursor, Codex, Kotrain). Open source, MIT, by Nekko Labs.
+> Local-first runtime and manager for MCP (Model Context Protocol) servers. Hypergate runs your MCP servers on your own machine, sandboxed and supervised, and aggregates all of their tools behind **one gateway endpoint** any agent harness can use (Claude Code, Cursor, Codex, Kotrain). It is how you connect an agent to services like GitHub, Vercel, Slack, or Google Drive **without** putting the authentication, keys, and permissions for those services in the agent's hands. Open source, MIT, by Nekko Labs.
 
 Hypergate is not a connector directory: it is a proper server runtime. Add servers from a curated catalog or a custom command, choose how each one is isolated, start them, and paste a single URL (or stdio command) into your agent. Every tool call is recorded locally, so you get an audit trail and usage analytics for free, and secrets are injected rather than logged.
 
