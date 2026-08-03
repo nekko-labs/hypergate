@@ -7,12 +7,12 @@
     <meta name="description" content="Hypergate — local-first runtime & manager for MCP servers. Every MCP server, one endpoint." />
     <title>Hypergate — every MCP server, one endpoint</title>
     <script>
-      // Apply the saved theme before paint (no flash). Default: medium.
+      // Apply the saved theme before paint (no flash). Default: dark.
       try {
-        var t = localStorage.getItem('hypergate-theme') || 'medium';
+        var t = localStorage.getItem('hypergate-theme') === 'light' ? 'light' : 'dark';
         document.documentElement.setAttribute('data-theme', t);
       } catch (e) {
-        document.documentElement.setAttribute('data-theme', 'medium');
+        document.documentElement.setAttribute('data-theme', 'dark');
       }
     </script>
   </head>
