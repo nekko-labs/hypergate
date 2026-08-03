@@ -1,11 +1,26 @@
 # Release notes
 
 One file per version: `docs/releases/<version>.md`, matching the version in the
-root `package.json`. Every PR bumps that version, so every PR that changes
-something a user would notice writes or extends the matching file. The release
-workflow reads it, `scripts/release-notes.mjs` adds the install footer, and both
-the GitHub release and [hypergate.app/release-notes.html](https://hypergate.app/release-notes.html)
+root `package.json`. Every PR bumps that version (TASKS.md §4.1), so every PR
+that changes something a user would notice writes or extends the matching file.
+The release workflow reads it, `scripts/release-notes.mjs` adds the install
+footer, and both the GitHub release and
+[hypergate.app/release-notes.html](https://hypergate.app/release-notes.html)
 render the result.
+
+**A release's notes cover everything since the last released tag, not just its
+own version.** A minor bump per PR outruns the tags: v0.16.0 was bumped and
+never released, so its changes went out under v0.16.1, whose notes fold them in
+and say so. Before tagging, check what the release actually contains and make
+sure the file for that version accounts for all of it:
+
+```
+git log $(git describe --tags --abbrev=0)..HEAD --no-merges --oneline
+```
+
+The workflow prints a warning when the file for the tagged version is missing,
+but it cannot tell that a file is *incomplete*. That part is the read-through
+above.
 
 The shape:
 

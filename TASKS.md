@@ -73,6 +73,22 @@ hypergate/                         GitHub: nekko-labs/hypergate (public, MIT)
 - Build → verify → push to `main` (CI green). Conventional commits. Mock/test the supervisor with a trivial in-repo echo MCP server so tests need no external binaries.
 - Every shipped feature → status + release in `SPEC.md`; new work broken down here first.
 
+### 4.1 Versioning: every PR bumps the minor
+
+**Every PR bumps the release version by one minor** (`0.17.0` → `0.18.0`), unless the PR itself says otherwise. Run it, don't hand-edit:
+
+```
+npm run version:bump          # minor, the rule
+npm run version:bump -- --patch   # only when explicitly called for (a fix on a cut release)
+npm run version:check         # assert every file still agrees
+```
+
+Why a minor every time: releases here are cut by tagging (`git tag v0.18.0 && git push --tags`) and the publish job checks the tag against the root `package.json`, so a merged PR that left the version alone can never be released on its own. Bumping in the PR means `main` is always taggable, and the version in a bug report names the exact merge.
+
+The version is written in **seven** files that must move together, which is the whole reason for the script: root `package.json`, `apps/daemon/package.json`, the `VERSION` constant in `apps/daemon/src/index.ts` (served on `/health` and compared against the update feed), `apps/shell/Cargo.toml` + `Cargo.lock`, `.claude-plugin/marketplace.json`, and `plugins/hypergate/.claude-plugin/plugin.json`. `npm run version:check` fails on drift.
+
+New features land under that version in `SPEC.md` (the **Release** column) and as a shipped entry here. A PR that ships nothing user-visible (docs, tests, CI) still bumps, so "unless mentioned" is the escape hatch, not a judgement call to make silently.
+
 ## 5. Execution Plan (backlog)
 
 The epic-by-epic backlog lives in **Part 2 below** (single source of truth for task status; this section used to mirror it and drifted). Epics: 0 Scaffold · 1 Runtime & supervisor · 2 Gateway · 3 Registry & API · 4 UI · 5 Kotrain integration · 6 Distribution.
@@ -407,10 +423,18 @@ Philip, trying to add Hypergate to Claude Code: *"it's having troubles. We're mi
 
 - [x] **Reverse Epic 31: every Nekkos reference goes back to Kotrain**: the rename above lasted a day. The sibling product is **Kotrain** again (repo `nekko-labs/kotrain`, home **kotrain.com**, CLI `kotrain` with a legacy `nekkos` alias), so the catalog entry id, CLI detection, connect target (`~/.kotrain/settings.json`), gateway tool prefix (`kotrain__kotrain_*`), agent brand mark, docs (README, SPEC, TASKS, llms.txt), site copy, shell/daemon comments, tests and smoke scripts all follow it back. Epic 31's entry above is left as written, since it is the record of what happened. Nekko Labs, nekko-labs, NekkoMCP history, and the Nekko Vault catalog entry stay as they were. · Done: 2026-08-03
 
-## Epic 33: release notes a person can read
+## Epic 33: a hero that names the fear, and a version rule (v0.18.0)
+
+Philip: *"add the rule, each PR should bump the release version by a minor version unless mentioned"*, plus the marketing hero: `"One gate"` → `"One secure gate"`, and a subhead rewritten around safely connecting agents to real services.
+
+- [x] **The hero asks the visitor's question instead of describing the machine**: `One gate.` → **`One secure gate.`**, and the subhead moved from *"runs your MCP servers on your own machine: sandboxed, supervised, and aggregated behind a single gateway endpoint"* to the thing a visitor is actually weighing: connecting Claude Code, Codex, Kotrain, Cursor or Devin to **GitHub, Vercel, Slack or Google Drive**, easily and safely, with authentication, keys and permissions kept out of an agent's hands *if things go bad*. Named services because a visitor recognises the service, not the protocol; the loss framing because that is the moment the product is worth installing. The mechanism words were not deleted, they already live in the security section, the isolation cards and the quick start. Verified at 1440×980, 1024×768, 820×900, 390×844 and 360×780: the longer gradient line still sets on one line at every width where the old one did (803px inside an 880px measure at full size), the subhead grows from three lines to five on desktop and seven on mobile while the hero still ends 152px above the fold, and no width scrolls horizontally. · [spec](SPEC.md#37-marketing-site-shipped) · Added: 2026-08-04 · Done: 2026-08-04
+- [x] **Every PR bumps the minor** (§4.1 above, `scripts/bump-version.mjs`, `npm run version:bump` / `version:check`): the version is written in **seven** files (root and daemon `package.json`, the daemon's `VERSION` constant, `Cargo.toml` + `Cargo.lock`, the plugin manifest and the marketplace entry), so a rule enforced by hand is a rule that drifts. The script moves all seven, `--check` fails on disagreement, and `--patch` / an exact version cover the "unless mentioned" case. The rule matters because releases are cut by tag and the publish job compares the tag to the root `package.json`: a merged PR that left the version alone cannot be released on its own. Recorded in `TASKS.md` §4.1, the README's Develop section, and the project's workspace `AGENTS.md`. This PR is the first to follow it: 0.17.0 → **0.18.0**. · Added: 2026-08-04 · Done: 2026-08-04
+
+## Epic 34: release notes a person can read (v0.19.0)
 
 Philip: *"let's clean up the release notes. they are too technical. make them more human readable. Identify what changed grouped by features / bug fixes / performance improvements."*
 
 - [x] **What changed, in the reader's words**: every release's notes are `docs/releases/<version>.md` — a headline, one line on what the release is for, then **Features**, **Bug fixes** and **Performance improvements**, with a group left out when it would be empty rather than padded. All four published releases (v0.15.1 through v0.17.0) backfilled from the commits they shipped, because before this every one of them said only how to install it and nothing about what it changed. · [spec](SPEC.md#39-distribution-shipped) · Done: 2026-08-04
 - [x] **A generated install footer**: `scripts/release-notes.mjs` appends it, so it reads the same on every release and nobody writes it by hand, and it keeps the one thing that has to vary — the registry command appears only when that release published, and v0.15.2's notes had been promising `npm install -g hypergated` while nothing is on the registry at all. The release workflow and the by-hand backfill both go through the script, and the workflow's re-run path now sets the notes it used to skip. · [spec](SPEC.md#39-distribution-shipped) · Done: 2026-08-04
+- [x] **A release's notes cover everything since the last released tag**: a minor bump per PR outruns the tags — v0.16.0 was bumped and never released, so its changes went out under v0.16.1, whose notes fold them in and say so. `docs/releases/README.md` names the rule and the `git log $(git describe --tags --abbrev=0)..HEAD` read-through that checks it, because the workflow can warn that a notes file is *missing* and never that it is incomplete. · Done: 2026-08-04
 - [x] **The site renders the shape**: `###` headings and `**bold**` become real DOM nodes (h3, since the release title is the h2 above it), and a bullet wrapped over several lines is one item instead of one item per line. The subset stays deliberately small and is named in `docs/releases/README.md`, because anything outside it shows up as its own punctuation on the page. · [spec](SPEC.md#37-marketing-site-shipped) · Done: 2026-08-04
