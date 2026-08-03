@@ -1,12 +1,12 @@
 /* Hypergate — Nekko Labs design language (violet→cyan era, matches Kotrain).
-   Three themes; MEDIUM is the shipped default (a calm mid-slate). Light + Dark
-   are opt-in via the topbar switch (data-theme on <html>). */
+   Two themes: DARK (a calm mid-slate) is the default and Light is opt-in via
+   the topbar sun/moon button (data-theme on <html>). */
 :root {
   --accent: #8071ff;
   --accent-2: #22d3ee;
   --grad: linear-gradient(120deg, var(--accent), var(--accent-2));
 
-  /* Medium (default) — mid slate, neither near-black nor paper-white. */
+  /* Dark (default) — mid slate, neither near-black nor paper-white. */
   --paper: #24272f;
   --paper-2: #2b2f39;
   --card: #2c313c;
@@ -30,21 +30,6 @@
   --on-accent: #fff;
   --overlay: rgba(6, 8, 14, 0.55);
   --overlay-shadow: 0 24px 64px -24px rgb(0 0 0 / 0.7);
-  color-scheme: dark;
-}
-
-:root[data-theme='dark'] {
-  --paper: #0b0d13;
-  --paper-2: #10131b;
-  --card: #131722;
-  --card-2: #1a1f2e;
-  --ink: #eceef6;
-  --ink-2: #a7adc2;
-  --ink-3: #6d7590;
-  --line: #222839;
-  --line-2: #2e3549;
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -12px rgb(0 0 0 / 0.5);
-  --overlay: rgba(3, 4, 9, 0.62);
   color-scheme: dark;
 }
 
@@ -294,14 +279,35 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
   .healthbox .hb-stop { opacity: 1; pointer-events: auto; }
 }
 
-/* theme switch */
-.themeswitch { display: inline-flex; gap: 1px; background: var(--card-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px; }
-.themeswitch button {
-  border: none; background: none; color: var(--ink-3); cursor: pointer; font-family: inherit;
-  width: 26px; height: 22px; border-radius: 999px; font-size: 12.5px; line-height: 1; display: grid; place-items: center;
+/* ── theme toggle ───────────────────────────────────────────────────────────
+   One button; the palette change is painted as a circle growing out of it.
+   The two page snapshots are stacked and the new one is clipped by the
+   circle the button animates (see ThemeSwitch), so the old theme stays put
+   underneath instead of cross-fading. */
+.themetoggle {
+  display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--card-2); color: var(--ink-2); cursor: pointer;
+  transition: color .15s, border-color .15s, transform .15s;
 }
-.themeswitch button:hover { color: var(--ink-2); }
-.themeswitch button.active { background: var(--paper); color: var(--ink); }
+.themetoggle:hover { color: var(--ink); border-color: var(--line-2); }
+.themetoggle:active { transform: scale(.92); }
+.themetoggle svg { display: block; }
+
+::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }
+
+/* Fallback for engines without view transitions: a disc of the incoming
+   background grows to cover the window while the palette swaps under it. */
+.theme-sweep { position: fixed; inset: 0; z-index: 9999; pointer-events: none; background: var(--paper); }
+.theme-sweep[data-to='light'] { background: #f7f8fb; }
+.theme-sweep[data-to='dark'] { background: #24272f; }
+
+@media (prefers-reduced-motion: reduce) {
+  .themetoggle { transition: none; }
+  ::view-transition-group(root), ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+}
 
 /* ── page intro (compact, no box) ───────────────────────────────────────── */
 .pagehead { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, .95fr); align-items: start; gap: 40px; margin: 14px 0 34px; }
