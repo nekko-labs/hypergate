@@ -40,10 +40,13 @@ const K_VERIFIER = 'verifier'; // PKCE code_verifier
 const K_STATE = 'state'; // CSRF state — also how the callback maps back to a server
 const K_AUTH_URL = 'authUrl'; // the last authorization URL we asked the user to open
 
+// What a provider's consent screen shows when it asks the user to trust us. The
+// logo is a raster square, not the SVG favicon: consent screens re-encode and
+// resize whatever we hand them, and a PNG is the only format all of them draw.
 export const HYPERGATE_OAUTH_IDENTITY = {
   clientName: 'Hypergate',
   clientUri: 'https://hypergate.app/',
-  logoUri: 'https://hypergate.app/favicon.svg?v=2',
+  logoUri: 'https://hypergate.app/icon-512.png',
   softwareId: 'app.hypergate',
 } as const;
 

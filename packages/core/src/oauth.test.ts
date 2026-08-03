@@ -10,7 +10,7 @@ describe('HypergateOAuthProvider', () => {
     expect(meta.redirect_uris).toEqual([REDIRECT]);
     expect(meta.client_name).toBe('Hypergate');
     expect(meta.client_uri).toBe('https://hypergate.app/');
-    expect(meta.logo_uri).toBe('https://hypergate.app/favicon.svg?v=2');
+    expect(meta.logo_uri).toBe('https://hypergate.app/icon-512.png');
     expect(meta.software_id).toBe('app.hypergate');
     expect(meta.token_endpoint_auth_method).toBe('none');
     expect(meta.grant_types).toContain('authorization_code');
