@@ -45,12 +45,18 @@ function installerAssets(release: GithubRelease) {
 }
 
 function appendInline(parent: HTMLElement, text: string) {
-  const parts = text.split(/(`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)]+\))/g);
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)]+\))/g);
   for (const part of parts) {
     if (part.startsWith('`') && part.endsWith('`')) {
       const code = document.createElement('code');
       code.textContent = part.slice(1, -1);
       parent.append(code);
+      continue;
+    }
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      const strong = document.createElement('strong');
+      strong.textContent = part.slice(2, -2);
+      parent.append(strong);
       continue;
     }
     const linkMatch = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
@@ -72,12 +78,26 @@ function releaseBody(text: string): HTMLElement {
   body.className = 'release-body';
   for (const block of text.trim().split(/\n\s*\n/)) {
     const lines = block.split('\n');
-    if (lines.every((line) => /^[-*] /.test(line))) {
+    // `### Features` and friends. Everything lands on h3: the release title is
+    // the h2 above, so a note's own heading level should not compete with it.
+    const heading = lines.length === 1 ? lines[0].match(/^#{1,3}\s+(.+)$/) : null;
+    if (heading) {
+      const element = document.createElement('h3');
+      appendInline(element, heading[1]);
+      body.append(element);
+      continue;
+    }
+    if (/^[-*] /.test(lines[0])) {
       const list = document.createElement('ul');
+      // A bullet wrapped across lines is one item, not one item per line.
       for (const line of lines) {
-        const item = document.createElement('li');
-        appendInline(item, line.slice(2));
-        list.append(item);
+        if (/^[-*] /.test(line)) {
+          const item = document.createElement('li');
+          appendInline(item, line.slice(2));
+          list.append(item);
+          continue;
+        }
+        appendInline(list.lastElementChild as HTMLElement, ` ${line.trim()}`);
       }
       body.append(list);
       continue;
