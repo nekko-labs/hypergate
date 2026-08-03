@@ -125,7 +125,7 @@ const TOKEN_KEY = 'bearerToken';
 // sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
-const VERSION = '0.17.0';
+const VERSION = '0.18.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
