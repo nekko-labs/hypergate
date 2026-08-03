@@ -15,6 +15,14 @@ visual history stays intact.
 | --- | --- | --- |
 | 2026-08-03 | First feature section reframed around security; three hero stats removed | [`2026-08-03-security-first-feature`](2026-08-03-security-first-feature) |
 | 2026-08-04 | Hero headline `One gate.` → `One secure gate.`, subhead rewritten around safely connecting agents to real services | [`2026-08-04-secure-gate-hero`](2026-08-04-secure-gate-hero) |
+| 2026-08-04 | Title, social and structured-data copy realigned to the new hero; subhead comma splice fixed | [`2026-08-04-hero-metadata`](2026-08-04-hero-metadata) |
+
+Two notes on reading the table. Each pair is captured against the base the change
+landed on, so consecutive folders can differ by more than the change they document:
+the two 2026-08-04 folders sit either side of the theme work, which is why the hero
+is darker in the first pair than in the second. And a change can be mostly invisible
+here (the metadata pass shows only a one-word subhead fix), which is the point of
+keeping the written entry in `TASKS.md` as the real record.
 
 ## Capturing shots
 
