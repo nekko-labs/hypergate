@@ -130,6 +130,13 @@ The installers deliberately reuse Hypergate's own code for the parts that need j
 
 Releases are cut by tag: `git tag v0.9.0 && git push --tags` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which cross-builds all six shells, publishes the platform packages and then the main package to npm with provenance, and attaches standalone binaries to the GitHub release.
 
+**Every pull request bumps the version by one minor**, unless the PR says otherwise, so `main` is always taggable:
+
+```bash
+npm run version:bump    # 0.17.0 → 0.18.0 across all seven files that carry the version
+npm run version:check   # assert they still agree
+```
+
 ### Run it as a desktop app (Windows, macOS, Linux)
 
 ```bash
