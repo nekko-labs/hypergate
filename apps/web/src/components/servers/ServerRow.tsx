@@ -53,7 +53,7 @@ export function ServerRow({ s, onChange, onToken }: { s: ServerStatus; onChange:
         <div className="row wrap-gap">
           <span className={`pill ${STATE_PILL[s.state] ?? 'pill-stopped'}`}><span className="dot" />{s.state}</span>
           <span className="server-name">{s.name}</span>
-          <span className="chip">{RUNTIME_CHIP[s.runtime] ?? '⚡ process'}</span>
+          <span className="chip">{RUNTIME_CHIP[s.runtime] ?? '💻 local'}</span>
           {isRemote && s.url && <span className="chip mono" title={s.url}>{new URL(s.url).host}</span>}
           {s.state === 'ready' && (
             <button className="link-btn" onClick={() => setShowTools(!showTools)}>{s.tools.length} tools {showTools ? '▾' : '▸'}</button>

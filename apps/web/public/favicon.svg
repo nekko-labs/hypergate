@@ -1,9 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Hypergate">
-  <!--
-    The gate, as the hero shader draws it: a violet-to-cyan ring swept round to
-    ice at its brightest point, with a halo bleeding past the stroke and a clear
-    opening through the middle. No entry streaks, since the ring alone is the mark.
-  -->
+  <!-- The gate is an open, luminous ring; its center is intentionally empty. -->
   <defs>
     <linearGradient id="hgRing" x1="0.08" y1="0.05" x2="0.92" y2="0.95">
       <stop offset="0" stop-color="#6d5efc"/>
@@ -11,19 +7,15 @@
       <stop offset="0.72" stop-color="#a5f3fc"/>
       <stop offset="1" stop-color="#6d5efc"/>
     </linearGradient>
-    <radialGradient id="hgHalo" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0.52" stop-color="#6d5efc" stop-opacity="0"/>
-      <stop offset="0.74" stop-color="#7c6bff" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
-    </radialGradient>
+    <filter id="outerGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="2.4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
   </defs>
   <!-- deep space tile -->
   <rect x="4" y="4" width="92" height="92" rx="23" fill="#05060f"/>
-  <!-- the glow the ring throws onto the space around it -->
-  <circle cx="50" cy="50" r="44" fill="url(#hgHalo)"/>
-  <!-- the center stays open so the mark reads as a portal -->
-  <!-- the gate itself -->
-  <circle cx="50" cy="50" r="27" fill="none" stroke="url(#hgRing)" stroke-width="9.5"/>
+  <circle cx="50" cy="50" r="27" fill="none" stroke="url(#hgRing)" stroke-width="9.5" opacity=".3" filter="url(#outerGlow)"/>
+  <circle cx="50" cy="50" r="27" fill="none" stroke="url(#hgRing)" stroke-width="8.5"/>
   <!-- the hot arc, where the shader folds violet through to ice -->
   <path d="M 27.9 34.4 A 27 27 0 0 1 69.1 30.6" fill="none" stroke="#d8fbff"
         stroke-width="4" stroke-linecap="round" opacity="0.62"/>
