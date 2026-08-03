@@ -8,6 +8,7 @@ import { EmptyState } from '../components/EmptyState';
 import { ServerRow } from '../components/servers/ServerRow';
 import { AddCatalogDialog } from '../components/servers/AddCatalogDialog';
 import { AddServerDialog } from '../components/servers/AddServerDialog';
+import { TokenDialog } from '../components/servers/TokenDialog';
 import { ConnectedAgents } from '../components/agents/ConnectedAgents';
 import { CliSection } from '../components/CliSection';
 
@@ -28,14 +29,14 @@ export function ServersView({
 }) {
   const toast = useToast();
   const [adding, setAdding] = useState<RegistryEntry | 'custom' | null>(null);
+  const [tokenTarget, setTokenTarget] = useState<{ id?: string; name: string; label?: string; url?: string; entry?: RegistryEntry } | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
 
   const running = servers?.filter((s) => s.state === 'ready').length ?? 0;
   const tools = servers?.reduce((n, s) => n + s.tools.length, 0) ?? 0;
 
-  // One-click OAuth: add the remote server and pop the provider's login. No form,
-  // no token to paste — the whole point of the feature. Falls back to /authorize
-  // if the server was already added (e.g. a half-finished earlier attempt).
+  // One-click OAuth remains for providers that support it; token entries use a
+  // local credential dialog so the secret never enters persisted config.
   const quickAddOAuth = useCallback(async (e: RegistryEntry) => {
     setShowCatalog(false);
     setAdding(null);
@@ -57,6 +58,11 @@ export function ServersView({
   const handlePick = useCallback((e: RegistryEntry | 'custom') => {
     setShowCatalog(false);
     if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'oauth') { void quickAddOAuth(e); return; }
+    if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'token') {
+      setAdding(null);
+      setTokenTarget({ name: e.name, label: e.tokenLabel, url: e.tokenUrl, entry: e });
+      return;
+    }
     setAdding(e);
   }, [quickAddOAuth]);
 
@@ -97,7 +103,10 @@ export function ServersView({
         </EmptyState>
       ) : (
         <div className="panel"><div className="list">
-          {servers.map((s) => <ServerRow key={s.id} s={s} onChange={refresh} />)}
+          {servers.map((s) => <ServerRow key={s.id} s={s} onChange={refresh} onToken={(server) => {
+            const entry = registry.find((e) => e.id === server.id);
+            setTokenTarget({ id: server.id, name: server.name, label: entry?.tokenLabel, url: entry?.tokenUrl });
+          }} />)}
         </div></div>
       )}
 
@@ -114,6 +123,29 @@ export function ServersView({
           entry={adding === 'custom' ? null : adding}
           onClose={() => setAdding(null)}
           onAdded={() => { setAdding(null); setShowCatalog(false); refresh(); }}
+        />
+      )}
+      {tokenTarget && (
+        <TokenDialog
+          name={tokenTarget.name}
+          label={tokenTarget.label}
+          url={tokenTarget.url}
+          onClose={() => setTokenTarget(null)}
+          onSubmit={async (token) => {
+            if (tokenTarget.id) {
+              const status = await api.setToken(tokenTarget.id, token);
+              if (status.state === 'authorizing') throw new Error('token rejected');
+            } else if (tokenTarget.entry) {
+              const e = tokenTarget.entry;
+              const status = await api.add({
+                id: e.id, name: e.name, runtime: 'remote', command: '',
+                url: e.url, transport: e.transport ?? 'http', auth: 'token', token, enabled: true,
+              });
+              if (status.state === 'authorizing') throw new Error(status.error ?? 'token rejected');
+            }
+            setTokenTarget(null);
+            refresh();
+          }}
         />
       )}
     </>

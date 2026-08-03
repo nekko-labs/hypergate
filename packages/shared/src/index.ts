@@ -10,15 +10,18 @@
 /**
  * How a server runs / is isolated. `process` + `docker` are local stdio children
  * (user-selectable isolation). `remote` connects to a hosted HTTP MCP endpoint
- * (no child process); its credential is an OAuth token, not a spawned command.
+ * (no child process); its credential is supplied by the selected remote auth mode.
  */
 export type RuntimeKind = 'process' | 'docker' | 'remote';
 
 /** Transport for a `remote` server. Streamable HTTP (default) or legacy SSE. */
 export type RemoteTransport = 'http' | 'sse';
 
-/** How a `remote` server authenticates. `oauth` = the MCP browser OAuth flow. */
-export type RemoteAuth = 'oauth' | 'none';
+/**
+ * How a `remote` server authenticates. `token` is a bearer credential the user
+ * pastes (e.g. a GitHub PAT), sent as `Authorization: Bearer`.
+ */
+export type RemoteAuth = 'oauth' | 'token' | 'none';
 
 /**
  * Lifecycle state of a managed server. `authorizing` is remote-only: the server
@@ -138,6 +141,8 @@ export interface ServerStatus {
   id: string;
   name: string;
   runtime: RuntimeKind;
+  /** Effective remote authentication mode; omitted for local runtimes. */
+  auth?: RemoteAuth;
   state: ServerState;
   /** Tool names exposed by this server (namespaced form is `${id}__${tool}`). */
   tools: string[];
@@ -195,12 +200,16 @@ export interface RegistryEntry {
   url?: string;
   /** Transport for a remote entry; defaults to `http`. */
   transport?: RemoteTransport;
-  /** How a remote entry authenticates; `oauth` drives the one-click browser login. */
+  /** How a remote entry authenticates; `oauth` drives browser login, `token` prompts for a bearer credential. */
   auth?: RemoteAuth;
   /** Pre-registered OAuth client id, for providers without dynamic registration. */
   clientId?: string;
   /** Optional OAuth scope to request. */
   scope?: string;
+  /** Label for the credential prompt when `auth` is `token`. */
+  tokenLabel?: string;
+  /** Where the user can create the credential when `auth` is `token`. */
+  tokenUrl?: string;
   /** Names of env/secret keys the server needs (prompted on add). */
   requires?: string[];
   homepage?: string;

@@ -19,6 +19,8 @@ import { runtimeFor } from './runtime.js';
 
 /** Builds the OAuth provider for a remote server, or undefined when none is needed. */
 export type AuthProviderFor = (config: ManagedServerConfig) => OAuthClientProvider | undefined;
+/** Supplies headers for a remote server without making core responsible for secret storage. */
+export type AuthHeadersFor = (config: ManagedServerConfig) => Record<string, string> | undefined;
 
 const LOG_CAP = 500;
 /** Cap on the retained event feed (for the recent-calls feed + time series). */
@@ -64,6 +66,7 @@ const toStatus = (i: Instance): ServerStatus => ({
   id: i.config.id,
   name: i.config.name,
   runtime: i.config.runtime,
+  auth: i.config.runtime === 'remote' ? i.config.auth : undefined,
   state: i.state,
   tools: i.tools.map((t) => t.name),
   toolDetails: i.tools,
@@ -109,6 +112,8 @@ export class Supervisor {
   private onLog?: (serverId: string, line: string) => void;
   /** Supplies the OAuth provider for a remote server (injected by the daemon). */
   private authProviderFor?: AuthProviderFor;
+  /** Supplies bearer headers for token-auth remote servers (injected by the daemon). */
+  private authHeadersFor?: AuthHeadersFor;
   /** Path to the `hypergate` shell binary, used to enforce per-server resource limits. */
   private launcher?: string;
 
@@ -117,12 +122,14 @@ export class Supervisor {
       onUsage?: (e: UsageEvent) => void;
       onLog?: (serverId: string, line: string) => void;
       authProviderFor?: AuthProviderFor;
+      authHeadersFor?: AuthHeadersFor;
       launcher?: string;
     } = {},
   ) {
     this.onUsage = opts.onUsage;
     this.onLog = opts.onLog;
     this.authProviderFor = opts.authProviderFor;
+    this.authHeadersFor = opts.authHeadersFor;
     this.launcher = opts.launcher;
   }
 
@@ -344,7 +351,8 @@ export class Supervisor {
       // rather than a red `errored` the user has to decode.
       const needsAuth = e instanceof UnauthorizedError || (config.runtime === 'remote' && is401(e));
       inst.state = needsAuth ? 'authorizing' : 'errored';
-      inst.error = e instanceof Error ? e.message : String(e);
+      const detail = e instanceof Error ? e.message : String(e);
+      inst.error = needsAuth && config.auth === 'token' ? `Token rejected: ${detail}` : detail;
       this.pushLog(inst, `[supervisor] ${needsAuth ? 'needs authorization' : 'start failed'}: ${inst.error}`);
     }
     return toStatus(inst);
@@ -376,15 +384,28 @@ export class Supervisor {
     return transport;
   }
 
-  /** Hosted HTTP MCP endpoint — streamable HTTP (default) or legacy SSE, with OAuth. */
+  /** Hosted HTTP MCP endpoint — streamable HTTP (default) or legacy SSE, with OAuth or bearer auth. */
   private remoteTransport(config: ManagedServerConfig, inst: Instance): Transport {
     if (!config.url) throw new Error(`remote runtime needs a url for server "${config.id}"`);
     const url = new URL(config.url);
-    const authProvider = config.auth === 'none' ? undefined : this.authProviderFor?.(config);
-    this.pushLog(inst, `[supervisor] connecting remote ${url.origin}${authProvider ? ' (oauth)' : ''}`);
+    const authProvider = config.auth === 'token' || config.auth === 'none' ? undefined : this.authProviderFor?.(config);
+    const headers = config.auth === 'token' ? this.authHeadersFor?.(config) : undefined;
+    this.pushLog(inst, `[supervisor] connecting remote ${url.origin}${authProvider ? ' (oauth)' : headers ? ' (token)' : ''}`);
+    const requestInit = headers ? { headers } : undefined;
     return config.transport === 'sse'
-      ? new SSEClientTransport(url, { authProvider })
-      : new StreamableHTTPClientTransport(url, { authProvider });
+      ? new SSEClientTransport(url, {
+          authProvider,
+          requestInit,
+          eventSourceInit: headers
+            ? {
+                fetch: (target, init) => fetch(target, {
+                  ...init,
+                  headers: { ...init?.headers, ...headers },
+                }),
+              }
+            : undefined,
+        })
+      : new StreamableHTTPClientTransport(url, { authProvider, requestInit });
   }
 
   /**
@@ -415,7 +436,7 @@ export class Supervisor {
    * used when it has no usable OAuth token yet, so the UI can prompt sign-in
    * and the server still shows up in `list()`. No network call happens here.
    */
-  markAuthorizing(config: ManagedServerConfig): ServerStatus {
+  markAuthorizing(config: ManagedServerConfig, error?: string): ServerStatus {
     let inst = this.instances.get(config.id);
     if (!inst) {
       inst = { config, state: 'stopped', tools: [], restarts: 0, logs: [] };
@@ -426,7 +447,7 @@ export class Supervisor {
     inst.transport = undefined;
     inst.tools = [];
     inst.state = 'authorizing';
-    inst.error = undefined;
+    inst.error = error;
     return toStatus(inst);
   }
 
