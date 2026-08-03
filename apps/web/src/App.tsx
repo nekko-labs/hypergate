@@ -1958,37 +1958,29 @@ function AnalyticsView({ stats, servers, registry }: { stats: AnalyticsSummary |
             <div className="spark-axis"><span>24h ago</span><span>now</span></div>
           </div>
 
-          {/* Two peer breakdowns, side by side while the window is wide enough:
-              the dashboard spends the width it has so the height stays for the
-              lists. Below ~860px they stack again (see `.duo`). */}
           <section id="usage-by-server" className="analytics-section">
-          <div className="duo">
-            <section>
-              <div className="section-title">Usage by server</div>
-              <div className="panel"><div className="list">
-                {stats!.servers.map((s) => (
-                  <div key={s.serverId} className="list-row">
-                    <div className="row between wrap-gap">
-                      <div><span className="server-name">{s.name}</span> <span className="small muted">{s.serverId}</span></div>
-                      <div className="u-metrics">
-                        <span><b>{fmtNum(s.calls)}</b> calls</span>
-                        <span><b>{s.avgMs}</b>ms avg</span>
-                        <span style={{ color: s.errors ? 'var(--danger)' : undefined }}><b>{s.errors}</b> err</span>
-                        <span><b>{fmtBytes(s.bytesIn)}</b> in</span>
-                        <span><b>{fmtBytes(s.bytesOut)}</b> out</span>
-                      </div>
-                    </div>
-                    <div className="bar-track" style={{ marginTop: 9 }}><div className="bar-fill" style={{ width: `${(s.calls / maxServer) * 100}%` }} /></div>
-                    <div className="u-sub">
-                      {s.tools.slice(0, 6).map((t) => <span key={t.tool} className="chip mono">{t.tool} ·{t.calls}</span>)}
-                      <span style={{ marginLeft: 'auto' }}>{s.clients.length} client{s.clients.length === 1 ? '' : 's'} · last {fmtRel(s.lastUsed)}</span>
+            <div className="section-title">Usage by server</div>
+            <div className="panel"><div className="list">
+              {stats!.servers.map((s) => (
+                <div key={s.serverId} className="list-row">
+                  <div className="row between wrap-gap">
+                    <div><span className="server-name">{s.name}</span> <span className="small muted">{s.serverId}</span></div>
+                    <div className="u-metrics">
+                      <span><b>{fmtNum(s.calls)}</b> calls</span>
+                      <span><b>{s.avgMs}</b>ms avg</span>
+                      <span style={{ color: s.errors ? 'var(--danger)' : undefined }}><b>{s.errors}</b> err</span>
+                      <span><b>{fmtBytes(s.bytesIn)}</b> in</span>
+                      <span><b>{fmtBytes(s.bytesOut)}</b> out</span>
                     </div>
                   </div>
-                ))}
-              </div></div>
-            </section>
-
-          </div>
+                  <div className="bar-track" style={{ marginTop: 9 }}><div className="bar-fill" style={{ width: `${(s.calls / maxServer) * 100}%` }} /></div>
+                  <div className="u-sub">
+                    {s.tools.slice(0, 6).map((t) => <span key={t.tool} className="chip mono">{t.tool} ·{t.calls}</span>)}
+                    <span style={{ marginLeft: 'auto' }}>{s.clients.length} client{s.clients.length === 1 ? '' : 's'} · last {fmtRel(s.lastUsed)}</span>
+                  </div>
+                </div>
+              ))}
+            </div></div>
           </section>
 
           <section id="callers" className="analytics-section">
@@ -2244,7 +2236,7 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
   const searchingLive = q.trim().length > 0;
   const visibleResults = useMemo(
     () => (results ? sortCatalog(mergeCatalogSearch(sortedCurated, results, q), pop) : null),
-    [q, results, sortedCurated],
+    [q, results, sortedCurated, pop],
   );
   return (
     <>

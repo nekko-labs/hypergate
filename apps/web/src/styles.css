@@ -116,11 +116,10 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .view::-webkit-scrollbar { display: none; }
 .view.servers-view { scroll-behavior: smooth; }
 /* Chrome (headings, the gateway bar, section titles) keeps its natural height … */
-.view > *,
-.view > .duo > section > * { flex: none; }
+.view > * { flex: none; }
 /* … panels share out what is left over and scroll inside. */
 .view > .panel,
-.view > .duo > section > .panel { flex: 0 1 auto; min-height: 64px; display: flex; flex-direction: column; }
+.view > .panel { flex: 0 1 auto; min-height: 64px; display: flex; flex-direction: column; }
 /* How far a panel may be squeezed: a one- or two-row panel keeps its natural
    height (a floor would only pad it out), while a list long enough to be worth
    scrolling holds on to a row before the view itself gives way. Keep these
@@ -131,8 +130,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 /* The scrolling surface inside a panel: its list, its feed, or its empty state. */
 .view > .panel > .list,
 .view > .panel > .feed,
-.view > .panel > .empty,
-.view > .duo > section > .panel > .list { overflow-y: auto; min-height: 0; }
+.view > .panel > .empty { overflow-y: auto; min-height: 0; }
 /* An empty state is a pitch and a button, not a list, so it keeps its height and
    lets the view scroll instead. There is little else on screen when one shows. */
 .view > .panel:has(> .empty) { flex: none; }
@@ -160,23 +158,6 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
    and holds on to more height than a list would: it is only on screen because
    it was asked for, so it is the thing being worked on. */
 .view > .panel-scroll { overflow-y: auto; min-height: 220px; }
-
-/* Two sections that sit side by side while the window is wide enough to take
-   them (analytics). Both columns are the height of the pair, so they shrink
-   together and each list keeps scrolling inside its own panel. The pair carries
-   its columns' floor (a section title, 53px with its margins, on top of the
-   panel floors above) so a column is never squeezed past what it can show and
-   spilled over the section below it. */
-.view > .duo { flex: 0 1 auto; display: flex; gap: 0 16px; min-height: 117px; }
-.view > .duo > section { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.view > .duo:has(.list-row:nth-child(3)) { min-height: 149px; }
-@media (max-width: 860px) {
-  /* Too narrow for two columns: the pair dissolves and its sections take their
-     chances in the view like every other section. */
-  .view > .duo { display: contents; }
-  .view > .duo > section { min-height: 117px; }
-  .view > .duo > section:has(.list-row:nth-child(3)) { min-height: 149px; }
-}
 
 /* Scrollbars sized for an app, not a document. */
 .view, .view .list, .view .feed, .view .empty, .view .panel-scroll, .perm-list, pre.logs, .row-detail .tool-list {
