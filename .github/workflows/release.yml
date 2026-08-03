@@ -2,6 +2,8 @@ name: Release
 
 # Cut a release by tagging: `git tag v0.9.0 && git push --tags`.
 # The tag must match the version in package.json, which the publish job checks.
+# The notes come from `docs/releases/<version>.md`, so write that first
+# (docs/releases/README.md says what goes in it).
 on:
   push:
     tags: ['v*']
@@ -147,16 +149,21 @@ jobs:
             gpg --batch --yes --armor --detach-sign release-assets/SHA256SUMS
           fi
           ls -la release-assets
-          # The npm line depends on whether we actually published. Promising
-          # `npm install -g hypergated` on a release where nothing was published
-          # sends people to a 404, so say what is true for this release.
+          # What changed comes from docs/releases/<version>.md, written with the
+          # change itself; the install footer is generated, so it reads the same
+          # on every release (and only promises the npm registry when we actually
+          # published there). See docs/releases/README.md.
+          # Kept out of release-assets/, which is uploaded wholesale.
           version="${GITHUB_REF_NAME#v}"
-          if [ -n "$NPM_TOKEN" ]; then
-            npm_line="or \`npm install -g hypergated\`"
-          else
-            npm_line="or from the npm tarballs attached here: \`npm install -g hypergate-shell-<os>-<arch>-${version}.tgz hypergated-${version}.tgz\` (\`hypergated\` is not on the public registry yet; these are the same packages, and they are what the in-app updater installs)"
-          fi
+          npm_flag=""
+          if [ -n "$NPM_TOKEN" ]; then npm_flag="--npm"; fi
+          node scripts/release-notes.mjs "$version" $npm_flag > "$RUNNER_TEMP/notes.md"
+          title=$(node scripts/release-notes.mjs "$version" --title)
+          cat "$RUNNER_TEMP/notes.md"
+          # On a re-run the release already exists, so `create` fails and the
+          # notes would never land. Upload over it and set them explicitly.
           gh release create "$GITHUB_REF_NAME" release-assets/* \
-            --title "$GITHUB_REF_NAME" \
-            --notes "Install with an installer below (no Node needed), ${npm_line}. Bare \`hypergate\` CLI binaries are attached too, and \`SHA256SUMS\` is GPG-signed with the key at \`docs/release-signing-key.asc\`." \
-            || gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+            --title "$title" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            || { gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber \
+                 && gh release edit "$GITHUB_REF_NAME" --title "$title" --notes-file "$RUNNER_TEMP/notes.md"; }
