@@ -5,7 +5,7 @@ import { api } from '../api';
 /**
  * "Command-line tools": which CLIs are installed on this machine (many MCP
  * servers need one — `uvx` for Python servers, `docker` for the Docker runtime,
- * `flyctl` for Fly, `nekkos` for the Nekkos server) plus a quick search to
+ * `flyctl` for Fly, `kotrain` for the Kotrain server) plus a quick search to
  * check any command. Local + shell-free; nothing leaves the machine.
  */
 export function CliSection() {

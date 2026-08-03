@@ -2,7 +2,7 @@
 
 ![Hypergate: run MCP servers securely; one gateway for every agent](docs/splash.png)
 
-**Local-first runtime and manager for MCP servers.** Run MCP servers securely, supervise them, and expose **one gateway endpoint** any agent harness (Claude Code, Cursor, [Nekkos](https://github.com/nekko-labs/nekkos), Codex) can use. Not just a connector list: a proper server runtime.
+**Local-first runtime and manager for MCP servers.** Run MCP servers securely, supervise them, and expose **one gateway endpoint** any agent harness (Claude Code, Cursor, [Kotrain](https://github.com/nekko-labs/kotrain), Codex) can use. Not just a connector list: a proper server runtime.
 
 > Open source · MIT · [nekko-labs](https://github.com/nekko-labs) · [hypergate.app](https://hypergate.app)
 
@@ -49,7 +49,7 @@ Or from the manager, without the terminal. The version in the topbar **is** the 
 The packages come from npm when they're published there, and **from the release's own attached tarballs when they aren't** — every release carries `hypergated-<version>.tgz` plus one `hypergate-shell-<os>-<arch>-<version>.tgz`. Whatever is downloaded is checked against the hash the feed published before anything is installed.
 
 ## Why
-Nekkos and Claude Code are MCP *clients*. Hypergate is the piece they need: a secure local *server runtime/manager*, a supervisor plus an aggregating gateway. Add servers from a catalog (or custom), pick how they're isolated, start them, and paste one URL/command into your agent.
+Kotrain and Claude Code are MCP *clients*. Hypergate is the piece they need: a secure local *server runtime/manager*, a supervisor plus an aggregating gateway. Add servers from a catalog (or custom), pick how they're isolated, start them, and paste one URL/command into your agent.
 
 ## Isolation: your choice (the tradeoff, plainly)
 
@@ -63,7 +63,7 @@ For local runtimes the isolation model reduces to *"what command do we spawn ove
 
 ## Catalog: find and add servers
 
-- **Curated catalog** with the official first-party servers people actually reach for (Nekkos, Context7, Supabase, Linear, Figma, GitHub, Atlassian, AWS, Azure, GCP, Cloudflare, Fly.io, …), each with a verified launch config. Hypergate's recommended set is pinned first; the rest is ordered by real popularity (npm downloads / GitHub stars, fetched lazily and cached, never on boot).
+- **Curated catalog** with the official first-party servers people actually reach for (Kotrain, Context7, Supabase, Linear, Figma, GitHub, Atlassian, AWS, Azure, GCP, Cloudflare, Fly.io, …), each with a verified launch config. Hypergate's recommended set is pinned first; the rest is ordered by real popularity (npm downloads / GitHub stars, fetched lazily and cached, never on boot).
 - **✓ Official / Community trust chips** on every entry, so you can see at a glance whether a server is published by the vendor or the community.
 - **One-click OAuth servers**: remote first-party servers (GitHub, Context7, …) add with a single button that opens the provider's browser login. No token to paste; tokens persist locally under `~/.hypergate/oauth/`.
 - **Registry search** over the official open-source MCP registry (`registry.modelcontextprotocol.io`), mapped into add-ready entries.
@@ -158,7 +158,7 @@ hypergate update         # check for a newer version (--apply installs it)
 # finding and adding servers
 hypergate catalog                    # the curated catalog (★ recommended, ✓ official)
 hypergate search postgres            # search the official MCP registry
-hypergate add nekkos                 # add a catalog entry (one step)
+hypergate add kotrain                 # add a catalog entry (one step)
 hypergate add fly --secret FLY_API_TOKEN=…   # or supply what it requires
 hypergate add mine --command npx --arg -y --arg some-mcp-server   # a custom one
 hypergate rm mine
@@ -170,8 +170,8 @@ hypergate logs <id>                  # a server's logs
 
 # using the gateway, exactly as an agent would
 hypergate tools                      # every tool the gateway exposes
-hypergate tools --server nekkos      # just one server's
-hypergate call nekkos__nekkos_status
+hypergate tools --server kotrain      # just one server's
+hypergate call kotrain__kotrain_status
 hypergate call echo__echo '{"text":"nyaa"}'
 
 # what a connected client fetches instead of storing a token
@@ -213,7 +213,7 @@ Everything is local, under `~/.hypergate/` (override with `HYPERGATE_DIR`):
 
 ### Use it from your agent
 
-One endpoint for all your servers, and one place to connect one: **Connected agents** in the web UI. Pick your client and Hypergate wires it up — for Claude Code and the Gemini CLI it runs their own `mcp add` for you; for Cursor, VS Code, `.mcp.json` and Nekkos it hands you the snippet and the file it goes in. The exact command is always shown too, quoted for your shell, if you'd rather run it yourself:
+One endpoint for all your servers, and one place to connect one: **Connected agents** in the web UI. Pick your client and Hypergate wires it up — for Claude Code and the Gemini CLI it runs their own `mcp add` for you; for Cursor, VS Code, `.mcp.json` and Kotrain it hands you the snippet and the file it goes in. The exact command is always shown too, quoted for your shell, if you'd rather run it yourself:
 
 ```bash
 claude mcp add -t http hypergate http://localhost:7777/mcp -H "Authorization: Bearer <token>" -s user
@@ -239,7 +239,7 @@ It works because the entry names a *command* rather than a credential — `hyper
 
 **Scoped agents.** Every connected agent has its own token and its own allow-list: pick which servers it may use (or all of them), and it will only see and call those. Its calls show up under its name in Analytics, and you can revoke it without touching anything else. The master token in the gateway bar always reaches every server — prefer an agent token for a real client. Same thing over the API: `POST /api/clients`, then `POST /api/clients/:id/connect`.
 
-**Nekkos** auto-detects a running daemon: Settings → MCP servers → **Connect gateway** (one click), plus an **Open manager** button that opens this UI in a workbench pane.
+**Kotrain** auto-detects a running daemon: Settings → MCP servers → **Connect gateway** (one click), plus an **Open manager** button that opens this UI in a workbench pane.
 
 ### Privacy Policy
 
@@ -251,4 +251,4 @@ what is stored, where, and for how long — is in [PRIVACY.md](PRIVACY.md).
 Because every tool call fans through the one gateway, Hypergate records it: server, tool, caller (from the MCP handshake), success/error, latency, and bytes in/out. The web UI's **Analytics** tab turns that into headline metrics, a 24h call-volume sparkline, usage-by-server, a who's-calling breakdown, and a live recent-calls feed, served from `/api/analytics` and persisted across restarts. It's a private audit trail with nothing to wire up and no data leaving your machine.
 
 ## Status
-Kicked off 2026-06-28. **v0.7** is the rename era: NekkoMCP became **Hypergate**, with the [hypergate.app](https://hypergate.app) marketing site (WebGL warp-gate hero, real app screenshots) shipped from `apps/site`. On the way here: **v0.6** added the expanded official catalog, ✓ Official / Community trust chips, recommended + popularity ordering, and CLI detection; **v0.5** added the **remote runtime** and one-click OAuth servers (GitHub, Context7) built on the MCP OAuth spec; **v0.4** added connected agents (scoped tokens), registry search, the tool inspector, and analytics persistence; **v0.3** the analytics engine and the list-first redesign; earlier versions the core: process + Docker runtimes, supervisor, aggregating gateway over stdio and streamable HTTP, daemon-served web UI, curated catalog, and Nekkos one-click integration (then named Kotrain). Next: resources/prompts aggregation, crash backoff, keychain secrets, registry background sync, Electron shell. See `SPEC.md`/`TASKS.md`.
+Kicked off 2026-06-28. **v0.7** is the rename era: NekkoMCP became **Hypergate**, with the [hypergate.app](https://hypergate.app) marketing site (WebGL warp-gate hero, real app screenshots) shipped from `apps/site`. On the way here: **v0.6** added the expanded official catalog, ✓ Official / Community trust chips, recommended + popularity ordering, and CLI detection; **v0.5** added the **remote runtime** and one-click OAuth servers (GitHub, Context7) built on the MCP OAuth spec; **v0.4** added connected agents (scoped tokens), registry search, the tool inspector, and analytics persistence; **v0.3** the analytics engine and the list-first redesign; earlier versions the core: process + Docker runtimes, supervisor, aggregating gateway over stdio and streamable HTTP, daemon-served web UI, curated catalog, and Kotrain one-click integration (then named Kotrain). Next: resources/prompts aggregation, crash backoff, keychain secrets, registry background sync, Electron shell. See `SPEC.md`/`TASKS.md`.

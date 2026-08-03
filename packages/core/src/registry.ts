@@ -13,16 +13,16 @@ import type { RegistryEntry, PopularityMap } from '@hypergate/shared';
 export const REGISTRY: RegistryEntry[] = [
   // ── Recommended set (sorts first, in RECOMMENDED_IDS order) ───────────────
   {
-    id: 'nekkos',
-    name: 'Nekkos',
-    description: "Drive this machine's Nekkos agent from any harness: chat, spin up sessions, and kick off training runs on your local model.",
+    id: 'kotrain',
+    name: 'Kotrain',
+    description: "Drive this machine's Kotrain agent from any harness: chat, spin up sessions, and kick off training runs on your local model.",
     runtime: 'process',
-    command: 'nekkos',
+    command: 'kotrain',
     args: ['mcp'],
     official: true,
     recommended: true,
-    note: 'Requires the Nekkos CLI (`nekkos`) on PATH — check the CLIs section below.',
-    homepage: 'https://github.com/nekko-labs/nekkos',
+    note: 'Requires the Kotrain CLI (`kotrain`) on PATH — check the CLIs section below.',
+    homepage: 'https://github.com/nekko-labs/kotrain',
   },
   {
     id: 'context7',
@@ -290,7 +290,7 @@ export const registryEntry = (id: string): RegistryEntry | undefined => REGISTRY
  * Hypergate's recommended starting set, in display order. These sort to the top
  * of the catalog ahead of everything else (which is then ordered by popularity).
  */
-export const RECOMMENDED_IDS: readonly string[] = ['nekkos', 'context7', 'supabase', 'linear', 'figma'];
+export const RECOMMENDED_IDS: readonly string[] = ['kotrain', 'context7', 'supabase', 'linear', 'figma'];
 
 /**
  * Order the catalog the way the UI shows it: the recommended set first (in
