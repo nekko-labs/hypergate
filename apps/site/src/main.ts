@@ -34,7 +34,7 @@ const onScrollNav = () => nav.classList.toggle('scrolled', window.scrollY > 24);
 onScrollNav();
 
 /* ── reveal on enter ──────────────────────────────────────── */
-for (const el of document.querySelectorAll<HTMLElement>('.reveal')) {
+for (const el of document.querySelectorAll<HTMLElement>('.reveal, .fly')) {
   const d = el.dataset.delay;
   if (d) el.style.setProperty('--rd', `${d}ms`);
 }
@@ -120,7 +120,6 @@ const FRAG = `
 precision highp float;
 uniform vec2 u_res;
 uniform float u_time;
-uniform float u_boost;
 
 // hash + noise + fbm: the standard trio, tuned for liquid
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
@@ -144,7 +143,7 @@ void main(){
   vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / min(u_res.x, u_res.y);
   uv.y -= 0.04;
 
-  float t = u_time * 0.00016 * (1.0 + u_boost * 0.9);
+  float t = u_time * 0.00016;
   float r = length(uv);
   float ang = atan(uv.y, uv.x);
 
@@ -173,7 +172,7 @@ void main(){
 
   vec3 col = vec3(0.0);
   vec3 ringCol = mix(violet, cyan, 0.5 + 0.5 * sin(ang + liquid * 4.0 + t * 6.0));
-  col += ring * mix(ringCol, ice, pow(liquid, 3.0)) * (1.15 + u_boost * 0.5);
+  col += ring * mix(ringCol, ice, pow(liquid, 3.0)) * 1.15;
   col += halo * ringCol;
   col += core * mix(cyan, ice, liquid);
   col += neb * violet;
@@ -190,8 +189,6 @@ void main(){ gl_Position = vec4(a_pos, 0.0, 1.0); }
 
 let uTime: WebGLUniformLocation | null = null;
 let uRes: WebGLUniformLocation | null = null;
-let uBoost: WebGLUniformLocation | null = null;
-let boost = 0;
 
 function initGate(): boolean {
   if (!gl) return false;
@@ -224,7 +221,6 @@ function initGate(): boolean {
 
   uTime = gl.getUniformLocation(prog, 'u_time');
   uRes = gl.getUniformLocation(prog, 'u_res');
-  uBoost = gl.getUniformLocation(prog, 'u_boost');
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   return true;
@@ -248,13 +244,10 @@ if (!gateOk) {
 
 function drawGate(t: number) {
   if (!gl || !gateOk) return;
-  // scroll velocity feeds the warp: fly faster, burn brighter
-  boost += (Math.min(Math.abs(scrollVelocity) * 0.04, 1.6) - boost) * 0.06;
   gl.clearColor(0, 0, 0, 0);
   gl.clear(gl.COLOR_BUFFER_BIT);
   gl.uniform1f(uTime, t);
   gl.uniform2f(uRes, gateCanvas.width, gateCanvas.height);
-  gl.uniform1f(uBoost, boost);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
