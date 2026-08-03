@@ -54,7 +54,7 @@ export function TokenDialog({
       </label>
       {url && (
         <p className="small muted">
-          Create one at <a href={url} target="_blank" rel="noreferrer">the provider's token settings</a>.
+          Create one at <a href={url} target="_blank" rel="noreferrer">{name}'s token settings</a>.
         </p>
       )}
       {error && <p className="small" style={{ color: 'var(--danger)' }} role="alert">{error}</p>}

@@ -2,7 +2,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import type { EventSourceInit } from 'eventsource';
 import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type {
@@ -67,6 +66,7 @@ const toStatus = (i: Instance): ServerStatus => ({
   id: i.config.id,
   name: i.config.name,
   runtime: i.config.runtime,
+  auth: i.config.runtime === 'remote' ? i.config.auth : undefined,
   state: i.state,
   tools: i.tools.map((t) => t.name),
   toolDetails: i.tools,
@@ -388,7 +388,7 @@ export class Supervisor {
   private remoteTransport(config: ManagedServerConfig, inst: Instance): Transport {
     if (!config.url) throw new Error(`remote runtime needs a url for server "${config.id}"`);
     const url = new URL(config.url);
-    const authProvider = config.auth === 'oauth' ? this.authProviderFor?.(config) : undefined;
+    const authProvider = config.auth === 'token' || config.auth === 'none' ? undefined : this.authProviderFor?.(config);
     const headers = config.auth === 'token' ? this.authHeadersFor?.(config) : undefined;
     this.pushLog(inst, `[supervisor] connecting remote ${url.origin}${authProvider ? ' (oauth)' : headers ? ' (token)' : ''}`);
     const requestInit = headers ? { headers } : undefined;
@@ -396,9 +396,14 @@ export class Supervisor {
       ? new SSEClientTransport(url, {
           authProvider,
           requestInit,
-          // eventsource's public type omits headers although the Node adapter
-          // accepts them; keep the initial SSE request authenticated too.
-          eventSourceInit: headers ? ({ headers } as unknown as EventSourceInit) : undefined,
+          eventSourceInit: headers
+            ? {
+                fetch: (target, init) => fetch(target, {
+                  ...init,
+                  headers: { ...init?.headers, ...headers },
+                }),
+              }
+            : undefined,
         })
       : new StreamableHTTPClientTransport(url, { authProvider, requestInit });
   }

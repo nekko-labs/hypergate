@@ -25,7 +25,7 @@ export function ServerRow({ s, onChange, onToken }: { s: ServerStatus; onChange:
     onChange();
   };
   const signIn = async () => {
-    if (s.error?.toLowerCase().includes('personal access token') || s.error?.toLowerCase().includes('token rejected')) {
+    if (s.auth === 'token') {
       onToken(s);
       return;
     }
@@ -62,7 +62,7 @@ export function ServerRow({ s, onChange, onToken }: { s: ServerStatus; onChange:
         </div>
         <div className="row">
           {authorizing ? (
-            <button className="btn sm btn-primary" onClick={() => void signIn()}>{s.error?.toLowerCase().includes('personal access token') || s.error?.toLowerCase().includes('token rejected') ? '🔑 Enter token' : '🔐 Sign in'}</button>
+            <button className="btn sm btn-primary" onClick={() => void signIn()}>{s.auth === 'token' ? '🔑 Enter token' : '🔐 Sign in'}</button>
           ) : s.state === 'ready' ? (
             <button className="btn sm btn-warn" onClick={() => void act('stop')}>Stop</button>
           ) : (
@@ -75,7 +75,7 @@ export function ServerRow({ s, onChange, onToken }: { s: ServerStatus; onChange:
       </div>
       {authorizing && (
         <p className="small muted" style={{ margin: '8px 0 0' }}>
-          {s.error?.toLowerCase().includes('personal access token') || s.error?.toLowerCase().includes('token rejected') ? <>Paste a new token to reconnect {s.name}.</> : <>Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.</>}
+          {s.auth === 'token' ? <>Paste a new token to reconnect {s.name}.</> : <>Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.</>}
         </p>
       )}
       {s.error && !authorizing && <p className="small" style={{ color: 'var(--danger)', margin: '8px 0 0' }}>{s.error}</p>}

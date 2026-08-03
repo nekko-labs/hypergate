@@ -141,6 +141,8 @@ export interface ServerStatus {
   id: string;
   name: string;
   runtime: RuntimeKind;
+  /** Effective remote authentication mode; omitted for local runtimes. */
+  auth?: RemoteAuth;
   state: ServerState;
   /** Tool names exposed by this server (namespaced form is `${id}__${tool}`). */
   tools: string[];

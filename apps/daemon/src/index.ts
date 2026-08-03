@@ -870,10 +870,11 @@ const withAccounts = (list: ServerStatus[]): ServerStatus[] =>
   list.map((s) => {
     const cfg = servers.find((c) => c.id === s.id);
     if (!cfg || cfg.runtime !== 'remote' || cfg.auth === 'none') return s;
+    const effective = { ...s, auth: usesOAuth(cfg) ? 'oauth' : cfg.auth };
     const signedIn = makeProvider(cfg).hasTokens();
-    if (!signedIn) return s;
+    if (!signedIn) return effective;
     const account = accountFromGrant(cfg);
-    if (account) return { ...s, signedIn, account };
+    if (account) return { ...effective, signedIn, account };
     // Nothing free to show. Ask the provider once, in the background.
     if (!accountProbed.has(cfg.id)) {
       accountProbed.add(cfg.id);
@@ -889,7 +890,7 @@ const withAccounts = (list: ServerStatus[]): ServerStatus[] =>
           /* an unidentifiable account is not an error */
         });
     }
-    return { ...s, signedIn };
+    return { ...effective, signedIn };
   });
 
 /**
@@ -933,10 +934,11 @@ const supervisor = new Supervisor({
   launcher: shell.shellBin(),
 });
 let servers = loadConfig();
-// A token-catalog entry with a configured client id is the small OAuth escape
-// hatch for existing GitHub OAuth app users; normalize it before core sees it.
-servers = servers.map((s) => (s.auth === 'token' && resolvedClientId(s) ? { ...s, auth: 'oauth' } : s));
-saveConfig(servers);
+const statusFor = (cfg: ManagedServerConfig): ServerStatus | undefined => {
+  const status = supervisor.status(cfg.id);
+  if (!status || cfg.runtime !== 'remote') return status;
+  return { ...status, auth: usesOAuth(cfg) ? 'oauth' : cfg.auth };
+};
 
 const startEnabled = async (): Promise<void> => {
   for (const s of servers) {
@@ -949,7 +951,7 @@ const startEnabled = async (): Promise<void> => {
     }
     // Don't attempt a token-less remote connect — just surface it as authorizing.
     if (needsAuth(s)) {
-      const error = s.auth === 'token' && !usesOAuth(s) ? `Paste a ${s.name} personal access token to connect.` : undefined;
+      const error = s.auth === 'token' && !usesOAuth(s) ? `Paste a ${s.name} access token to connect.` : undefined;
       supervisor.markAuthorizing(s, error);
     }
     else await supervisor.start(s);
@@ -1853,7 +1855,6 @@ if (STDIO_MODE) {
           cfg.command = cfg.command ?? '';
           cfg.transport = cfg.transport === 'sse' ? 'sse' : 'http';
           cfg.auth = cfg.auth === 'none' || cfg.auth === 'token' ? cfg.auth : 'oauth';
-          if (cfg.auth === 'token' && resolvedClientId(cfg)) cfg.auth = 'oauth';
           if (cfg.auth === 'token' && token !== undefined) {
             if (typeof token !== 'string' || !token.trim()) return json(res, 400, { error: 'token must be a non-empty string' });
             secretStore(cfg.id).save(TOKEN_KEY, token.trim());
@@ -1868,18 +1869,18 @@ if (STDIO_MODE) {
           const result = await runOAuth(cfg);
           if (result.authorized) {
             await supervisor.start(cfg);
-            return json(res, 200, supervisor.status(cfg.id));
+            return json(res, 200, statusFor(cfg));
           }
           supervisor.markAuthorizing(cfg);
-          return json(res, 200, { ...supervisor.status(cfg.id), authUrl: result.authUrl, error: result.error } as ServerStatus);
+          return json(res, 200, { ...statusFor(cfg), authUrl: result.authUrl, error: result.error } as ServerStatus);
         }
 
         if (isRemote && cfg.auth === 'token' && !storedBearerToken(cfg)) {
-          const error = `Paste a ${cfg.name} personal access token to connect.`;
+          const error = `Paste a ${cfg.name} access token to connect.`;
           return json(res, 200, supervisor.markAuthorizing(cfg, error));
         }
         if (cfg.enabled) await supervisor.start(cfg);
-        return json(res, 200, supervisor.status(cfg.id) ?? { id: cfg.id, state: 'stopped' });
+        return json(res, 200, statusFor(cfg) ?? { id: cfg.id, state: 'stopped' });
       } catch {
         return json(res, 400, { error: 'invalid_json' });
       }
@@ -1932,17 +1933,17 @@ if (STDIO_MODE) {
       if (!cfg) return json(res, 404, { error: 'not_found' });
       if (cfg.runtime !== 'remote') return json(res, 400, { error: 'not a remote server' });
       if (cfg.auth === 'token' && !resolvedClientId(cfg))
-        return json(res, 200, supervisor.markAuthorizing(cfg, `Paste a ${cfg.name} personal access token to connect.`));
+        return json(res, 200, supervisor.markAuthorizing(cfg, `Paste a ${cfg.name} access token to connect.`));
       cfg.auth = cfg.auth === 'none' ? 'none' : 'oauth';
       const result = await runOAuth(cfg);
       if (result.authorized) {
         cfg.enabled = true;
         saveConfig(servers);
         await supervisor.start(cfg);
-        return json(res, 200, supervisor.status(cfg.id));
+        return json(res, 200, statusFor(cfg));
       }
       supervisor.markAuthorizing(cfg);
-      return json(res, 200, { ...supervisor.status(cfg.id), authUrl: result.authUrl, error: result.error } as ServerStatus);
+      return json(res, 200, { ...statusFor(cfg), authUrl: result.authUrl, error: result.error } as ServerStatus);
     }
 
     // Set or replace a bearer credential without ever putting it in the server
@@ -1960,7 +1961,8 @@ if (STDIO_MODE) {
         cfg.enabled = true;
         saveConfig(servers);
         await supervisor.stop(cfg.id);
-        return json(res, 200, await supervisor.start(cfg));
+        await supervisor.start(cfg);
+        return json(res, 200, statusFor(cfg));
       } catch {
         return json(res, 400, { error: 'invalid_json' });
       }
@@ -1979,7 +1981,7 @@ if (STDIO_MODE) {
       else if (needsAuth(cfg)) supervisor.markAuthorizing(cfg);
       else if (action === 'restart') await supervisor.restart(cfg);
       else await supervisor.start(cfg);
-      return json(res, 200, supervisor.status(id));
+      return json(res, 200, statusFor(cfg));
     }
 
     if (pathname.startsWith('/api/')) return json(res, 404, { error: 'not_found' });

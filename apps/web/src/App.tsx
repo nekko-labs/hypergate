@@ -1232,7 +1232,7 @@ function ServerRow({ s, agents, onChange, onToken }: { s: ServerStatus; agents: 
     onChange();
   };
   const signIn = async () => {
-    if (isRemote && s.state === 'authorizing' && (s.error?.toLowerCase().includes('personal access token') || s.error?.toLowerCase().includes('token rejected'))) {
+    if (isRemote && s.state === 'authorizing' && s.auth === 'token') {
       onToken(s);
       return;
     }
@@ -1300,7 +1300,7 @@ function ServerRow({ s, agents, onChange, onToken }: { s: ServerStatus; agents: 
       actions={
         <>
           {authorizing ? (
-            <button className="btn sm btn-primary" onClick={() => void signIn()}>{s.error?.toLowerCase().includes('token') ? '🔑 Enter token' : '🔐 Sign in'}</button>
+            <button className="btn sm btn-primary" onClick={() => void signIn()}>{s.auth === 'token' ? '🔑 Enter token' : '🔐 Sign in'}</button>
           ) : (
             /* Up/down is one bit of state, so it gets one control. It reads as on
                while starting — that is where the click is taking it — and stays
