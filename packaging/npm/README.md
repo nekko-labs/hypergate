@@ -1,6 +1,6 @@
 # Hypergate
 
-**Local-first runtime and manager for MCP servers.** Run MCP servers securely, supervise them, and expose **one gateway endpoint** any agent harness (Claude Code, Cursor, Nekkos, Codex) can use.
+**Local-first runtime and manager for MCP servers.** Run MCP servers securely, supervise them, and expose **one gateway endpoint** any agent harness (Claude Code, Cursor, Kotrain, Codex) can use.
 
 > This is the installable package for [Hypergate](https://hypergate.app). Source: [nekko-labs/hypergate](https://github.com/nekko-labs/hypergate) · MIT
 

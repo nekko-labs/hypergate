@@ -6,13 +6,13 @@ export function GatewayBar({ gateway }: { gateway: GatewayInfo }) {
   const [copied, copy] = useCopy();
   const [showToken, setShowToken] = useState(false);
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'claude' | 'json' | 'stdio' | 'nekkos'>('claude');
+  const [tab, setTab] = useState<'claude' | 'json' | 'stdio' | 'kotrain'>('claude');
   const token = gateway.token ?? '';
   const snippets: Record<string, string> = {
     claude: `claude mcp add -t http hypergate ${gateway.url} -H "Authorization: Bearer ${token}"`,
     json: JSON.stringify(gateway.clientSnippet, null, 2),
     stdio: JSON.stringify(gateway.stdioSnippet ?? { mcpServers: { 'hypergate': { command: 'hypergated', args: ['--stdio'] } } }, null, 2),
-    nekkos: 'Nekkos auto-detects Hypergate.\nSettings → MCP servers → "Connect Hypergate gateway" — one click, done.',
+    kotrain: 'Kotrain auto-detects Hypergate.\nSettings → MCP servers → "Connect Hypergate gateway" — one click, done.',
   };
   return (
     <div className="gwbar">
@@ -32,10 +32,10 @@ export function GatewayBar({ gateway }: { gateway: GatewayInfo }) {
             <button className={`tab ${tab === 'claude' ? 'active' : ''}`} onClick={() => setTab('claude')}>Claude Code</button>
             <button className={`tab ${tab === 'json' ? 'active' : ''}`} onClick={() => setTab('json')}>.mcp.json</button>
             <button className={`tab ${tab === 'stdio' ? 'active' : ''}`} onClick={() => setTab('stdio')}>stdio</button>
-            <button className={`tab ${tab === 'nekkos' ? 'active' : ''}`} onClick={() => setTab('nekkos')}>Nekkos</button>
+            <button className={`tab ${tab === 'kotrain' ? 'active' : ''}`} onClick={() => setTab('kotrain')}>Kotrain</button>
           </div>
           <pre className="snippet">{snippets[tab]}</pre>
-          {tab !== 'nekkos' && (
+          {tab !== 'kotrain' && (
             <div className="row" style={{ marginTop: 8, justifyContent: 'flex-end' }}>
               <button className="btn sm" onClick={() => copy('snippet', snippets[tab], 'Snippet copied')}>{copied === 'snippet' ? 'Copied!' : 'Copy snippet'}</button>
             </div>

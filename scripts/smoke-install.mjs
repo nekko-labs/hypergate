@@ -138,7 +138,7 @@ if (!html.includes('<div id="root">')) fail(`the packaged daemon did not serve t
 ok('the packaged web UI is served');
 
 const catalog = hg(['catalog']);
-if (!catalog.includes('nekkos')) fail(`catalog looked wrong: ${catalog.slice(0, 200)}`);
+if (!catalog.includes('kotrain')) fail(`catalog looked wrong: ${catalog.slice(0, 200)}`);
 ok('catalog lists the curated servers');
 
 // A real stdio MCP server, launched by the installed daemon.

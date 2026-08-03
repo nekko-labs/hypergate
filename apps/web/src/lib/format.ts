@@ -41,7 +41,7 @@ export const STATE_PILL: Record<string, string> = {
 /**
  * Order the catalog like the daemon's sortRegistry, but client-side (we don't
  * bundle @hypergate/core into the browser): recommended entries first — keeping
- * the daemon's authored order (nekkos, context7, supabase, linear, figma) — then
+ * the daemon's authored order (kotrain, context7, supabase, linear, figma) — then
  * the rest by popularity desc, with a stable fallback to the original order.
  */
 export function sortCatalog(entries: RegistryEntry[], pop: PopularityMap): RegistryEntry[] {
