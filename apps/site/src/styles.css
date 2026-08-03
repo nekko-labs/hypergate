@@ -427,4 +427,5 @@ html[data-download-platform="mobile"] .hero-snippet { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .reveal { opacity: 1; transform: none; transition: none; }
   .hero .fly { opacity: 1; filter: none; transform: none; animation: none; }
+  .hero-h1 .grad.fly { filter: drop-shadow(0 0 34px rgba(34, 211, 238, 0.35)); }
 }
