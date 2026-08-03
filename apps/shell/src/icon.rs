@@ -41,7 +41,7 @@ fn sample(x: f32, y: f32, size: u32) -> ([f32; 3], f32) {
     // The ring: an annulus with both edges feathered. Feather widths shrink with
     // scale so a large icon gets a crisp edge instead of a blurry one.
     let feather = 1.2 / k.max(1.0);
-    let ring = smoothstep(8.6, 8.6 + feather, r) * (1.0 - smoothstep(14.6 - feather, 14.6, r));
+    let ring = smoothstep(8.8, 8.8 + feather, r) * (1.0 - smoothstep(14.2 - feather, 14.2, r));
 
     // Hue sweeps violet→cyan around the ring, so the gradient reads as motion.
     let angle = dy.atan2(dx); // -PI..PI
@@ -49,11 +49,17 @@ fn sample(x: f32, y: f32, size: u32) -> ([f32; 3], f32) {
     // Fold the sweep so both halves of the ring run through the full gradient
     // instead of showing a hard seam where the angle wraps.
     let t = 1.0 - (2.0 * t - 1.0).abs();
-    let ring_rgb = [
+    let mut ring_rgb = [
         VIOLET[0] + (CYAN[0] - VIOLET[0]) * t,
         VIOLET[1] + (CYAN[1] - VIOLET[1]) * t,
         VIOLET[2] + (CYAN[2] - VIOLET[2]) * t,
     ];
+    // A short ice-white hot arc adds the premium highlight without painting
+    // anything into the portal opening.
+    let hot_arc = ((angle + 0.55).cos().max(0.0)).powf(18.0) * ring;
+    ring_rgb[0] += (255.0 - ring_rgb[0]) * hot_arc * 0.32;
+    ring_rgb[1] += (255.0 - ring_rgb[1]) * hot_arc * 0.32;
+    ring_rgb[2] += (255.0 - ring_rgb[2]) * hot_arc * 0.32;
     if ring <= 0.0 {
         return ([0.0; 3], 0.0);
     }
@@ -203,7 +209,7 @@ pub fn ico_bytes() -> Vec<u8> {
 pub fn svg() -> String {
     let hex = |c: [f32; 3]| format!("#{:02x}{:02x}{:02x}", c[0] as u8, c[1] as u8, c[2] as u8);
     // Ring radius and stroke width restated from `sample`'s 32px design grid:
-    // centreline at (8.6 + 14.6) / 2, stroke spanning the annulus.
+    // centreline at (8.8 + 14.2) / 2, stroke spanning the annulus.
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
   <defs>
@@ -211,8 +217,13 @@ pub fn svg() -> String {
       <stop offset="0" stop-color="{violet}"/>
       <stop offset="1" stop-color="{cyan}"/>
     </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="1.2"/>
+    </filter>
   </defs>
-  <circle cx="16" cy="16" r="11.6" fill="none" stroke="url(#gate)" stroke-width="6"/>
+  <circle cx="16" cy="16" r="11.5" fill="none" stroke="url(#gate)" stroke-width="5.4" opacity=".35" filter="url(#glow)"/>
+  <circle cx="16" cy="16" r="11.5" fill="none" stroke="url(#gate)" stroke-width="5.4"/>
+  <path d="M 8.1 9.3 A 11.5 11.5 0 0 1 22.2 7.8" fill="none" stroke="#d8fbff" stroke-width="1.9" stroke-linecap="round" opacity=".7"/>
 </svg>
 "##,
         violet = hex(VIOLET),

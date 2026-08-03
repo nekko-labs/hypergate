@@ -54,7 +54,7 @@ export function AddServerDialog({ entry, onClose, onAdded }: { entry: RegistryEn
         <label className="field">
           Isolation
           <div className="seg">
-            <button className={runtime === 'process' ? 'active' : ''} onClick={() => setRuntime('process')} title="Sandboxed child process — zero dependencies, lightest">⚡ Process sandbox</button>
+            <button className={runtime === 'process' ? 'active' : ''} onClick={() => setRuntime('process')} title="Sandboxed child process — zero dependencies, lightest">💻 Local</button>
             <button className={runtime === 'docker' ? 'active' : ''} onClick={() => setRuntime('docker')} title="Container per server — strongest isolation, needs Docker">🐳 Docker</button>
           </div>
         </label>

@@ -28,7 +28,7 @@ export const openAuth = (authUrl?: string): void => {
   window.open(authUrl, 'hypergate-oauth', 'width=600,height=760,noopener');
 };
 
-export const RUNTIME_CHIP: Record<string, string> = { docker: '🐳 docker', remote: '🌐 remote', process: '⚡ process' };
+export const RUNTIME_CHIP: Record<string, string> = { docker: '🐳 docker', remote: '☁️ cloud', process: '💻 local' };
 
 export const STATE_PILL: Record<string, string> = {
   ready: 'pill-ready',
@@ -49,6 +49,9 @@ export function sortCatalog(entries: RegistryEntry[], pop: PopularityMap): Regis
   return entries
     .map((e, i) => ({ e, i }))
     .sort((a, b) => {
+      const oa = a.e.runtime === 'remote' && a.e.official === true ? 0 : 1;
+      const ob = b.e.runtime === 'remote' && b.e.official === true ? 0 : 1;
+      if (oa !== ob) return oa - ob;
       const ra = a.e.recommended ? 0 : 1;
       const rb = b.e.recommended ? 0 : 1;
       if (ra !== rb) return ra - rb;
