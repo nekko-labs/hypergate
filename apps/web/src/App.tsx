@@ -1287,7 +1287,7 @@ function ServerRow({ s, agents, onChange, onToken }: { s: ServerStatus; agents: 
         <>
           {authorizing && (
             <p className="small muted row-note">
-              {s.error?.toLowerCase().includes('token') ? <>Paste a new token to reconnect {s.name}.</> : <>Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.</>}
+              {s.auth === 'token' ? <>Paste a new token to reconnect {s.name}.</> : <>Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.</>}
             </p>
           )}
           {s.error && !authorizing && <p className="small row-note" style={{ color: 'var(--danger)' }}>{s.error}</p>}
