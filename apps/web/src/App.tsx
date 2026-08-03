@@ -35,12 +35,21 @@ import { useToast } from './toast';
 
 type View = 'servers' | 'analytics' | 'settings';
 type ServerSection = 'agents' | 'mcp-servers' | 'cli';
+type AnalyticsSection = 'overview' | 'usage-by-server' | 'callers' | 'tools' | 'security' | 'recent-calls';
 type Theme = 'light' | 'medium' | 'dark';
 
 const SERVER_SECTIONS: { id: ServerSection; label: string }[] = [
   { id: 'agents', label: 'Connected agents' },
   { id: 'mcp-servers', label: 'MCP servers' },
   { id: 'cli', label: 'CLI tools' },
+];
+const ANALYTICS_SECTIONS: { id: AnalyticsSection; label: string }[] = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'usage-by-server', label: 'Usage by server' },
+  { id: 'callers', label: "Who's calling" },
+  { id: 'tools', label: 'Tool ranking' },
+  { id: 'security', label: 'Security' },
+  { id: 'recent-calls', label: 'Recent calls' },
 ];
 
 /**
@@ -151,7 +160,7 @@ const openAuth = (authUrl?: string, popup?: Window | null): void => {
   window.open(authUrl, 'hypergate-oauth', 'width=600,height=760,noopener');
 };
 
-const RUNTIME_CHIP: Record<string, string> = { docker: '🐳 docker', remote: '🌐 remote', process: '⚡ process' };
+const RUNTIME_CHIP: Record<string, string> = { docker: '🐳 docker', remote: '☁️ cloud', process: '💻 local' };
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -346,6 +355,9 @@ function sortCatalog(entries: RegistryEntry[], pop: PopularityMap): RegistryEntr
   return entries
     .map((e, i) => ({ e, i }))
     .sort((a, b) => {
+      const oa = a.e.runtime === 'remote' && a.e.official === true ? 0 : 1;
+      const ob = b.e.runtime === 'remote' && b.e.official === true ? 0 : 1;
+      if (oa !== ob) return oa - ob;
       const ra = a.e.recommended ? 0 : 1;
       const rb = b.e.recommended ? 0 : 1;
       if (ra !== rb) return ra - rb;
@@ -371,7 +383,7 @@ export function App() {
   const [tokenTarget, setTokenTarget] = useState<{ id?: string; name: string; label?: string; url?: string; entry?: RegistryEntry } | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
   const [version, setVersion] = useState('');
-  const [activeSection, setActiveSection] = useState<ServerSection>('agents');
+  const [activeSection, setActiveSection] = useState<ServerSection | AnalyticsSection>('agents');
   const viewRef = useRef<HTMLElement>(null);
 
   const refreshAgents = useCallback(() => {
@@ -448,7 +460,7 @@ export function App() {
     requestAnimationFrame(() => viewRef.current?.scrollTo({ top: 0 }));
   }, []);
 
-  const scrollToSection = useCallback((id: ServerSection) => {
+  const scrollToSection = useCallback((id: ServerSection | AnalyticsSection) => {
     document.getElementById(id)?.scrollIntoView({
       behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
       block: 'start',
@@ -457,13 +469,14 @@ export function App() {
 
   useEffect(() => {
     const root = viewRef.current;
-    if (view !== 'servers' || !root) return;
-    const sections = SERVER_SECTIONS.map(({ id }) => document.getElementById(id)).filter((section): section is HTMLElement => !!section);
+    if (!root) return;
+    const sectionDefs = view === 'servers' ? SERVER_SECTIONS : view === 'analytics' ? ANALYTICS_SECTIONS : [];
+    const sections = sectionDefs.map(({ id }) => document.getElementById(id)).filter((section): section is HTMLElement => !!section);
     const update = () => {
       const marker = root.getBoundingClientRect().top + Math.min(180, root.clientHeight * 0.28);
-      let current = sections[0]?.id as ServerSection | undefined;
+      let current = sections[0]?.id as ServerSection | AnalyticsSection | undefined;
       for (const section of sections) {
-        if (section.getBoundingClientRect().top <= marker) current = section.id as ServerSection;
+        if (section.getBoundingClientRect().top <= marker) current = section.id as ServerSection | AnalyticsSection;
       }
       if (current) setActiveSection(current);
     };
@@ -475,7 +488,7 @@ export function App() {
       root.removeEventListener('scroll', update);
       resize.disconnect();
     };
-  }, [view, agents.length, servers?.length, showCatalog, adding]);
+  }, [view, agents.length, servers?.length, showCatalog, adding, stats]);
 
   return (
     <div className="app">
@@ -514,6 +527,15 @@ export function App() {
                         aria-current={activeSection === section.id ? 'location' : undefined}
                         onClick={() => scrollToSection(section.id)}
                       >
+                        {section.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {item === 'analytics' && view === 'analytics' && (
+                  <div className="section-nav" aria-label="Analytics sections">
+                    {ANALYTICS_SECTIONS.map((section) => (
+                      <button key={section.id} className={activeSection === section.id ? 'active' : ''} aria-current={activeSection === section.id ? 'location' : undefined} onClick={() => scrollToSection(section.id)}>
                         {section.label}
                       </button>
                     ))}
@@ -630,7 +652,7 @@ export function App() {
                 </section>
                 </>
               ) : view === 'analytics' ? (
-                <AnalyticsView stats={stats} />
+                <AnalyticsView stats={stats} servers={servers ?? []} registry={registry} />
               ) : (
                 <SettingsView gateway={gateway} version={version} u={updater} />
               )}
@@ -1264,7 +1286,7 @@ function ServerRow({ s, agents, onChange, onToken }: { s: ServerStatus; agents: 
         <>
           <span className={`pill ${STATE_PILL[s.state] ?? 'pill-stopped'}`}><span className="dot" />{s.state}</span>
           <span className="server-name">{s.name}</span>
-          <span className="chip">{RUNTIME_CHIP[s.runtime] ?? '⚡ process'}</span>
+          <span className="chip">{RUNTIME_CHIP[s.runtime] ?? '💻 local'}</span>
           {isRemote && s.url && <span className="chip mono" title={s.url}>{new URL(s.url).host}</span>}
           <AccountChip s={s} />
           {/* Counts are facts about the row, not buttons: the row itself is
@@ -1355,7 +1377,7 @@ function ServerRow({ s, agents, onChange, onToken }: { s: ServerStatus; agents: 
           <ServerAgents server={s} agents={agents} onChange={onChange} />
         </Block>
       )}
-      <Block label={<>Logs {isRemote && <span className="dl-note">a remote server runs on its provider's machine, so it has no local output</span>}</>}>
+      <Block label={<>Logs {isRemote && <span className="dl-note">A cloud server runs on its provider's machine, so it has no local output</span>}</>}>
         <LogPane lines={logs} />
       </Block>
     </ExpandRow>
@@ -1872,12 +1894,21 @@ function StopDaemon({ gateway }: { gateway: GatewayInfo | null }) {
   );
 }
 
-function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
+function AnalyticsView({ stats, servers, registry }: { stats: AnalyticsSummary | null; servers: ServerStatus[]; registry: RegistryEntry[] }) {
   const hasData = !!stats && stats.totalCalls > 0;
   const successRate = stats && stats.totalCalls > 0 ? Math.round(((stats.totalCalls - stats.totalErrors) / stats.totalCalls) * 100) : 100;
   const maxSeries = stats ? Math.max(1, ...stats.series.map((b) => b.calls)) : 1;
   const maxServer = stats ? Math.max(1, ...stats.servers.map((s) => s.calls)) : 1;
   const maxClient = stats ? Math.max(1, ...stats.clients.map((c) => c.calls)) : 1;
+  const toolRanking = stats ? stats.servers.flatMap((server) => server.tools.map((tool) => ({ ...tool, server: server.name }))).sort((a, b) => b.calls - a.calls) : [];
+  const maxTool = Math.max(1, ...toolRanking.map((tool) => tool.calls));
+  const risks = stats ? [
+    ...stats.servers.filter((server) => server.calls > 4 && server.errors / server.calls >= 0.2).map((server) => ({ severity: 'high', label: 'Elevated error rate', detail: `${server.name} is failing ${Math.round((server.errors / server.calls) * 100)}% of calls.` })),
+    ...stats.servers.filter((server) => server.bytesOut > Math.max(1024 * 1024, stats.bytesOut / Math.max(1, stats.servers.length) * 3)).map((server) => ({ severity: 'medium', label: 'Unusually high data out', detail: `${server.name} has sent ${fmtBytes(server.bytesOut)}.` })),
+    ...stats.servers.flatMap((server) => server.tools.filter((tool) => tool.calls > 0 && tool.errors === tool.calls).map((tool) => ({ severity: 'high', label: 'Tool only fails', detail: `${tool.tool} on ${server.name} has no successful calls.` }))),
+    ...servers.filter((server) => registry.some((entry) => entry.id === server.id && entry.official === false)).map((server) => ({ severity: 'medium', label: 'Community server configured', detail: `${server.name} is published by a community namespace.` })),
+    ...servers.filter((server) => server.runtime === 'remote' && (!server.auth || server.auth === 'none')).map((server) => ({ severity: 'medium', label: 'Remote server without auth', detail: `${server.name} has no configured authentication.` })),
+  ] : [];
 
   return (
     <>
@@ -1901,6 +1932,7 @@ function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
         </div>
       )}
 
+      <section id="overview" className="dashboard-section analytics-section">
       <div className="metricbar">
         <div className="metric accent"><div className="m-val">{fmtNum(stats?.totalCalls ?? 0)}</div><div className="m-label">tool calls</div></div>
         <div className="metric"><div className="m-val">{successRate}<span className="u">%</span></div><div className="m-label">success rate</div></div>
@@ -1929,6 +1961,7 @@ function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
           {/* Two peer breakdowns, side by side while the window is wide enough:
               the dashboard spends the width it has so the height stays for the
               lists. Below ~860px they stack again (see `.duo`). */}
+          <section id="usage-by-server" className="analytics-section">
           <div className="duo">
             <section>
               <div className="section-title">Usage by server</div>
@@ -1955,26 +1988,43 @@ function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
               </div></div>
             </section>
 
-            <section>
-              <div className="section-title">Who's calling</div>
-              <div className="panel"><div className="list">
-                {stats!.clients.map((c) => (
-                  <div key={c.client} className="list-row">
-                    <div className="row between wrap-gap">
-                      <div className="server-name">{c.client}</div>
-                      <div className="u-metrics">
-                        <span><b>{fmtNum(c.calls)}</b> calls</span>
-                        <span><b>{fmtBytes(c.bytesIn + c.bytesOut)}</b> data</span>
-                        <span className="muted">{fmtRel(c.lastUsed)}</span>
-                      </div>
-                    </div>
-                    <div className="bar-track" style={{ marginTop: 9 }}><div className="bar-fill" style={{ width: `${(c.calls / maxClient) * 100}%` }} /></div>
-                  </div>
-                ))}
-              </div></div>
-            </section>
           </div>
+          </section>
 
+          <section id="callers" className="analytics-section">
+          <div className="section-title">Who's calling</div>
+          <div className="panel"><div className="list">
+            {stats!.clients.map((c) => (
+              <div key={c.client} className="list-row">
+                <div className="row between wrap-gap"><div className="server-name">{c.client}</div><div className="u-metrics"><span><b>{fmtNum(c.calls)}</b> calls</span><span><b>{fmtBytes(c.bytesIn + c.bytesOut)}</b> data</span><span className="muted">{fmtRel(c.lastUsed)}</span></div></div>
+                <div className="bar-track" style={{ marginTop: 9 }}><div className="bar-fill" style={{ width: `${(c.calls / maxClient) * 100}%` }} /></div>
+              </div>
+            ))}
+          </div></div>
+          </section>
+
+          <section id="tools" className="analytics-section">
+          <div className="section-title">Tool usage ranking</div>
+          <div className="panel"><div className="list">
+            {toolRanking.map((tool) => (
+              <div key={`${tool.server}-${tool.tool}`} className="list-row">
+                <div className="row between wrap-gap"><div><span className="server-name mono">{tool.tool}</span><span className="small muted"> · {tool.server}</span></div><div className="u-metrics"><b>{fmtNum(tool.calls)}</b> calls · <span className={tool.errors ? 'danger' : 'muted'}>{tool.errors} errors</span></div></div>
+                <div className="bar-track" style={{ marginTop: 9 }}><div className="bar-fill" style={{ width: `${(tool.calls / maxTool) * 100}%` }} /></div>
+              </div>
+            ))}
+          </div></div>
+          </section>
+
+          <section id="security" className="analytics-section">
+          <div className="section-title">Security</div>
+          <div className="panel"><div className="list">
+            {risks.length === 0 ? <div className="list-row"><span className="chip chip-official">✓ No risks detected</span><span className="small muted">Usage and configured servers look calm.</span></div> : risks.map((risk, i) => (
+              <div key={`${risk.label}-${i}`} className="list-row"><div className="row between wrap-gap"><div><span className={`chip ${risk.severity === 'high' ? 'chip-danger' : 'chip-warning'}`}>{risk.severity}</span><span className="server-name" style={{ marginLeft: 8 }}>{risk.label}</span></div><span className="small muted">{risk.detail}</span></div></div>
+            ))}
+          </div></div>
+          </section>
+
+          <section id="recent-calls" className="analytics-section">
           <div className="section-title">Recent calls</div>
           <div className="panel"><div className="feed">
             {stats!.recent.map((e, i) => (
@@ -1988,6 +2038,7 @@ function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
               </div>
             ))}
           </div></div>
+          </section>
         </>
       ) : stats === null ? (
         <EmptyState glyph="📡" title="Loading analytics…" loading>
@@ -1998,6 +2049,7 @@ function AnalyticsView({ stats }: { stats: AnalyticsSummary | null }) {
           Connect an agent to the gateway and start a server. Every tool call it makes will appear here — with the caller, latency, and data volume.
         </EmptyState>
       )}
+      </section>
     </>
   );
 }
@@ -2012,7 +2064,9 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
   const [env, setEnv] = useState((entry?.requires ?? []).map((k) => `${k}=`).join('\n'));
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [advanced, setAdvanced] = useState(!entry);
   const toast = useToast();
+  const missingRequired = (entry?.requires ?? []).some((key) => !env.split('\n').find((line) => line.startsWith(`${key}=`))?.slice(key.length + 1).trim());
 
   const submit = async () => {
     setErr(null);
@@ -2052,11 +2106,33 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
       </div>
       {entry && <p className="small muted" style={{ margin: '6px 0 0' }}>{entry.description}</p>}
 
-      <div className="row" style={{ marginTop: 14, flexWrap: 'wrap', gap: 14 }}>
+      {entry && !advanced && (
+        <>
+          <div className="simple-add-fields">
+            {(entry.requires ?? []).length > 0 ? (entry.requires ?? []).map((key) => (
+              <label className="field" key={key}>
+                {key}
+                <input className="mono" value={env.split('\n').find((line) => line.startsWith(`${key}=`))?.slice(key.length + 1) ?? ''} onChange={(e) => setEnv((current) => {
+                  const lines = current.split('\n').filter((line) => !line.startsWith(`${key}=`));
+                  return [...lines, `${key}=${e.target.value}`].join('\n');
+                })} placeholder="Required value" />
+              </label>
+            )) : <div className="small muted">Ready to add with the registry defaults.</div>}
+          </div>
+          <div className="row between" style={{ marginTop: 14 }}>
+            <span className="small" style={{ color: 'var(--danger)' }}>{err}</span>
+            <div className="row">
+              <button className="btn sm btn-ghost" onClick={() => setAdvanced(true)}>Advanced</button>
+              <button className="btn btn-primary" onClick={() => void submit()} disabled={busy || missingRequired}>{busy ? 'Adding…' : 'Add'}</button>
+            </div>
+          </div>
+        </>
+      )}
+      {advanced && <div className="row" style={{ marginTop: 14, flexWrap: 'wrap', gap: 14 }}>
         <label className="field">
           Isolation
           <div className="seg">
-            <button className={runtime === 'process' ? 'active' : ''} onClick={() => setRuntime('process')} title="Sandboxed child process — zero dependencies, lightest">⚡ Process sandbox</button>
+            <button className={runtime === 'process' ? 'active' : ''} onClick={() => setRuntime('process')} title="Sandboxed child process — zero dependencies, lightest">💻 Local</button>
             <button className={runtime === 'docker' ? 'active' : ''} onClick={() => setRuntime('docker')} title="Container per server — strongest isolation, needs Docker">🐳 Docker</button>
           </div>
         </label>
@@ -2064,14 +2140,14 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
           Name
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder={entry?.name ?? 'my-server'} />
         </label>
-      </div>
-      {runtime === 'docker' && (
+      </div>}
+      {advanced && runtime === 'docker' && (
         <label className="field" style={{ marginTop: 12 }}>
           Image
           <input className="mono" value={image} onChange={(e) => setImage(e.target.value)} placeholder="ghcr.io/org/mcp-server:latest" />
         </label>
       )}
-      <div className="row" style={{ marginTop: 12, flexWrap: 'wrap', gap: 14 }}>
+      {advanced && <div className="row" style={{ marginTop: 12, flexWrap: 'wrap', gap: 14 }}>
         <label className="field" style={{ minWidth: 140 }}>
           {runtime === 'docker' ? 'Command (optional — image entrypoint if blank)' : 'Command'}
           <input className="mono" value={command} onChange={(e) => setCommand(e.target.value)} placeholder={runtime === 'docker' ? '(entrypoint)' : 'npx'} />
@@ -2080,15 +2156,15 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
           Arguments
           <input className="mono" value={args} onChange={(e) => setArgs(e.target.value)} placeholder="-y @modelcontextprotocol/server-filesystem ." />
         </label>
-      </div>
-      <label className="field" style={{ marginTop: 12 }}>
+      </div>}
+      {advanced && <label className="field" style={{ marginTop: 12 }}>
         Environment &amp; secrets (one KEY=value per line, never logged)
         <textarea value={env} onChange={(e) => setEnv(e.target.value)} rows={Math.max(2, env.split('\n').length)} />
-      </label>
-      <div className="row between" style={{ marginTop: 14 }}>
+      </label>}
+      {advanced && <div className="row between" style={{ marginTop: 14 }}>
         <span className="small" style={{ color: 'var(--danger)' }}>{err}</span>
         <button className="btn btn-primary" onClick={() => void submit()} disabled={(runtime === 'docker' ? !image && !command : !command) || busy}>{busy ? 'Adding…' : 'Add & start'}</button>
-      </div>
+      </div>}
     </section>
   );
 }
@@ -2111,7 +2187,7 @@ function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry
             {e.official === false && (
               <span className="chip" title={e.publisher ? `Community namespace: ${e.publisher}` : 'Community server (not first-party)'}>Community</span>
             )}
-            <span className="chip">{RUNTIME_CHIP[e.runtime] ?? '⚡ process'}</span>
+            <span className="chip">{RUNTIME_CHIP[e.runtime] ?? '💻 local'}</span>
             {oauth && <span className="chip chip-accent">🔐 OAuth</span>}
             {token && <span className="chip chip-accent">🔑 Token</span>}
             {e.source === 'registry' && <span className="chip chip-accent">registry</span>}
@@ -2122,8 +2198,8 @@ function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry
         </div>
         <div className="row">
           {e.homepage && <a className="small muted" href={e.homepage} target="_blank" rel="noreferrer">docs</a>}
-          <button className={`btn btn-catalog-add ${oauth || token ? 'btn-primary' : ''}`} onClick={() => onPick(e)} disabled={!runnable} title={runnable ? '' : e.note ?? 'Not locally runnable'}>
-            {oauth ? '🔐 Sign in & add' : token ? '🔑 Add with token' : '+ Add'}
+          <button className="btn btn-catalog-add" onClick={() => onPick(e)} disabled={!runnable} title={runnable ? '' : e.note ?? 'Not locally runnable'}>
+            Add
           </button>
         </div>
       </div>
@@ -2167,7 +2243,7 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
 
   const searchingLive = q.trim().length > 0;
   const visibleResults = useMemo(
-    () => (results ? mergeCatalogSearch(sortedCurated, results, q) : null),
+    () => (results ? sortCatalog(mergeCatalogSearch(sortedCurated, results, q), pop) : null),
     [q, results, sortedCurated],
   );
   return (
@@ -2200,7 +2276,7 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
                 <div className="row between wrap-gap">
                   <div style={{ flex: 1, minWidth: 200 }}>
                     <span className="server-name">Custom server</span>
-                    <div className="small muted" style={{ marginTop: 3 }}>Any stdio MCP server, by command (process sandbox) or image (Docker).</div>
+                    <div className="small muted" style={{ marginTop: 3 }}>Any stdio MCP server, by command (local) or image (Docker).</div>
                   </div>
                   <button className="btn btn-primary" onClick={() => onPick('custom')}>+ Configure</button>
                 </div>

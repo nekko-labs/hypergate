@@ -19,7 +19,7 @@ export function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: Regist
             {e.official === false && (
               <span className="chip" title={e.publisher ? `Community namespace: ${e.publisher}` : 'Community server (not first-party)'}>Community</span>
             )}
-            <span className="chip">{RUNTIME_CHIP[e.runtime] ?? '⚡ process'}</span>
+            <span className="chip">{RUNTIME_CHIP[e.runtime] ?? '💻 local'}</span>
             {oauth && <span className="chip chip-accent">🔐 OAuth</span>}
             {token && <span className="chip chip-accent">🔑 Token</span>}
             {e.source === 'registry' && <span className="chip chip-accent">registry</span>}

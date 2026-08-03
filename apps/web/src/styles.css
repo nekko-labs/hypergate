@@ -142,6 +142,13 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
   padding: 18px 0 64px; scroll-margin-top: 18px;
 }
 .dashboard-section:last-child { min-height: max(320px, calc(100% - 24px)); }
+.analytics-section { flex: none; min-height: 0; padding: 18px 0 12px; scroll-margin-top: 18px; }
+.analytics-section > .panel,
+.analytics-section .panel { overflow: visible; }
+.analytics-section .list,
+.analytics-section .feed { overflow: visible; }
+.chip-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 38%, transparent); background: color-mix(in srgb, var(--danger) 12%, var(--card-2)); }
+.chip-warning { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 38%, transparent); background: color-mix(in srgb, var(--warning) 12%, var(--card-2)); }
 .dashboard-section > .section-title:first-child { margin-top: 0; }
 .dashboard-section .ag-grid { border-top: 0; gap: 6px 22px; }
 .dashboard-section .ag-card { border-bottom: 0; border-radius: 10px; }
@@ -189,10 +196,18 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
    gradient moves colour around an open portal instead of filling its center. */
 .gate-mark {
   width: 28px; height: 28px; flex: none; display: block; border-radius: 50%;
+  position: relative;
   background: conic-gradient(from 0turn, #6d5efc, #22d3ee 28%, #a5f3fc 44%, #22d3ee 62%, #6d5efc 100%);
-  -webkit-mask: radial-gradient(closest-side, transparent 55%, #000 64%);
-  mask: radial-gradient(closest-side, transparent 55%, #000 64%);
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--violet, #6d5efc) 60%, transparent));
+  -webkit-mask: radial-gradient(closest-side, transparent 56%, #000 64%);
+  mask: radial-gradient(closest-side, transparent 56%, #000 64%);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--violet, #6d5efc) 52%, transparent));
+}
+.gate-mark::after {
+  content: ''; position: absolute; inset: 2px; border-radius: 50%;
+  border: 2px solid #d8fbff; border-left-color: transparent; border-bottom-color: transparent;
+  transform: rotate(-32deg); opacity: .72;
+  -webkit-mask: radial-gradient(closest-side, transparent 56%, #000 64%);
+  mask: radial-gradient(closest-side, transparent 56%, #000 64%);
 }
 .gate-ring { animation: gate-spin 7s linear infinite; }
 @keyframes gate-spin { to { transform: rotate(1turn); } }
@@ -419,17 +434,15 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .btn-primary { background: var(--grad); color: var(--on-accent); border: none; font-weight: 600; }
 .btn-primary:hover { color: var(--on-accent); filter: brightness(1.08); }
 .btn-catalog-add {
-  border: 1px solid transparent;
-  background:
-    linear-gradient(var(--card-2), var(--card-2)) padding-box,
-    linear-gradient(120deg, color-mix(in srgb, var(--accent) 58%, var(--line-2)), color-mix(in srgb, var(--accent-2) 58%, var(--line-2))) border-box;
+  border: 0;
+  color: #fff;
+  background: var(--grad);
+  font-weight: 650;
 }
 .btn-catalog-add:not(:disabled):hover {
-  background:
-    linear-gradient(color-mix(in srgb, var(--accent) 8%, var(--card-2)), color-mix(in srgb, var(--accent) 8%, var(--card-2))) padding-box,
-    var(--grad) border-box;
+  color: #fff;
+  filter: brightness(1.1);
 }
-.btn-catalog-add.btn-primary { color: #fff; background: var(--grad) padding-box, var(--grad) border-box; }
 .btn-ghost { background: transparent; border-color: transparent; }
 .btn-ghost:hover { border-color: var(--line-2); }
 .btn.sm { padding: 3px 9px; font-size: 12px; }

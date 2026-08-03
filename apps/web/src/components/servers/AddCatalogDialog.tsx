@@ -86,7 +86,7 @@ export function AddCatalogDialog({
                 <div className="row between wrap-gap">
                   <div style={{ flex: 1, minWidth: 200 }}>
                     <span className="server-name">Custom server</span>
-                    <div className="small muted" style={{ marginTop: 3 }}>Any stdio MCP server, by command (process sandbox) or image (Docker).</div>
+                    <div className="small muted" style={{ marginTop: 3 }}>Any stdio MCP server, by command (local) or image (Docker).</div>
                   </div>
                   <button className="btn btn-primary" onClick={() => onPick('custom')}>+ Configure</button>
                 </div>
