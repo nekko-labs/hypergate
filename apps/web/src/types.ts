@@ -1,5 +1,5 @@
 export type View = 'servers' | 'analytics' | 'settings';
-export type Theme = 'light' | 'medium' | 'dark';
+export type Theme = 'light' | 'dark';
 
 export interface JsonSchema {
   type?: string;

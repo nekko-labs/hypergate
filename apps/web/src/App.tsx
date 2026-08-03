@@ -30,12 +30,12 @@ import { Dialog } from './components/Dialog';
 import { EmptyState } from './components/EmptyState';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogConsole } from './components/LogConsole';
+import { ThemeSwitch } from './components/ThemeSwitch';
 import { TokenDialog } from './components/servers/TokenDialog';
 import { useToast } from './toast';
 
 type View = 'servers' | 'analytics' | 'settings';
 type ServerSection = 'agents' | 'mcp-servers' | 'cli';
-type Theme = 'light' | 'medium' | 'dark';
 
 const SERVER_SECTIONS: { id: ServerSection; label: string }[] = [
   { id: 'agents', label: 'Connected agents' },
@@ -1016,23 +1016,6 @@ function ServerHealth({ offline, gateway }: { offline: boolean; gateway: Gateway
       )}
       {err && <span className="small hb-err">{err}</span>}
     </span>
-  );
-}
-
-function ThemeSwitch() {
-  const [theme, setTheme] = useState<Theme>(() => (document.documentElement.getAttribute('data-theme') as Theme) || 'medium');
-  const set = (t: Theme) => {
-    setTheme(t);
-    document.documentElement.setAttribute('data-theme', t);
-    try { localStorage.setItem('hypergate-theme', t); } catch { /* ignore */ }
-  };
-  const opts: [Theme, string, string][] = [['light', '☀', 'Light'], ['medium', '◐', 'Medium'], ['dark', '☾', 'Dark']];
-  return (
-    <div className="themeswitch" role="group" aria-label="Theme">
-      {opts.map(([t, icon, label]) => (
-        <button key={t} className={theme === t ? 'active' : ''} title={label} aria-label={label} onClick={() => set(t)}>{icon}</button>
-      ))}
-    </div>
   );
 }
 
