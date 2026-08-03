@@ -470,7 +470,11 @@ export function App() {
   useEffect(() => {
     const root = viewRef.current;
     if (!root) return;
-    const sectionDefs = view === 'servers' ? SERVER_SECTIONS : view === 'analytics' ? ANALYTICS_SECTIONS : [];
+    const sectionDefs = view === 'servers'
+      ? SERVER_SECTIONS
+      : view === 'analytics'
+        ? ANALYTICS_SECTIONS.filter(({ id }) => Boolean(stats?.totalCalls) || id === 'overview' || id === 'security')
+        : [];
     const sections = sectionDefs.map(({ id }) => document.getElementById(id)).filter((section): section is HTMLElement => !!section);
     const update = () => {
       const marker = root.getBoundingClientRect().top + Math.min(180, root.clientHeight * 0.28);
@@ -534,7 +538,7 @@ export function App() {
                 )}
                 {item === 'analytics' && view === 'analytics' && (
                   <div className="section-nav" aria-label="Analytics sections">
-                    {ANALYTICS_SECTIONS.map((section) => (
+                    {ANALYTICS_SECTIONS.filter(({ id }) => Boolean(stats?.totalCalls) || id === 'overview' || id === 'security').map((section) => (
                       <button key={section.id} className={activeSection === section.id ? 'active' : ''} aria-current={activeSection === section.id ? 'location' : undefined} onClick={() => scrollToSection(section.id)}>
                         {section.label}
                       </button>
@@ -1885,13 +1889,15 @@ function AnalyticsView({ stats, servers, registry }: { stats: AnalyticsSummary |
   const maxClient = stats ? Math.max(1, ...stats.clients.map((c) => c.calls)) : 1;
   const toolRanking = stats ? stats.servers.flatMap((server) => server.tools.map((tool) => ({ ...tool, server: server.name }))).sort((a, b) => b.calls - a.calls) : [];
   const maxTool = Math.max(1, ...toolRanking.map((tool) => tool.calls));
-  const risks = stats ? [
-    ...stats.servers.filter((server) => server.calls > 4 && server.errors / server.calls >= 0.2).map((server) => ({ severity: 'high', label: 'Elevated error rate', detail: `${server.name} is failing ${Math.round((server.errors / server.calls) * 100)}% of calls.` })),
-    ...stats.servers.filter((server) => server.bytesOut > Math.max(1024 * 1024, stats.bytesOut / Math.max(1, stats.servers.length) * 3)).map((server) => ({ severity: 'medium', label: 'Unusually high data out', detail: `${server.name} has sent ${fmtBytes(server.bytesOut)}.` })),
-    ...stats.servers.flatMap((server) => server.tools.filter((tool) => tool.calls > 0 && tool.errors === tool.calls).map((tool) => ({ severity: 'high', label: 'Tool only fails', detail: `${tool.tool} on ${server.name} has no successful calls.` }))),
+  const risks = [
+    ...(stats ? [
+      ...stats.servers.filter((server) => server.calls > 4 && server.errors / server.calls >= 0.2).map((server) => ({ severity: 'high', label: 'Elevated error rate', detail: `${server.name} is failing ${Math.round((server.errors / server.calls) * 100)}% of calls.` })),
+      ...stats.servers.filter((server) => server.bytesOut > Math.max(1024 * 1024, stats.bytesOut / Math.max(1, stats.servers.length) * 3)).map((server) => ({ severity: 'medium', label: 'Unusually high data out', detail: `${server.name} has sent ${fmtBytes(server.bytesOut)}.` })),
+      ...stats.servers.flatMap((server) => server.tools.filter((tool) => tool.calls > 0 && tool.errors === tool.calls).map((tool) => ({ severity: 'high', label: 'Tool only fails', detail: `${tool.tool} on ${server.name} has no successful calls.` }))),
+    ] : []),
     ...servers.filter((server) => registry.some((entry) => entry.id === server.id && entry.official === false)).map((server) => ({ severity: 'medium', label: 'Community server configured', detail: `${server.name} is published by a community namespace.` })),
     ...servers.filter((server) => server.runtime === 'remote' && (!server.auth || server.auth === 'none')).map((server) => ({ severity: 'medium', label: 'Remote server without auth', detail: `${server.name} has no configured authentication.` })),
-  ] : [];
+  ];
 
   return (
     <>
@@ -1990,15 +1996,6 @@ function AnalyticsView({ stats, servers, registry }: { stats: AnalyticsSummary |
           </div></div>
           </section>
 
-          <section id="security" className="analytics-section">
-          <div className="section-title">Security</div>
-          <div className="panel"><div className="list">
-            {risks.length === 0 ? <div className="list-row"><span className="chip chip-official">✓ No risks detected</span><span className="small muted">Usage and configured servers look calm.</span></div> : risks.map((risk, i) => (
-              <div key={`${risk.label}-${i}`} className="list-row"><div className="row between wrap-gap"><div><span className={`chip ${risk.severity === 'high' ? 'chip-danger' : 'chip-warning'}`}>{risk.severity}</span><span className="server-name" style={{ marginLeft: 8 }}>{risk.label}</span></div><span className="small muted">{risk.detail}</span></div></div>
-            ))}
-          </div></div>
-          </section>
-
           <section id="recent-calls" className="analytics-section">
           <div className="section-title">Recent calls</div>
           <div className="panel"><div className="feed">
@@ -2024,6 +2021,14 @@ function AnalyticsView({ stats, servers, registry }: { stats: AnalyticsSummary |
           Connect an agent to the gateway and start a server. Every tool call it makes will appear here — with the caller, latency, and data volume.
         </EmptyState>
       )}
+      </section>
+      <section id="security" className="analytics-section">
+        <div className="section-title">Security</div>
+        <div className="panel"><div className="list">
+          {risks.length === 0 ? <div className="list-row"><span className="chip chip-official">✓ No risks detected</span><span className="small muted">Usage and configured servers look calm.</span></div> : risks.map((risk, i) => (
+            <div key={`${risk.label}-${i}`} className="list-row"><div className="row between wrap-gap"><div><span className={`chip ${risk.severity === 'high' ? 'chip-danger' : 'chip-warning'}`}>{risk.severity}</span><span className="server-name" style={{ marginLeft: 8 }}>{risk.label}</span></div><span className="small muted">{risk.detail}</span></div></div>
+          ))}
+        </div></div>
       </section>
     </>
   );
