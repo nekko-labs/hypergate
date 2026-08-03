@@ -1934,7 +1934,9 @@ if (STDIO_MODE) {
       if (cfg.runtime !== 'remote') return json(res, 400, { error: 'not a remote server' });
       if (cfg.auth === 'token' && !resolvedClientId(cfg))
         return json(res, 200, supervisor.markAuthorizing(cfg, `Paste a ${cfg.name} access token to connect.`));
-      cfg.auth = cfg.auth === 'none' ? 'none' : 'oauth';
+      // A token entry that got here is on the client-id escape hatch, and stays
+      // a token entry: the hatch is derived from the env, never written down.
+      if (cfg.auth !== 'token') cfg.auth = cfg.auth === 'none' ? 'none' : 'oauth';
       const result = await runOAuth(cfg);
       if (result.authorized) {
         cfg.enabled = true;
