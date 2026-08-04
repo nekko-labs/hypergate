@@ -23,6 +23,26 @@ export type RemoteTransport = 'http' | 'sse';
  */
 export type RemoteAuth = 'oauth' | 'token' | 'none';
 
+/** One way to connect to a catalog server that offers multiple configurations. */
+export interface RegistryConnection {
+  id: string;
+  label: string;
+  description?: string;
+  runtime?: RuntimeKind;
+  command?: string;
+  args?: string[];
+  image?: string;
+  url?: string;
+  transport?: RemoteTransport;
+  auth?: RemoteAuth;
+  clientId?: string;
+  scope?: string;
+  tokenLabel?: string;
+  tokenUrl?: string;
+  requires?: string[];
+  note?: string;
+}
+
 /**
  * Lifecycle state of a managed server. `authorizing` is remote-only: the server
  * is waiting for the user to finish the browser OAuth login before it can connect.
@@ -240,6 +260,44 @@ export interface RegistryEntry {
    * daemon's `/api/registry/popularity` when the catalog opens; absent until then.
    */
   popularity?: number;
+  /** Alternative connection configurations for this logical server. */
+  connections?: RegistryConnection[];
+}
+
+const registryConnectionFields = [
+  'runtime', 'command', 'args', 'image', 'url', 'transport', 'auth', 'clientId',
+  'scope', 'tokenLabel', 'tokenUrl', 'requires', 'note',
+] as const;
+
+/** Return the available connection options, including a synthesized default. */
+export function registryConnections(entry: RegistryEntry): RegistryConnection[] {
+  if (entry.connections?.length) return entry.connections;
+  const option = Object.fromEntries(
+    registryConnectionFields
+      .filter((field) => entry[field] !== undefined)
+      .map((field) => [field, entry[field]]),
+  ) as Omit<RegistryConnection, 'id' | 'label'>;
+  return [{ id: 'default', label: 'Default', ...option }];
+}
+
+/** Resolve a connection choice into the existing RegistryEntry-shaped config. */
+export function resolveRegistryConnection(entry: RegistryEntry, connectionId?: string): RegistryEntry {
+  const options = registryConnections(entry);
+  const connection = options.find((option) => option.id === connectionId) ?? options[0];
+  if (!connection) return entry;
+  const resolved = { ...entry };
+  if (entry.connections?.length) {
+    for (const field of registryConnectionFields) {
+      delete (resolved as Record<string, unknown>)[field];
+    }
+  }
+  for (const field of registryConnectionFields) {
+    if (connection[field] !== undefined) {
+      (resolved as Record<string, unknown>)[field] = connection[field];
+    }
+  }
+  delete resolved.connections;
+  return resolved;
 }
 
 export function mergeCatalogSearch(curated: RegistryEntry[], searched: RegistryEntry[], query: string): RegistryEntry[] {

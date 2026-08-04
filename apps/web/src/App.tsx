@@ -24,7 +24,7 @@ import type {
   InstallChannel,
   CloseAction,
 } from '@hypergate/shared';
-import { mergeCatalogSearch } from '@hypergate/shared';
+import { mergeCatalogSearch, registryConnections, resolveRegistryConnection } from '@hypergate/shared';
 import { api } from './api';
 import { Dialog } from './components/Dialog';
 import { EmptyState } from './components/EmptyState';
@@ -431,7 +431,10 @@ export function App() {
     try {
       const status = await api.add({
         id: e.id, name: e.name, runtime: 'remote', command: '',
-        url: e.url, transport: e.transport ?? 'http', auth: 'oauth', enabled: true,
+        url: e.url, transport: e.transport ?? 'http', auth: 'oauth',
+        ...(e.clientId ? { clientId: e.clientId } : {}),
+        ...(e.scope ? { scope: e.scope } : {}),
+        enabled: true,
       });
       openAuth(status.authUrl, popup);
       toast.show(`Added ${e.name} — finish signing in to connect`, 'success');
@@ -610,7 +613,8 @@ export function App() {
                     <div className="panel"><div className="list">
                       {servers.map((s) => <ServerRow key={s.id} s={s} agents={agents} onChange={refresh} onToken={(server) => {
                         const entry = registry.find((e) => e.id === server.id);
-                        setTokenTarget({ id: server.id, name: server.name, label: entry?.tokenLabel, url: entry?.tokenUrl });
+                        const tokenConnection = entry && registryConnections(entry).find((connection) => connection.auth === 'token');
+                        setTokenTarget({ id: server.id, name: server.name, label: entry?.tokenLabel ?? tokenConnection?.tokenLabel, url: entry?.tokenUrl ?? tokenConnection?.tokenUrl });
                       }} />)}
                     </div></div>
                   ) : null}
@@ -2151,9 +2155,13 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
 
 /** One catalog row (curated or registry-search result) with an Add button. */
 function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry) => void }) {
-  const runnable = e.runnable !== false;
-  const oauth = e.runtime === 'remote' && e.auth === 'oauth';
-  const token = e.runtime === 'remote' && e.auth === 'token';
+  const options = registryConnections(e);
+  const [selectedId, setSelectedId] = useState(options[0]?.id);
+  const selected = resolveRegistryConnection(e, selectedId);
+  const selectedOption = options.find((option) => option.id === selectedId) ?? options[0];
+  const runnable = selected.runnable !== false;
+  const oauth = selected.runtime === 'remote' && selected.auth === 'oauth';
+  const token = selected.runtime === 'remote' && selected.auth === 'token';
   return (
     <div className="list-row">
       <div className="row between wrap-gap">
@@ -2167,18 +2175,36 @@ function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry
             {e.official === false && (
               <span className="chip" title={e.publisher ? `Community namespace: ${e.publisher}` : 'Community server (not first-party)'}>Community</span>
             )}
-            <span className="chip">{RUNTIME_CHIP[e.runtime] ?? '💻 local'}</span>
+            <span className="chip">{RUNTIME_CHIP[selected.runtime] ?? '💻 local'}</span>
             {oauth && <span className="chip chip-accent">🔐 OAuth</span>}
             {token && <span className="chip chip-accent">🔑 Token</span>}
-            {e.source === 'registry' && <span className="chip chip-accent">registry</span>}
-            {(e.requires ?? []).map((r) => <span key={r} className="chip mono">{r}</span>)}
+            {selected.source === 'registry' && <span className="chip chip-accent">registry</span>}
+            {(selected.requires ?? []).map((r) => <span key={r} className="chip mono">{r}</span>)}
           </div>
           {e.description && <div className="small muted" style={{ marginTop: 3 }}>{e.description}</div>}
-          {e.note && <div className="small" style={{ marginTop: 3, color: 'var(--warning)' }}>{e.note}</div>}
+          {selectedOption?.description && <div className="small muted" style={{ marginTop: 3 }}>{selectedOption.description}</div>}
+          {selected.note && <div className="small" style={{ marginTop: 3, color: 'var(--warning)' }}>{selected.note}</div>}
+          {options.length > 1 && (
+            <div className="seg" role="radiogroup" aria-label={`${e.name} connection method`} style={{ marginTop: 8, maxWidth: '100%', flexWrap: 'wrap' }}>
+              {options.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={option.id === selectedId ? 'active' : ''}
+                  role="radio"
+                  aria-checked={option.id === selectedId}
+                  onClick={() => setSelectedId(option.id)}
+                  title={option.description}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="row">
           {e.homepage && <a className="small muted" href={e.homepage} target="_blank" rel="noreferrer">docs</a>}
-          <button className="btn btn-catalog-add" onClick={() => onPick(e)} disabled={!runnable} title={runnable ? '' : e.note ?? 'Not locally runnable'}>
+          <button className="btn btn-catalog-add" onClick={() => onPick(selected)} disabled={!runnable} title={runnable ? '' : selected.note ?? 'Not locally runnable'}>
             Add
           </button>
         </div>
