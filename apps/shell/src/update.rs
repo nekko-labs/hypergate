@@ -137,9 +137,7 @@ pub fn apply() -> Result<(), String> {
     }
     let latest = info.latest.clone().unwrap_or_default();
     if !safe_version(&latest) {
-        let error = format!(
-            "refusing to install a version that doesn't look like one: {latest:?}"
-        );
+        let error = format!("refusing to install a version that doesn't look like one: {latest:?}");
         log(&error);
         record_failure(&latest, &error);
         return Err(error);
