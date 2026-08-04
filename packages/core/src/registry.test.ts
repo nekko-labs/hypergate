@@ -88,6 +88,7 @@ describe('registry connection helpers', () => {
       connections: [
         { id: 'oauth', label: 'Auto-connect', runtime: 'remote', command: '', url: 'https://example.test/mcp', auth: 'oauth' },
         { id: 'local', label: 'Run locally', runtime: 'process', command: 'npx', args: ['server'], requires: ['TOKEN'] },
+        { id: 'minimal', label: 'Minimal', runtime: 'process' },
       ],
     });
     const local = resolveRegistryConnection(e, 'local');
@@ -103,6 +104,7 @@ describe('registry connection helpers', () => {
     expect(local.transport).toBeUndefined();
     expect(local.auth).toBeUndefined();
     expect(local.connections).toBeUndefined();
+    expect(resolveRegistryConnection(e, 'minimal').command).toBe('');
     expect(resolveRegistryConnection(e, 'missing')).toMatchObject({ runtime: 'remote', auth: 'oauth' });
   });
 });

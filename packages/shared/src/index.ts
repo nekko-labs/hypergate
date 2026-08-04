@@ -28,7 +28,7 @@ export interface RegistryConnection {
   id: string;
   label: string;
   description?: string;
-  runtime?: RuntimeKind;
+  runtime: RuntimeKind;
   command?: string;
   args?: string[];
   image?: string;
@@ -292,8 +292,9 @@ export function resolveRegistryConnection(entry: RegistryEntry, connectionId?: s
     }
   }
   for (const field of registryConnectionFields) {
-    if (connection[field] !== undefined) {
-      (resolved as Record<string, unknown>)[field] = connection[field];
+    const value = field === 'command' && connection.command === undefined ? '' : connection[field];
+    if (value !== undefined) {
+      (resolved as Record<string, unknown>)[field] = value;
     }
   }
   delete resolved.connections;
