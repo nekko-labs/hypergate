@@ -27,8 +27,8 @@ export function TokenDialog({
     setError(null);
     try {
       await onSubmit(token.trim());
-    } catch {
-      setError('Could not save the token. Check it and try again.');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Could not save the token. Check it and try again.');
     } finally {
       setBusy(false);
     }

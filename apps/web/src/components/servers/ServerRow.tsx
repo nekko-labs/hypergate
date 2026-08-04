@@ -1,18 +1,20 @@
 import { useState } from 'react';
-import type { ServerStatus } from '@hypergate/shared';
+import type { RegistryEntry, ServerStatus } from '@hypergate/shared';
+import { registryConnections } from '@hypergate/shared';
 import { api } from '../../api';
 import { RUNTIME_CHIP, STATE_PILL, openAuth } from '../../lib/format';
 import { useToast } from '../../toast';
 import { ToolList } from '../ToolList';
 import { LogConsole } from '../LogConsole';
 
-export function ServerRow({ s, onChange, onToken }: { s: ServerStatus; onChange: () => void; onToken: (server: ServerStatus) => void }) {
+export function ServerRow({ s, entry, onChange, onToken }: { s: ServerStatus; entry?: RegistryEntry; onChange: () => void; onToken: (server: ServerStatus) => void }) {
   const [logs, setLogs] = useState<string[] | null>(null);
   const [showTools, setShowTools] = useState(false);
   const toast = useToast();
   const busy = s.state === 'starting';
   const isRemote = s.runtime === 'remote';
   const authorizing = s.state === 'authorizing';
+  const tokenConnection = entry && registryConnections(entry).find((connection) => connection.auth === 'token');
 
   const act = async (action: 'start' | 'stop' | 'restart') => {
     const verb = { start: 'Starting', stop: 'Stopping', restart: 'Restarting' }[action];
@@ -25,7 +27,7 @@ export function ServerRow({ s, onChange, onToken }: { s: ServerStatus; onChange:
     onChange();
   };
   const signIn = async () => {
-    if (s.auth === 'token') {
+    if (s.auth === 'token' || tokenConnection) {
       onToken(s);
       return;
     }
@@ -62,7 +64,7 @@ export function ServerRow({ s, onChange, onToken }: { s: ServerStatus; onChange:
         </div>
         <div className="row">
           {authorizing ? (
-            <button className="btn sm btn-primary" onClick={() => void signIn()}>{s.auth === 'token' ? '🔑 Enter token' : '🔐 Sign in'}</button>
+            <button className="btn sm btn-primary" onClick={() => void signIn()}>{s.auth === 'token' || tokenConnection ? '🔑 Enter token' : '🔐 Sign in'}</button>
           ) : s.state === 'ready' ? (
             <button className="btn sm btn-warn" onClick={() => void act('stop')}>Stop</button>
           ) : (
@@ -75,7 +77,7 @@ export function ServerRow({ s, onChange, onToken }: { s: ServerStatus; onChange:
       </div>
       {authorizing && (
         <p className="small muted" style={{ margin: '8px 0 0' }}>
-          {s.auth === 'token' ? <>Paste a new token to reconnect {s.name}.</> : <>Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.</>}
+          {s.auth === 'token' || tokenConnection ? <>Paste a new token to reconnect {s.name}.</> : <>Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.</>}
         </p>
       )}
       {s.error && !authorizing && <p className="small" style={{ color: 'var(--danger)', margin: '8px 0 0' }}>{s.error}</p>}

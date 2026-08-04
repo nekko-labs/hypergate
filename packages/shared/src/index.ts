@@ -81,6 +81,8 @@ export interface ManagedServerConfig {
    * OAuth flow skips registration and uses this id. Left empty for DCR providers.
    */
   clientId?: string;
+  /** True when a token-auth remote server should use its stored bearer token. */
+  bearerPreferred?: boolean;
   /**
    * Pre-registered OAuth client secret, for providers that require one at the token
    * endpoint even with PKCE (e.g. GitHub, which doesn't treat native apps as public

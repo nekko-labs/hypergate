@@ -51,6 +51,7 @@ import {
   userinfoEndpoint,
   type OAuthStore,
 } from '@hypergate/core';
+import { normalizeTokenAuthConfig, usesOAuth } from './remote-auth.ts';
 import { openStore } from './store.ts';
 import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
@@ -694,8 +695,6 @@ const envKey = (prefix: string, id: string): string | undefined =>
   process.env[`${prefix}_${id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`];
 const resolvedClientId = (cfg: ManagedServerConfig): string | undefined => cfg.clientId || envKey('HYPERGATE_CLIENTID', cfg.id);
 const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined => cfg.clientSecret || envKey('HYPERGATE_CLIENTSECRET', cfg.id);
-/** Token-auth entries can still use OAuth when the user has supplied an app id. */
-const usesOAuth = (cfg: ManagedServerConfig): boolean => cfg.auth === 'oauth' || (cfg.auth === 'token' && !!resolvedClientId(cfg));
 const storedBearerToken = (cfg: ManagedServerConfig): string | undefined => secretStore(cfg.id).load(TOKEN_KEY);
 const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
   new HypergateOAuthProvider(secretStore(cfg.id), {
@@ -711,7 +710,7 @@ const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
 /** A remote server with no usable credential yet needs the user to authenticate. */
 const needsAuth = (cfg: ManagedServerConfig): boolean =>
   cfg.runtime === 'remote' &&
-  (usesOAuth(cfg) ? !makeProvider(cfg).hasTokens() : cfg.auth === 'token' && !storedBearerToken(cfg));
+  (usesOAuth(cfg, resolvedClientId(cfg)) ? !makeProvider(cfg).hasTokens() : cfg.auth === 'token' && !storedBearerToken(cfg));
 
 // ── which account each remote server is signed in as ────────────────────────
 // "Connected" is only half the answer: a remote server is reached with one
@@ -870,7 +869,7 @@ const withAccounts = (list: ServerStatus[]): ServerStatus[] =>
   list.map((s) => {
     const cfg = servers.find((c) => c.id === s.id);
     if (!cfg || cfg.runtime !== 'remote' || cfg.auth === 'none') return s;
-    const effective = { ...s, auth: usesOAuth(cfg) ? 'oauth' : cfg.auth };
+    const effective = { ...s, auth: usesOAuth(cfg, resolvedClientId(cfg)) ? 'oauth' : cfg.auth };
     const signedIn = makeProvider(cfg).hasTokens();
     if (!signedIn) return effective;
     const account = accountFromGrant(cfg);
@@ -920,11 +919,13 @@ const supervisor = new Supervisor({
   },
   // The supervisor connects remote servers with this provider (attaches + refreshes
   // the bearer token); the interactive login is driven by the daemon's OAuth routes.
-  authProviderFor: (cfg) => (cfg.runtime === 'remote' && usesOAuth(cfg) ? makeProvider(cfg) : undefined),
+  authProviderFor: (cfg) => (cfg.runtime === 'remote' && usesOAuth(cfg, resolvedClientId(cfg)) ? makeProvider(cfg) : undefined),
   // Keep bearer credentials in the daemon's keychain/file store; core only sees
   // the short-lived header needed to connect and never persists or logs it.
   authHeadersFor: (cfg) => {
-    if (cfg.runtime !== 'remote' || cfg.auth !== 'token' || usesOAuth(cfg)) return undefined;
+    if (cfg.runtime !== 'remote' || cfg.auth !== 'token') return undefined;
+    if (cfg.bearerPreferred) return storedBearerToken(cfg) ? { Authorization: `Bearer ${storedBearerToken(cfg)}` } : undefined;
+    if (usesOAuth(cfg, resolvedClientId(cfg))) return undefined;
     const token = storedBearerToken(cfg);
     return token ? { Authorization: `Bearer ${token}` } : undefined;
   },
@@ -937,7 +938,7 @@ let servers = loadConfig();
 const statusFor = (cfg: ManagedServerConfig): ServerStatus | undefined => {
   const status = supervisor.status(cfg.id);
   if (!status || cfg.runtime !== 'remote') return status;
-  return { ...status, auth: usesOAuth(cfg) ? 'oauth' : cfg.auth };
+  return { ...status, auth: cfg.auth === 'token' && cfg.bearerPreferred ? 'token' : usesOAuth(cfg, resolvedClientId(cfg)) ? 'oauth' : cfg.auth };
 };
 
 const startEnabled = async (): Promise<void> => {
@@ -951,7 +952,7 @@ const startEnabled = async (): Promise<void> => {
     }
     // Don't attempt a token-less remote connect — just surface it as authorizing.
     if (needsAuth(s)) {
-      const error = s.auth === 'token' && !usesOAuth(s) ? `Paste a ${s.name} access token to connect.` : undefined;
+      const error = s.auth === 'token' && !usesOAuth(s, resolvedClientId(s)) ? `Paste a ${s.name} access token to connect.` : undefined;
       supervisor.markAuthorizing(s, error);
     }
     else await supervisor.start(s);
@@ -1857,6 +1858,7 @@ if (STDIO_MODE) {
           cfg.command = cfg.command ?? '';
           cfg.transport = cfg.transport === 'sse' ? 'sse' : 'http';
           cfg.auth = cfg.auth === 'none' || cfg.auth === 'token' ? cfg.auth : 'oauth';
+          if (cfg.auth === 'token') cfg.bearerPreferred = true;
           if (cfg.auth === 'token' && token !== undefined) {
             if (typeof token !== 'string' || !token.trim()) return json(res, 400, { error: 'token must be a non-empty string' });
             secretStore(cfg.id).save(TOKEN_KEY, token.trim());
@@ -1867,7 +1869,7 @@ if (STDIO_MODE) {
 
         // Remote + OAuth: kick off the browser flow. If tokens already exist
         // (re-add), connect straight away; otherwise return the sign-in URL.
-        if (isRemote && usesOAuth(cfg)) {
+        if (isRemote && usesOAuth(cfg, resolvedClientId(cfg))) {
           const result = await runOAuth(cfg);
           if (result.authorized) {
             await supervisor.start(cfg);
@@ -1957,10 +1959,12 @@ if (STDIO_MODE) {
     if (tokenM && req.method === 'POST') {
       const cfg = servers.find((s) => s.id === tokenM[1]);
       if (!cfg) return json(res, 404, { error: 'not_found' });
-      if (cfg.runtime !== 'remote' || cfg.auth !== 'token') return json(res, 400, { error: 'not a token-auth remote server' });
+      if (cfg.runtime !== 'remote') return json(res, 400, { error: 'not a remote server' });
       try {
         const body = JSON.parse(await readBody(req)) as { token?: unknown };
         if (typeof body.token !== 'string' || !body.token.trim()) return json(res, 400, { error: 'token must be a non-empty string' });
+        deleteOAuth(cfg.id);
+        Object.assign(cfg, normalizeTokenAuthConfig(cfg));
         secretStore(cfg.id).save(TOKEN_KEY, body.token.trim());
         cfg.enabled = true;
         saveConfig(servers);
