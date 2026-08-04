@@ -438,7 +438,9 @@ export function App() {
       });
       if (!status.authUrl && status.error) {
         await api.remove(e.id).catch(() => {});
+        openAuth(undefined, popup);
         toast.show(`${status.error} Choose API key or token instead.`, 'error');
+        void refresh();
         return;
       }
       openAuth(status.authUrl, popup);
@@ -450,8 +452,10 @@ export function App() {
         openAuth(status?.authUrl, popup);
         if (!status?.authUrl) toast.show(`Could not start sign-in for ${e.name}`, 'error');
       } else if (existing) {
+        openAuth(undefined, popup);
         toast.show(`${e.name} is already added. Remove it first to switch connection methods.`, 'error');
       } else {
+        openAuth(undefined, popup);
         toast.show(`Could not start sign-in for ${e.name}`, 'error');
       }
     }

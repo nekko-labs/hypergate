@@ -73,6 +73,7 @@ pub fn resolve_registry_connection(
     resolved.scope = connection.scope.clone();
     resolved.requires = connection.requires.clone().unwrap_or_default();
     resolved.note = connection.note.clone();
+    resolved.connections.clear();
     Ok(resolved)
 }
 
@@ -417,6 +418,9 @@ pub fn add(target: &str, opts: &AddOptions) -> Result<(), String> {
     if custom && opts.id.is_none() {
         opts.id = Some(target.to_string());
     }
+    let entry = entry
+        .map(|e| resolve_registry_connection(&e, opts.connection.as_deref()))
+        .transpose()?;
     if let Some(e) = &entry {
         if e.runnable == Some(false) {
             return Err(format!(
