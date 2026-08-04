@@ -24,7 +24,7 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{api, daemon, paths};
 
@@ -99,6 +99,24 @@ fn log(line: &str) {
     }
 }
 
+/// Leave a concrete failure for the daemon and the next UI poll.
+fn record_failure(version: &str, error: &str) {
+    let path = paths::data_dir().join("updates").join("last-result.json");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let body = serde_json::json!({
+        "ok": false,
+        "version": version,
+        "finishedAt": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_else(|_| "0".to_string()),
+        "error": error,
+    });
+    let _ = std::fs::write(path, body.to_string());
+}
+
 /// `hypergate update --apply`: install the newer version and restart Hypergate.
 pub fn apply() -> Result<(), String> {
     // First line of the log, before anything can go wrong: the daemon starts us
@@ -108,6 +126,7 @@ pub fn apply() -> Result<(), String> {
         Ok(i) => i,
         Err(e) => {
             log(&format!("could not ask the daemon about updates: {e}"));
+            record_failure("", &format!("could not ask the daemon about updates: {e}"));
             return Err(e);
         }
     };
@@ -118,10 +137,12 @@ pub fn apply() -> Result<(), String> {
     }
     let latest = info.latest.clone().unwrap_or_default();
     if !safe_version(&latest) {
-        log(&format!("refused a version that doesn't look like one: {latest:?}"));
-        return Err(format!(
+        let error = format!(
             "refusing to install a version that doesn't look like one: {latest:?}"
-        ));
+        );
+        log(&error);
+        record_failure(&latest, &error);
+        return Err(error);
     }
     if !is_npm_install() {
         let mut msg = String::from("this copy wasn't installed with npm, so it can't be replaced in place");
@@ -132,6 +153,7 @@ pub fn apply() -> Result<(), String> {
             msg.push_str(&format!("\nrun: {cmd}"));
         }
         log(&msg.replace('\n', " · "));
+        record_failure(&latest, &msg);
         return Err(msg);
     }
 
@@ -139,6 +161,7 @@ pub fn apply() -> Result<(), String> {
         let msg = "node is not on PATH, so the updater cannot run (an npm install of Hypergate always has one; \
                    reinstall with `npm install -g hypergated@latest` by hand)";
         log(msg);
+        record_failure(&latest, msg);
         return Err(msg.to_string());
     };
     // Prefer what the daemon already downloaded: installing from local tarballs
@@ -151,7 +174,14 @@ pub fn apply() -> Result<(), String> {
     } else {
         log(&format!("installing {} staged file(s)", staged.len()));
     }
-    let script = write_updater(&latest, &staged).inspect_err(|e| log(&format!("could not write the updater: {e}")))?;
+    let script = match write_updater(&latest, &staged) {
+        Ok(path) => path,
+        Err(e) => {
+            log(&format!("could not write the updater: {e}"));
+            record_failure(&latest, &e);
+            return Err(e);
+        }
+    };
 
     // Spawn the updater first, so whatever happens next it is already waiting.
     let mut cmd = Command::new(node);
@@ -176,10 +206,12 @@ pub fn apply() -> Result<(), String> {
             });
         }
     }
-    cmd.spawn().map_err(|e| {
-        log(&format!("could not start the updater: {e}"));
-        format!("could not start the updater: {e}")
-    })?;
+    if let Err(e) = cmd.spawn() {
+        let error = format!("could not start the updater: {e}");
+        log(&error);
+        record_failure(&latest, &error);
+        return Err(error);
+    }
     log(&format!("updater spawned for v{latest} ({})", script.display()));
 
     // Now get out of the way. A running tray owns the daemon, so asking it to

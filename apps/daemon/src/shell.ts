@@ -126,7 +126,7 @@ export const setAutostart = (on: boolean): boolean =>
  * discarded, and it logs to ~/.hypergate/update.log for anyone who needs to see
  * what happened.
  */
-export const startUpdate = (): boolean => {
+export const startUpdate = (onError?: (error: string) => void): boolean => {
   const bin = shellBin();
   if (!bin) return false;
   try {
@@ -135,6 +135,7 @@ export const startUpdate = (): boolean => {
       stdio: 'ignore',
       windowsHide: true,
     });
+    child.once('error', (error) => onError?.(`the update process could not start: ${error.message}`));
     child.unref();
     return true;
   } catch {

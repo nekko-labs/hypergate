@@ -31,21 +31,24 @@ One sentence on what this release is for.
 
 ### Features
 
-- **The change, in the words a user would use.** Then what it replaces, and why
-  the new way is better.
+- **The change, in the words a user would use.** Say what it replaces or why it
+  matters in one short sentence.
 
 ### Bug fixes
 
-- **What was broken, from the outside.** What you would have seen, and what
-  happens now.
+- **What was broken, from the outside.** Say what users saw and what happens
+  now in one short sentence.
 
 ### Performance improvements
 
-- What got faster or lighter, and when you would notice.
+- **What got faster or lighter.** Say when users would notice in one short
+  sentence.
 ```
 
 The rules that keep these readable:
 
+- **Keep each bullet compact.** Every bullet starts with a bold headline phrase and
+  contains at most one short sentence describing the user-visible result.
 - **Write for the person deciding whether to update.** They do not know our
   module names, our function names, or which file changed. "Links out of the app
   went nowhere" is the same fact as "the webview had no NewWindowRequested
