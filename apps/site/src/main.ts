@@ -189,6 +189,8 @@ void main(){ gl_Position = vec4(a_pos, 0.0, 1.0); }
 
 let uTime: WebGLUniformLocation | null = null;
 let uRes: WebGLUniformLocation | null = null;
+let gateInView = true;
+let starsInView = true;
 
 function initGate(): boolean {
   if (!gl) return false;
@@ -252,17 +254,40 @@ function drawGate(t: number) {
 }
 
 /* ── main loop ────────────────────────────────────────────── */
+const canvasVisibility = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      const inView = entry.isIntersecting;
+      if (entry.target === gateCanvas) gateInView = inView;
+      if (entry.target === starCanvas) starsInView = inView;
+      if (inView && reduced) {
+        if (entry.target === gateCanvas) drawGate(0);
+        if (entry.target === starCanvas) drawStars(0);
+      }
+    }
+  },
+  { threshold: 0 },
+);
+canvasVisibility.observe(gateCanvas);
+canvasVisibility.observe(starCanvas);
+
+let frameId: number | undefined;
 function frame(t: number) {
+  frameId = undefined;
+  if (document.visibilityState === 'hidden') return;
   lenis.raf(t);
   onScrollNav();
   if (!reduced) {
-    drawStars(t);
-    drawGate(t);
-  } else {
-    drawStars(0);
-    drawGate(0);
+    if (starsInView) drawStars(t);
+    if (gateInView) drawGate(t);
   }
-  requestAnimationFrame(frame);
+  frameId = requestAnimationFrame(frame);
+}
+
+function startFrame() {
+  if (document.visibilityState !== 'hidden' && frameId === undefined) {
+    frameId = requestAnimationFrame(frame);
+  }
 }
 
 function sizeAll() {
@@ -272,4 +297,15 @@ function sizeAll() {
 }
 window.addEventListener('resize', sizeAll);
 sizeAll();
-requestAnimationFrame(frame);
+drawStars(0);
+drawGate(0);
+startFrame();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    if (frameId !== undefined) cancelAnimationFrame(frameId);
+    frameId = undefined;
+    return;
+  }
+  onScrollNav();
+  startFrame();
+});

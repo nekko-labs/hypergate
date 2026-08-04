@@ -1624,7 +1624,9 @@ if (STDIO_MODE) {
         // From here the daemon is on borrowed time: the shell stops it so its
         // files can be replaced.
         updater.installing(version);
-        if (!shell.startUpdate()) throw new Error('the hypergate shell binary would not start');
+        if (!shell.startUpdate((error) => updater.failed(version, error))) {
+          throw new Error('the hypergate shell binary would not start');
+        }
       };
       void go().catch((e: unknown) => {
         // A download failure already sits in the progress state; a shell that

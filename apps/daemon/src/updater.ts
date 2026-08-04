@@ -75,11 +75,19 @@ export class Updater {
    */
   progress(): UpdateProgress {
     const s = this.state;
+    const failed = s.stage === 'installing' && this.lastResult();
+    if (failed && !failed.ok) {
+      return {
+        ...s,
+        stage: 'error',
+        error: failed.error ?? 'the updater failed before installation started',
+      };
+    }
     if (s.stage === 'installing' && s.startedAt && Date.now() - new Date(s.startedAt).getTime() > INSTALL_DEADLINE) {
       return {
         ...s,
         stage: 'error',
-        error: 'the installer did not start (Hypergate is still running). See ~/.hypergate/update.log.',
+        error: 'the installer did not start (Hypergate is still running). See ~/.hypergate/update.log for details.',
       };
     }
     return { ...s };
