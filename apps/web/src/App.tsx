@@ -424,7 +424,7 @@ export function App() {
   // One-click OAuth remains for providers that support it. Token-auth entries
   // take the small credential dialog instead, because the token never belongs
   // in the persisted server config or an API response.
-  const quickAddOAuth = useCallback(async (e: RegistryEntry) => {
+  const quickAddOAuth = useCallback(async (e: RegistryEntry, hasTokenConnection = false) => {
     const popup = reserveAuthWindow();
     setShowCatalog(false);
     setAdding(null);
@@ -439,7 +439,7 @@ export function App() {
       if (!status.authUrl && status.error) {
         await api.remove(e.id).catch(() => {});
         openAuth(undefined, popup);
-        toast.show(`${status.error} Choose API key or token instead.`, 'error');
+        toast.show(`${status.error}${hasTokenConnection ? ' Choose API key or token instead.' : ''}`, 'error');
         void refresh();
         return;
       }
@@ -462,12 +462,12 @@ export function App() {
     void refresh();
   }, [refresh, servers, toast]);
 
-  const handlePick = useCallback((e: RegistryEntry | 'custom') => {
+  const handlePick = useCallback((e: RegistryEntry | 'custom', hasTokenConnection = false) => {
     if (e !== 'custom' && (servers ?? []).some((server) => server.id === e.id)) {
       toast.show(`${e.name} is already added. Remove it first to switch connection methods.`, 'error');
       return;
     }
-    if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'oauth') { void quickAddOAuth(e); return; }
+    if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'oauth') { void quickAddOAuth(e, hasTokenConnection); return; }
     if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'token') {
       setShowCatalog(false);
       setAdding(null);
@@ -2173,7 +2173,7 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
 }
 
 /** One catalog row (curated or registry-search result) with an Add button. */
-function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry) => void }) {
+function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry, hasTokenConnection?: boolean) => void }) {
   const options = registryConnections(e);
   const [selectedId, setSelectedId] = useState(options[0]?.id);
   const selected = resolveRegistryConnection(e, selectedId);
@@ -2223,7 +2223,7 @@ function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry
         </div>
         <div className="row">
           {e.homepage && <a className="small muted" href={e.homepage} target="_blank" rel="noreferrer">docs</a>}
-          <button className="btn btn-catalog-add" onClick={() => onPick(selected)} disabled={!runnable} title={runnable ? '' : selected.note ?? 'Not locally runnable'}>
+          <button className="btn btn-catalog-add" onClick={() => onPick(selected, registryConnections(e).some((connection) => connection.auth === 'token'))} disabled={!runnable} title={runnable ? '' : selected.note ?? 'Not locally runnable'}>
             Add
           </button>
         </div>
@@ -2233,7 +2233,7 @@ function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry
 }
 
 /** The "+ Add server" area: search the official MCP registry, or pick from the curated list. */
-function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e: RegistryEntry | 'custom') => void }) {
+function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e: RegistryEntry | 'custom', hasTokenConnection?: boolean) => void }) {
   const [q, setQ] = useState('');
   const [results, setResults] = useState<RegistryEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
