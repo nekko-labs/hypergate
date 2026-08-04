@@ -202,4 +202,16 @@ describe('Updater', () => {
     expect(u.progress().stage).toBe('error');
     expect(u.progress().error).toMatch(/still running/);
   });
+
+  it('clears a stale failure before starting a new install attempt', () => {
+    mkdirSync(join(dir, 'updates'), { recursive: true });
+    writeFileSync(
+      join(dir, 'updates', 'last-result.json'),
+      JSON.stringify({ ok: false, version: '1.2.3', finishedAt: new Date(0).toISOString(), error: 'old failure' }),
+    );
+    const u = new Updater(dir);
+    u.installing('1.2.3');
+    expect(u.progress().stage).toBe('installing');
+    expect(existsSync(join(dir, 'updates', 'last-result.json'))).toBe(false);
+  });
 });

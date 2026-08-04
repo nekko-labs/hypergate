@@ -293,12 +293,12 @@ function startFrame() {
 function sizeAll() {
   seedStars();
   sizeGate();
+  drawStars(0);
+  drawGate(0);
   applyParallax();
 }
 window.addEventListener('resize', sizeAll);
 sizeAll();
-drawStars(0);
-drawGate(0);
 startFrame();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
