@@ -439,6 +439,10 @@ Philip: *"let's clean up the release notes. they are too technical. make them mo
 - [x] **A release's notes cover everything since the last released tag**: a minor bump per PR outruns the tags — v0.16.0 was bumped and never released, so its changes went out under v0.16.1, whose notes fold them in and say so. `docs/releases/README.md` names the rule and the `git log $(git describe --tags --abbrev=0)..HEAD` read-through that checks it, because the workflow can warn that a notes file is *missing* and never that it is incomplete. `docs/releases/0.19.0.md` follows its own rule: it covers everything merged since the v0.17.0 tag, 22 commits across the connect-credential work, the plugin and the bundle, the theme button, the agent logos, the remote bearer-token fix and the secure-gate hero, not just the release-notes change that bumped the version. Caught by the Devin review on PR #54, which was right that a rule the PR itself broke is decoration. · Done: 2026-08-04
 - [x] **The site renders the shape**: `###` headings and `**bold**` become real DOM nodes (h3, since the release title is the h2 above it), and a bullet wrapped over several lines is one item instead of one item per line. The subset stays deliberately small and is named in `docs/releases/README.md`, because anything outside it shows up as its own punctuation on the page. · [spec](SPEC.md#37-marketing-site-shipped) · Done: 2026-08-04
 
+## Epic 36: grouped catalog connection options (v0.21.0)
+
+- [x] **Grouped MCP connection options** — catalog entries can offer several connection methods for one logical server through a picker. GitHub is one entry with **Auto-connect** as the default OAuth option, **API key or token**, and **Run locally**; the standalone `github-pat` entry is removed. GitHub OAuth still needs a pre-registered client id, while the token option works without that setup. · [spec](SPEC.md#33-registry--catalog-shipped) · Added: 2026-08-04 · Done: 2026-08-04
+
 ## Epic 35: the metadata catches up with the hero (v0.20.0)
 
 Philip, after reviewing v0.18.0: do the two things the PR flagged as left undone.
