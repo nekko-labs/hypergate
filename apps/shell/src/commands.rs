@@ -34,6 +34,12 @@ pub fn resolve_registry_connection(
     connection_id: Option<&str>,
 ) -> Result<RegistryEntry, String> {
     if entry.connections.is_empty() {
+        if let Some(id) = connection_id {
+            return Err(format!(
+                "entry `{}` has no connection options; remove `--connection {id}`",
+                entry.id
+            ));
+        }
         return Ok(entry.clone());
     }
     let connection = match connection_id {
@@ -937,6 +943,23 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("oauth, token"), "{err}");
+    }
+
+    #[test]
+    fn rejects_connection_flag_for_ungrouped_entry() {
+        let err = build_add_config(
+            Some(&entry()),
+            &AddOptions {
+                connection: Some("local".into()),
+                ..opts()
+            },
+            &no_env,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "entry `kotrain` has no connection options; remove `--connection local`"
+        );
     }
 
     #[test]

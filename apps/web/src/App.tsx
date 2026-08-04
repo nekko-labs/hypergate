@@ -436,6 +436,11 @@ export function App() {
         ...(e.scope ? { scope: e.scope } : {}),
         enabled: true,
       });
+      if (!status.authUrl && status.error) {
+        await api.remove(e.id).catch(() => {});
+        toast.show(`${status.error} Choose API key or token instead.`, 'error');
+        return;
+      }
       openAuth(status.authUrl, popup);
       toast.show(`Added ${e.name} — finish signing in to connect`, 'success');
     } catch {

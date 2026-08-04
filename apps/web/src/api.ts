@@ -37,7 +37,7 @@ export const api = {
   analytics: () => j<AnalyticsSummary>('/api/analytics'),
   logs: (id: string) => j<{ logs: string[] }>(`/api/servers/${id}/logs`),
   add: (cfg: Partial<ManagedServerConfig> & { token?: string }) =>
-    j<ServerStatus>('/api/servers', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }),
+    j<ServerStatus & { authUrl?: string }>('/api/servers', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }),
   action: (id: string, action: 'start' | 'stop' | 'restart') => j<ServerStatus>(`/api/servers/${id}/${action}`, { method: 'POST' }),
   // Remote OAuth: (re)start the browser login. Returns { authUrl } to open.
   authorize: (id: string) => j<ServerStatus>(`/api/servers/${id}/authorize`, { method: 'POST' }),
