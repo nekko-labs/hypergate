@@ -110,6 +110,35 @@ pub struct RegistryEntry {
     pub recommended: Option<bool>,
     #[serde(default)]
     pub runnable: Option<bool>,
+    #[serde(default)]
+    pub connections: Vec<RegistryConnection>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryConnection {
+    pub id: String,
+    pub runtime: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub transport: Option<String>,
+    #[serde(default)]
+    pub auth: Option<String>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub requires: Option<Vec<String>>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// `/api/update`: the daemon's view of versions, and what updating takes here.

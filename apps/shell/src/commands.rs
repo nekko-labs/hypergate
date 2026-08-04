@@ -17,6 +17,7 @@ use crate::api::{self, RegistryEntry};
 pub struct AddOptions {
     pub id: Option<String>,
     pub name: Option<String>,
+    pub connection: Option<String>,
     pub command: Option<String>,
     pub args: Vec<String>,
     pub env: Vec<String>,
@@ -26,6 +27,47 @@ pub struct AddOptions {
     pub url: Option<String>,
     pub cwd: Option<String>,
     pub start: bool,
+}
+
+pub fn resolve_registry_connection(
+    entry: &RegistryEntry,
+    connection_id: Option<&str>,
+) -> Result<RegistryEntry, String> {
+    if entry.connections.is_empty() {
+        return Ok(entry.clone());
+    }
+    let connection = match connection_id {
+        Some(id) => entry.connections.iter().find(|c| c.id == id),
+        None => entry.connections.first(),
+    }
+    .ok_or_else(|| {
+        let ids = entry
+            .connections
+            .iter()
+            .map(|c| c.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "unknown connection `{}` for `{}`; choose one of: {}",
+            connection_id.unwrap_or(""),
+            entry.id,
+            ids
+        )
+    })?;
+
+    let mut resolved = entry.clone();
+    resolved.runtime = connection.runtime.clone();
+    resolved.command = connection.command.clone().unwrap_or_default();
+    resolved.args = connection.args.clone().unwrap_or_default();
+    resolved.image = connection.image.clone();
+    resolved.url = connection.url.clone();
+    resolved.transport = connection.transport.clone();
+    resolved.auth = connection.auth.clone();
+    resolved.client_id = connection.client_id.clone();
+    resolved.scope = connection.scope.clone();
+    resolved.requires = connection.requires.clone().unwrap_or_default();
+    resolved.note = connection.note.clone();
+    Ok(resolved)
 }
 
 /// Split a `KEY=VALUE` pair. The value may contain `=`; the key may not, which
@@ -62,6 +104,13 @@ pub fn build_add_config(
     opts: &AddOptions,
     lookup_env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Value, String> {
+    if entry.is_none() && opts.connection.is_some() {
+        return Err("--connection only applies to catalog entries".into());
+    }
+    let resolved_entry = entry
+        .map(|e| resolve_registry_connection(e, opts.connection.as_deref()))
+        .transpose()?;
+    let entry = resolved_entry.as_ref();
     let id = opts
         .id
         .clone()
@@ -244,12 +293,25 @@ fn print_entries(entries: &[RegistryEntry]) {
             if e.recommended == Some(true) { "★" } else { " " },
             if e.official == Some(true) { "✓" } else { " " }
         );
+        let description = if e.connections.len() > 1 {
+            format!(
+                "connections: {} · {}",
+                e.connections
+                    .iter()
+                    .map(|c| c.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                e.description,
+            )
+        } else {
+            e.description.clone()
+        };
         println!(
             "{:<id_w$}  {:<8}  {:<3}  {}",
             e.id,
             e.runtime,
             marks,
-            clip(&e.description, 72),
+            clip(&description, 72),
             id_w = id_w
         );
     }
@@ -806,6 +868,105 @@ mod tests {
         assert_eq!(cfg["url"], json!("https://mcp.context7.com/mcp/oauth"));
         assert_eq!(cfg["transport"], json!("http"));
         assert_eq!(cfg["auth"], json!("oauth"));
+    }
+
+    #[test]
+    fn resolves_a_grouped_connection_without_leaking_defaults() {
+        let e: RegistryEntry = serde_json::from_value(json!({
+            "id": "github",
+            "name": "GitHub",
+            "runtime": "remote",
+            "command": "",
+            "url": "https://api.githubcopilot.com/mcp/",
+            "transport": "http",
+            "auth": "oauth",
+            "connections": [
+                {
+                    "id": "oauth",
+                    "label": "Auto-connect",
+                    "runtime": "remote",
+                    "url": "https://api.githubcopilot.com/mcp/",
+                    "transport": "http",
+                    "auth": "oauth"
+                },
+                {
+                    "id": "local",
+                    "label": "Run locally",
+                    "runtime": "process",
+                    "command": "npx",
+                    "args": ["-y", "server-github"]
+                }
+            ]
+        }))
+        .unwrap();
+        let cfg = build_add_config(
+            Some(&e),
+            &AddOptions {
+                connection: Some("local".into()),
+                ..opts()
+            },
+            &no_env,
+        )
+        .unwrap();
+        assert_eq!(cfg["runtime"], json!("process"));
+        assert_eq!(cfg["command"], json!("npx"));
+        assert_eq!(cfg["args"], json!(["-y", "server-github"]));
+        assert!(cfg.get("url").is_none());
+        assert!(cfg.get("auth").is_none());
+        assert!(cfg.get("transport").is_none());
+    }
+
+    #[test]
+    fn unknown_grouped_connection_lists_available_ids() {
+        let e: RegistryEntry = serde_json::from_value(json!({
+            "id": "github",
+            "runtime": "remote",
+            "connections": [
+                {"id": "oauth", "label": "Auto-connect", "runtime": "remote"},
+                {"id": "token", "label": "API key or token", "runtime": "remote"}
+            ]
+        }))
+        .unwrap();
+        let err = build_add_config(
+            Some(&e),
+            &AddOptions {
+                connection: Some("pat".into()),
+                ..opts()
+            },
+            &no_env,
+        )
+        .unwrap_err();
+        assert!(err.contains("oauth, token"), "{err}");
+    }
+
+    #[test]
+    fn explicit_flags_override_the_selected_connection() {
+        let e: RegistryEntry = serde_json::from_value(json!({
+            "id": "github",
+            "runtime": "remote",
+            "connections": [
+                {
+                    "id": "local",
+                    "label": "Run locally",
+                    "runtime": "process",
+                    "command": "npx"
+                }
+            ]
+        }))
+        .unwrap();
+        let cfg = build_add_config(
+            Some(&e),
+            &AddOptions {
+                connection: Some("local".into()),
+                runtime: Some("docker".into()),
+                image: Some("ghcr.io/example/server".into()),
+                ..opts()
+            },
+            &no_env,
+        )
+        .unwrap();
+        assert_eq!(cfg["runtime"], json!("docker"));
+        assert_eq!(cfg["image"], json!("ghcr.io/example/server"));
     }
 
     #[test]

@@ -102,6 +102,9 @@ enum Command {
         /// Display name.
         #[arg(long)]
         name: Option<String>,
+        /// Pick a connection method from a grouped catalog entry.
+        #[arg(long)]
+        connection: Option<String>,
         /// Launch command, for a server you're defining yourself.
         #[arg(long)]
         command: Option<String>,
@@ -436,6 +439,7 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
             target,
             id,
             name,
+            connection,
             command,
             args,
             env,
@@ -451,6 +455,7 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
                 &commands::AddOptions {
                     id,
                     name,
+                    connection,
                     command,
                     args,
                     env,
