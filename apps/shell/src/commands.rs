@@ -402,6 +402,17 @@ fn find_entry(id: &str) -> Result<Option<RegistryEntry>, String> {
     Ok(None)
 }
 
+fn resolve_add_entry(entry: Option<RegistryEntry>, opts: &mut AddOptions) -> Result<Option<RegistryEntry>, String> {
+    let connection = opts.connection.clone();
+    let resolved = entry
+        .map(|e| resolve_registry_connection(&e, connection.as_deref()))
+        .transpose()?;
+    if resolved.is_some() {
+        opts.connection = None;
+    }
+    Ok(resolved)
+}
+
 pub fn add(target: &str, opts: &AddOptions) -> Result<(), String> {
     // An explicit launch spec means the user is defining a custom server and
     // the positional is its id; otherwise we look the positional up as a
@@ -418,9 +429,7 @@ pub fn add(target: &str, opts: &AddOptions) -> Result<(), String> {
     if custom && opts.id.is_none() {
         opts.id = Some(target.to_string());
     }
-    let entry = entry
-        .map(|e| resolve_registry_connection(&e, opts.connection.as_deref()))
-        .transpose()?;
+    let entry = resolve_add_entry(entry, &mut opts)?;
     if let Some(e) = &entry {
         if e.runnable == Some(false) {
             return Err(format!(
@@ -964,6 +973,38 @@ mod tests {
             err,
             "entry `kotrain` has no connection options; remove `--connection local`"
         );
+    }
+
+    #[test]
+    fn resolves_then_builds_grouped_entry_once() {
+        let entry = || {
+            serde_json::from_value::<RegistryEntry>(json!({
+                "id": "github",
+                "name": "GitHub",
+                "runtime": "remote",
+                "url": "https://api.githubcopilot.com/mcp/",
+                "auth": "oauth",
+                "connections": [
+                    {"id": "oauth", "runtime": "remote", "url": "https://api.githubcopilot.com/mcp/", "auth": "oauth"},
+                    {"id": "token", "runtime": "remote", "url": "https://api.githubcopilot.com/mcp/", "auth": "token"}
+                ]
+            }))
+            .unwrap()
+        };
+
+        let mut token_opts = AddOptions {
+            connection: Some("token".into()),
+            ..opts()
+        };
+        let token_entry = resolve_add_entry(Some(entry()), &mut token_opts).unwrap().unwrap();
+        let token_cfg = build_add_config(Some(&token_entry), &token_opts, &no_env).unwrap();
+        assert!(token_opts.connection.is_none());
+        assert_eq!(token_cfg["auth"], json!("token"));
+
+        let mut default_opts = opts();
+        let default_entry = resolve_add_entry(Some(entry()), &mut default_opts).unwrap().unwrap();
+        let default_cfg = build_add_config(Some(&default_entry), &default_opts, &no_env).unwrap();
+        assert_eq!(default_cfg["auth"], json!("oauth"));
     }
 
     #[test]
