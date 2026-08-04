@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { REGISTRY, RECOMMENDED_IDS, sortRegistry, registryEntry } from './registry.js';
 import { KNOWN_CLIS, knownCli } from './clis.js';
-import { mergeCatalogSearch, type RegistryEntry } from '@hypergate/shared';
+import { mergeCatalogSearch, registryConnections, resolveRegistryConnection, type RegistryEntry } from '@hypergate/shared';
 
 const entry = (id: string, over: Partial<RegistryEntry> = {}): RegistryEntry => ({
   id,
@@ -36,17 +36,28 @@ describe('REGISTRY catalog', () => {
     });
   });
 
-  it('uses a bearer token for the GitHub remote entry', () => {
+  it('groups GitHub OAuth, token, and local connections with OAuth as default', () => {
     expect(registryEntry('github')).toMatchObject({
       runtime: 'remote',
       url: 'https://api.githubcopilot.com/mcp/',
       transport: 'http',
-      auth: 'token',
-      tokenLabel: 'GitHub personal access token',
-      tokenUrl: 'https://github.com/settings/personal-access-tokens',
+      auth: 'oauth',
       official: true,
       homepage: 'https://github.com/github/github-mcp-server',
     });
+    expect(registryEntry('github')?.connections?.map((connection) => connection.id)).toEqual(['oauth', 'token', 'local']);
+    expect(registryEntry('github')?.connections?.[0]).toMatchObject({ label: 'Auto-connect', auth: 'oauth' });
+    expect(registryEntry('github')?.connections?.[1]).toMatchObject({
+      label: 'API key or token',
+      auth: 'token',
+      tokenLabel: 'GitHub personal access token',
+    });
+    expect(registryEntry('github')?.connections?.[2]).toMatchObject({
+      label: 'Run locally',
+      runtime: 'process',
+      requires: ['GITHUB_PERSONAL_ACCESS_TOKEN'],
+    });
+    expect(registryEntry('github-pat')).toBeUndefined();
   });
 
   it('has the whole recommended set present + flagged recommended', () => {
@@ -55,6 +66,46 @@ describe('REGISTRY catalog', () => {
       expect(e, id).toBeDefined();
       expect(e!.recommended, id).toBe(true);
     }
+  });
+});
+
+describe('registry connection helpers', () => {
+  it('synthesizes one option from an ungrouped entry', () => {
+    const e = entry('plain', { auth: 'token', tokenLabel: 'API token' });
+    expect(registryConnections(e)).toEqual([expect.objectContaining({
+      id: 'default',
+      label: 'Default',
+      runtime: 'process',
+      command: 'x',
+      auth: 'token',
+      tokenLabel: 'API token',
+    })]);
+  });
+
+  it('resolves a selected option while retaining entry metadata', () => {
+    const e = entry('grouped', {
+      name: 'Grouped',
+      connections: [
+        { id: 'oauth', label: 'Auto-connect', runtime: 'remote', command: '', url: 'https://example.test/mcp', auth: 'oauth' },
+        { id: 'local', label: 'Run locally', runtime: 'process', command: 'npx', args: ['server'], requires: ['TOKEN'] },
+        { id: 'minimal', label: 'Minimal', runtime: 'process' },
+      ],
+    });
+    const local = resolveRegistryConnection(e, 'local');
+    expect(local).toMatchObject({
+      id: 'grouped',
+      name: 'Grouped',
+      runtime: 'process',
+      command: 'npx',
+      args: ['server'],
+      requires: ['TOKEN'],
+    });
+    expect(local.url).toBeUndefined();
+    expect(local.transport).toBeUndefined();
+    expect(local.auth).toBeUndefined();
+    expect(local.connections).toBeUndefined();
+    expect(resolveRegistryConnection(e, 'minimal').command).toBe('');
+    expect(resolveRegistryConnection(e, 'missing')).toMatchObject({ runtime: 'remote', auth: 'oauth' });
   });
 });
 

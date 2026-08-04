@@ -1,5 +1,7 @@
 import type { RegistryEntry, PopularityMap } from '@hypergate/shared';
 
+const githubOAuthNote = 'GitHub sign-in needs a pre-registered OAuth App client ID via config clientId or HYPERGATE_CLIENTID_GITHUB. The token option needs no setup.';
+
 /**
  * Curated catalog of popular MCP servers users can add in one click. Process
  * commands assume the package is runnable via `npx`/`uvx`; `remote` entries
@@ -93,16 +95,49 @@ export const REGISTRY: RegistryEntry[] = [
   {
     id: 'github',
     name: 'GitHub',
-    description: 'Official remote GitHub MCP server: repos, issues, PRs, code, Actions. Paste a GitHub personal access token.',
+    description: 'Official GitHub MCP server: repos, issues, PRs, code, Actions, and more.',
     runtime: 'remote',
     command: '',
     url: 'https://api.githubcopilot.com/mcp/',
     transport: 'http',
-    auth: 'token',
+    auth: 'oauth',
     official: true,
-    tokenLabel: 'GitHub personal access token',
-    tokenUrl: 'https://github.com/settings/personal-access-tokens',
-    note: 'Use a fine-grained or classic GitHub PAT. Grant the repository, organization, project, package, gist, notification, workflow, and Codespaces scopes your tools need.',
+    note: githubOAuthNote,
+    connections: [
+      {
+        id: 'oauth',
+        label: 'Auto-connect',
+        description: 'Sign in with GitHub in your browser.',
+        runtime: 'remote',
+        command: '',
+        url: 'https://api.githubcopilot.com/mcp/',
+        transport: 'http',
+        auth: 'oauth',
+        note: githubOAuthNote,
+      },
+      {
+        id: 'token',
+        label: 'API key or token',
+        description: 'Paste a GitHub personal access token.',
+        runtime: 'remote',
+        command: '',
+        url: 'https://api.githubcopilot.com/mcp/',
+        transport: 'http',
+        auth: 'token',
+        tokenLabel: 'GitHub personal access token',
+        tokenUrl: 'https://github.com/settings/personal-access-tokens',
+        note: 'Use a fine-grained or classic GitHub PAT. Grant the repository, organization, project, package, gist, notification, workflow, and Codespaces scopes your tools need.',
+      },
+      {
+        id: 'local',
+        label: 'Run locally',
+        description: 'Run the GitHub MCP server on this machine.',
+        runtime: 'process',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-github'],
+        requires: ['GITHUB_PERSONAL_ACCESS_TOKEN'],
+      },
+    ],
     homepage: 'https://github.com/github/github-mcp-server',
   },
   {
@@ -245,17 +280,6 @@ export const REGISTRY: RegistryEntry[] = [
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-postgres'],
     requires: ['DATABASE_URL'],
-    official: true,
-    homepage: 'https://github.com/modelcontextprotocol/servers',
-  },
-  {
-    id: 'github-pat',
-    name: 'GitHub (token)',
-    description: 'Local GitHub server via a personal access token — the offline/self-hosted alternative to the OAuth entry.',
-    runtime: 'process',
-    command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-github'],
-    requires: ['GITHUB_PERSONAL_ACCESS_TOKEN'],
     official: true,
     homepage: 'https://github.com/modelcontextprotocol/servers',
   },

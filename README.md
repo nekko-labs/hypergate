@@ -199,7 +199,7 @@ hypergate secret check               # is an OS keychain available here?
 
 `tools` and `call` go over `/mcp` with the bearer token, the same path a connected agent takes, so they verify the real gateway rather than an internal shortcut. A tool that reports an error exits non-zero.
 
-`add` merges a catalog entry with your overrides: `--runtime docker`, `--image`, `--url`, `--env K=V`, `--secret K=V` (injected at launch, never logged), `--cwd`, `--no-start`. A key the entry declares in `requires` is taken from your environment when you don't pass it, and adding a one-click OAuth server opens the provider's browser login.
+`add` merges a catalog entry with your overrides: `--connection <id>` for grouped entries, `--runtime docker`, `--image`, `--url`, `--env K=V`, `--secret K=V` (injected at launch, never logged), `--cwd`, `--no-start`. A key the entry declares in `requires` is taken from your environment when you don't pass it, and adding a one-click OAuth server opens the provider's browser login.
 
 The manager's **Settings** tab exposes the same service options:
 
