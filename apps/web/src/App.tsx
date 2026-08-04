@@ -439,21 +439,27 @@ export function App() {
       openAuth(status.authUrl, popup);
       toast.show(`Added ${e.name} — finish signing in to connect`, 'success');
     } catch {
-      // Already added (409) or a transient error — (re)start the login instead.
-      const status = await api.authorize(e.id).catch(() => null);
-      openAuth(status?.authUrl, popup);
-      if (!status?.authUrl) toast.show(`Could not start sign-in for ${e.name}`, 'error');
+      const existing = servers?.find((server) => server.id === e.id);
+      if (existing?.auth === 'oauth') {
+        const status = await api.authorize(e.id).catch(() => null);
+        openAuth(status?.authUrl, popup);
+        if (!status?.authUrl) toast.show(`Could not start sign-in for ${e.name}`, 'error');
+      } else if (existing) {
+        toast.show(`${e.name} is already added. Remove it first to switch connection methods.`, 'error');
+      } else {
+        toast.show(`Could not start sign-in for ${e.name}`, 'error');
+      }
     }
     void refresh();
-  }, [refresh, toast]);
+  }, [refresh, servers, toast]);
 
   const handlePick = useCallback((e: RegistryEntry | 'custom') => {
+    if (e !== 'custom' && (servers ?? []).some((server) => server.id === e.id)) {
+      toast.show(`${e.name} is already added. Remove it first to switch connection methods.`, 'error');
+      return;
+    }
     if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'oauth') { void quickAddOAuth(e); return; }
     if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'token') {
-      if ((servers ?? []).some((server) => server.id === e.id)) {
-        toast.show(`${e.name} is already added. Remove it first to switch connection methods.`, 'error');
-        return;
-      }
       setShowCatalog(false);
       setAdding(null);
       setTokenTarget({ name: e.name, label: e.tokenLabel, url: e.tokenUrl, entry: e });

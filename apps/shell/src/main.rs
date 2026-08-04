@@ -46,6 +46,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Open the desktop app: the manager window plus the tray agent.
     App,
