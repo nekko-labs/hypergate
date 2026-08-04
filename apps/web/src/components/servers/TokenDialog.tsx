@@ -28,7 +28,12 @@ export function TokenDialog({
     try {
       await onSubmit(token.trim());
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Could not save the token. Check it and try again.');
+      const message = error instanceof Error ? error.message : '';
+      if (message === '409' || message === 'id_exists') {
+        setError(`${name} is already added. Remove it first to switch connection methods.`);
+      } else {
+        setError('Could not save the token. Check it and try again.');
+      }
     } finally {
       setBusy(false);
     }

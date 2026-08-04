@@ -450,6 +450,10 @@ export function App() {
   const handlePick = useCallback((e: RegistryEntry | 'custom') => {
     if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'oauth') { void quickAddOAuth(e); return; }
     if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'token') {
+      if ((servers ?? []).some((server) => server.id === e.id)) {
+        toast.show(`${e.name} is already added. Remove it first to switch connection methods.`, 'error');
+        return;
+      }
       setShowCatalog(false);
       setAdding(null);
       setTokenTarget({ name: e.name, label: e.tokenLabel, url: e.tokenUrl, entry: e });
@@ -611,7 +615,7 @@ export function App() {
                     </EmptyState>
                   ) : servers && servers.length > 0 ? (
                     <div className="panel"><div className="list">
-                      {servers.map((s) => <ServerRow key={s.id} s={s} entry={registry.find((entry) => entry.id === s.id)} agents={agents} onChange={refresh} onToken={(server) => {
+                      {servers.map((s) => <ServerRow key={s.id} s={s} agents={agents} onChange={refresh} onToken={(server) => {
                         const entry = registry.find((e) => e.id === server.id);
                         const tokenConnection = entry && registryConnections(entry).find((connection) => connection.auth === 'token');
                         setTokenTarget({ id: server.id, name: server.name, label: entry?.tokenLabel ?? tokenConnection?.tokenLabel, url: entry?.tokenUrl ?? tokenConnection?.tokenUrl });
@@ -641,25 +645,12 @@ export function App() {
                           toast.show(`Connected ${tokenTarget.name}`, 'success');
                         } else if (tokenTarget.entry) {
                           const e = tokenTarget.entry;
-                          const existing = (servers ?? []).some((server) => server.id === e.id);
-                          if (existing) {
-                            const status = await api.setToken(e.id, token);
-                            if (status.state === 'authorizing') throw new Error(status.error ?? 'token rejected');
-                            toast.show(`Connected ${e.name}`, 'success');
-                          } else {
-                            try {
-                              const status = await api.add({
-                                id: e.id, name: e.name, runtime: 'remote', command: '',
-                                url: e.url, transport: e.transport ?? 'http', auth: 'token', token, enabled: true,
-                                bearerPreferred: true,
-                              });
-                              if (status.state === 'authorizing') throw new Error(status.error ?? 'token rejected');
-                              toast.show(`Connected ${e.name}`, 'success');
-                            } catch (error) {
-                              if (!(error instanceof Error) || !/^(409|id_exists)$/.test(error.message)) throw error;
-                              throw new Error('already added');
-                            }
-                          }
+                          const status = await api.add({
+                            id: e.id, name: e.name, runtime: 'remote', command: '',
+                            url: e.url, transport: e.transport ?? 'http', auth: 'token', token, enabled: true,
+                          });
+                          if (status.state === 'authorizing') throw new Error(status.error ?? 'token rejected');
+                          toast.show(`Connected ${e.name}`, 'success');
                         }
                         setTokenTarget(null);
                         void refresh();
@@ -1238,7 +1229,7 @@ function LogPane({ lines }: { lines: string[] | null }) {
   return <LogConsole lines={lines} />;
 }
 
-function ServerRow({ s, entry, agents, onChange, onToken }: { s: ServerStatus; entry?: RegistryEntry; agents: AgentClientInfo[]; onChange: () => void; onToken: (server: ServerStatus) => void }) {
+function ServerRow({ s, agents, onChange, onToken }: { s: ServerStatus; agents: AgentClientInfo[]; onChange: () => void; onToken: (server: ServerStatus) => void }) {
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<string[] | null>(null);
   const [armed, setArmed] = useState(false);
@@ -1248,7 +1239,6 @@ function ServerRow({ s, entry, agents, onChange, onToken }: { s: ServerStatus; e
   const running = s.state === 'ready' || s.state === 'starting';
   const isRemote = s.runtime === 'remote';
   const authorizing = s.state === 'authorizing';
-  const tokenConnection = entry && registryConnections(entry).find((connection) => connection.auth === 'token');
   const act = async (action: 'start' | 'stop' | 'restart') => {
     try {
       await api.action(s.id, action);
@@ -1259,7 +1249,7 @@ function ServerRow({ s, entry, agents, onChange, onToken }: { s: ServerStatus; e
     onChange();
   };
   const signIn = async () => {
-    if (isRemote && s.state === 'authorizing' && (s.auth === 'token' || tokenConnection)) {
+    if (isRemote && s.state === 'authorizing' && s.auth === 'token') {
       onToken(s);
       return;
     }
@@ -1314,7 +1304,7 @@ function ServerRow({ s, entry, agents, onChange, onToken }: { s: ServerStatus; e
         <>
           {authorizing && (
             <p className="small muted row-note">
-              {s.auth === 'token' || tokenConnection ? <>Paste a new token to reconnect {s.name}.</> : <>Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.</>}
+              {s.auth === 'token' ? <>Paste a new token to reconnect {s.name}.</> : <>Waiting for sign-in. Click <b>Sign in</b> to open {s.name}'s login in a new window — it connects automatically once you authorize.</>}
             </p>
           )}
           {s.error && !authorizing && <p className="small row-note" style={{ color: 'var(--danger)' }}>{s.error}</p>}
@@ -1327,7 +1317,7 @@ function ServerRow({ s, entry, agents, onChange, onToken }: { s: ServerStatus; e
       actions={
         <>
           {authorizing ? (
-            <button className="btn sm btn-primary" onClick={() => void signIn()}>{s.auth === 'token' || tokenConnection ? '🔑 Enter token' : '🔐 Sign in'}</button>
+            <button className="btn sm btn-primary" onClick={() => void signIn()}>{s.auth === 'token' ? '🔑 Enter token' : '🔐 Sign in'}</button>
           ) : (
             /* Up/down is one bit of state, so it gets one control. It reads as on
                while starting — that is where the click is taking it — and stays
