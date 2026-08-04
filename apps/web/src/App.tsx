@@ -460,7 +460,7 @@ export function App() {
       return;
     }
     setAdding(e);
-  }, [quickAddOAuth]);
+  }, [quickAddOAuth, servers, toast]);
 
   const openView = useCallback((next: View) => {
     setView(next);
