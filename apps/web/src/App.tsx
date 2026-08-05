@@ -12,8 +12,11 @@ import type {
   SettingsInfo,
   UpdateSettingsRequest,
   PopularityMap,
+  Advice,
   CliStatus,
+  CliCatalogEntry,
   CliCheckResult,
+  OAuthAppInfo,
   ConnectShell,
   ConnectTargetStatus,
   ConnectTargetsInfo,
@@ -26,11 +29,13 @@ import type {
 } from '@hypergate/shared';
 import { mergeCatalogSearch, registryConnections, resolveRegistryConnection } from '@hypergate/shared';
 import { api } from './api';
+import { AdviceNote } from './components/AdviceNote';
 import { Dialog } from './components/Dialog';
 import { EmptyState } from './components/EmptyState';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogConsole } from './components/LogConsole';
 import { ThemeSwitch } from './components/ThemeSwitch';
+import { OAuthAppDialog } from './components/servers/OAuthAppDialog';
 import { TokenDialog } from './components/servers/TokenDialog';
 import { useToast } from './toast';
 
@@ -381,6 +386,7 @@ export function App() {
   const [offline, setOffline] = useState(false);
   const [adding, setAdding] = useState<RegistryEntry | 'custom' | null>(null);
   const [tokenTarget, setTokenTarget] = useState<{ id?: string; name: string; label?: string; url?: string; entry?: RegistryEntry } | null>(null);
+  const [oauthApp, setOauthApp] = useState<{ name: string; info: OAuthAppInfo; entry?: RegistryEntry; serverId?: string; hasTokenConnection?: boolean } | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
   const [version, setVersion] = useState('');
   const [activeSection, setActiveSection] = useState<ServerSection | AnalyticsSection>('agents');
@@ -462,12 +468,31 @@ export function App() {
     void refresh();
   }, [refresh, servers, toast]);
 
+  /**
+   * A provider that registers no OAuth client of its own can't be signed into
+   * until an app exists, so ask the daemon *before* adding anything: a failed add
+   * that gets rolled back is how GitHub used to look like a broken product rather
+   * than a two-minute setup step. Only the entries that declare the requirement
+   * take this path; everyone else still goes straight to the browser.
+   */
+  const startOAuth = useCallback(async (e: RegistryEntry, hasTokenConnection = false) => {
+    if (!e.oauthApp) { void quickAddOAuth(e, hasTokenConnection); return; }
+    const info = await api.oauthApp(e.id).catch(() => null);
+    if (info && !info.configured) {
+      setShowCatalog(false);
+      setAdding(null);
+      setOauthApp({ name: e.name, info, entry: e, hasTokenConnection });
+      return;
+    }
+    void quickAddOAuth(e, hasTokenConnection);
+  }, [quickAddOAuth]);
+
   const handlePick = useCallback((e: RegistryEntry | 'custom', hasTokenConnection = false) => {
     if (e !== 'custom' && (servers ?? []).some((server) => server.id === e.id)) {
       toast.show(`${e.name} is already added. Remove it first to switch connection methods.`, 'error');
       return;
     }
-    if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'oauth') { void quickAddOAuth(e, hasTokenConnection); return; }
+    if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'oauth') { void startOAuth(e, hasTokenConnection); return; }
     if (e !== 'custom' && e.runtime === 'remote' && e.auth === 'token') {
       setShowCatalog(false);
       setAdding(null);
@@ -475,7 +500,30 @@ export function App() {
       return;
     }
     setAdding(e);
-  }, [quickAddOAuth, servers, toast]);
+  }, [startOAuth, servers, toast]);
+
+  /**
+   * Take the advice. A recommendation that names a curated entry can be acted on
+   * here — that is the point of naming it — so the click adds *that* server
+   * instead. When the alternative is a CLI, the CLI section is where it lives, so
+   * this scrolls there rather than pretending a server row can install a binary.
+   */
+  const preferInstead = useCallback((advice: Advice) => {
+    const prefer = advice.prefer;
+    if (!prefer) return;
+    if (prefer.kind === 'cli') {
+      setActiveSection('cli');
+      document.getElementById('cli')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      toast.show(`${prefer.name} is a command-line tool — find it under Command-line tools`, 'info');
+      return;
+    }
+    const entry = prefer.entryId ? registry.find((e) => e.id === prefer.entryId) : undefined;
+    if (!entry) {
+      toast.show(`${prefer.name} isn't in the catalog on this version`, 'error');
+      return;
+    }
+    handlePick(entry, registryConnections(entry).some((connection) => connection.auth === 'token'));
+  }, [handlePick, registry, toast]);
 
   const openView = useCallback((next: View) => {
     setView(next);
@@ -634,17 +682,41 @@ export function App() {
                         const entry = registry.find((e) => e.id === server.id);
                         const tokenConnection = entry && registryConnections(entry).find((connection) => connection.auth === 'token');
                         setTokenTarget({ id: server.id, name: server.name, label: entry?.tokenLabel ?? tokenConnection?.tokenLabel, url: entry?.tokenUrl ?? tokenConnection?.tokenUrl });
+                      }} onOAuthApp={(server) => {
+                        void api.oauthApp(server.id).then((info) => setOauthApp({ name: server.name, info, serverId: server.id }));
                       }} />)}
                     </div></div>
                   ) : null}
 
-                  {showCatalog && <AddCatalog curated={registry} onPick={handlePick} />}
+                  {showCatalog && <AddCatalog curated={registry} onPick={handlePick} onPrefer={preferInstead} />}
 
                   {adding && (
                     <AddServer
                       entry={adding === 'custom' ? null : adding}
                       onClose={() => setAdding(null)}
                       onAdded={() => { setAdding(null); setShowCatalog(false); void refresh(); }}
+                    />
+                  )}
+                  {oauthApp && (
+                    <OAuthAppDialog
+                      name={oauthApp.name}
+                      info={oauthApp.info}
+                      onClose={() => setOauthApp(null)}
+                      onSaved={() => {
+                        const pending = oauthApp;
+                        setOauthApp(null);
+                        toast.show(`${pending.name} sign-in is set up`, 'success');
+                        // Straight on to the thing the user was trying to do: add
+                        // the server, or retry the sign-in of one already added.
+                        if (pending.entry) void quickAddOAuth(pending.entry, pending.hasTokenConnection);
+                        else if (pending.serverId) {
+                          const popup = reserveAuthWindow();
+                          void api.authorize(pending.serverId).then(
+                            (st) => { openAuth(st.authUrl, popup); void refresh(); },
+                            () => { openAuth(undefined, popup); toast.show(`Could not start sign-in for ${pending.name}`, 'error'); },
+                          );
+                        }
+                      }}
                     />
                   )}
                   {tokenTarget && (
@@ -1244,7 +1316,14 @@ function LogPane({ lines }: { lines: string[] | null }) {
   return <LogConsole lines={lines} />;
 }
 
-function ServerRow({ s, agents, onChange, onToken }: { s: ServerStatus; agents: AgentClientInfo[]; onChange: () => void; onToken: (server: ServerStatus) => void }) {
+function ServerRow({ s, agents, onChange, onToken, onOAuthApp }: {
+  s: ServerStatus;
+  agents: AgentClientInfo[];
+  onChange: () => void;
+  onToken: (server: ServerStatus) => void;
+  /** Open the one-time OAuth app setup for a provider that needs one. */
+  onOAuthApp: (server: ServerStatus) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<string[] | null>(null);
   const [armed, setArmed] = useState(false);
@@ -1271,7 +1350,13 @@ function ServerRow({ s, agents, onChange, onToken }: { s: ServerStatus; agents: 
     const popup = reserveAuthWindow();
     const st = await api.authorize(s.id).catch(() => null);
     openAuth(st?.authUrl, popup);
-    if (!st?.authUrl) toast.show(`Could not start sign-in for ${s.name}`, 'error');
+    if (!st?.authUrl) {
+      // No URL usually means there was no client to authorize with. That is a
+      // setup step, not a failure, so offer it rather than reporting a dead end.
+      const info = await api.oauthApp(s.id).catch(() => null);
+      if (info?.requirement && !info.configured) onOAuthApp(s);
+      else toast.show(`Could not start sign-in for ${s.name}`, 'error');
+    }
     onChange();
   };
 
@@ -2173,7 +2258,15 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
 }
 
 /** One catalog row (curated or registry-search result) with an Add button. */
-function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry, hasTokenConnection?: boolean) => void }) {
+function CatalogRow({
+  e,
+  onPick,
+  onPrefer,
+}: {
+  e: RegistryEntry;
+  onPick: (e: RegistryEntry, hasTokenConnection?: boolean) => void;
+  onPrefer?: (advice: Advice) => void;
+}) {
   const options = registryConnections(e);
   const [selectedId, setSelectedId] = useState(options[0]?.id);
   const selected = resolveRegistryConnection(e, selectedId);
@@ -2201,6 +2294,7 @@ function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry
             {(selected.requires ?? []).map((r) => <span key={r} className="chip mono">{r}</span>)}
           </div>
           {e.description && <div className="small muted" style={{ marginTop: 3 }}>{e.description}</div>}
+          <AdviceNote advice={e.advice} onPrefer={onPrefer} />
           {selectedOption?.description && <div className="small muted" style={{ marginTop: 3 }}>{selectedOption.description}</div>}
           {selected.note && <div className="small" style={{ marginTop: 3, color: 'var(--warning)' }}>{selected.note}</div>}
           {options.length > 1 && (
@@ -2233,7 +2327,11 @@ function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry
 }
 
 /** The "+ Add server" area: search the official MCP registry, or pick from the curated list. */
-function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e: RegistryEntry | 'custom', hasTokenConnection?: boolean) => void }) {
+function AddCatalog({ curated, onPick, onPrefer }: {
+  curated: RegistryEntry[];
+  onPick: (e: RegistryEntry | 'custom', hasTokenConnection?: boolean) => void;
+  onPrefer?: (advice: Advice) => void;
+}) {
   const [q, setQ] = useState('');
   const [results, setResults] = useState<RegistryEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -2288,7 +2386,7 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
         <div className="list">
           {searchingLive ? (
             visibleResults && visibleResults.length > 0 ? (
-              visibleResults.map((e) => <CatalogRow key={e.id} e={e} onPick={onPick} />)
+              visibleResults.map((e) => <CatalogRow key={e.id} e={e} onPick={onPick} onPrefer={onPrefer} />)
             ) : !searching ? (
               <div className="list-row small muted">No servers found in the registry for “{q.trim()}”.</div>
             ) : (
@@ -2296,7 +2394,7 @@ function AddCatalog({ curated, onPick }: { curated: RegistryEntry[]; onPick: (e:
             )
           ) : (
             <>
-              {sortedCurated.map((e) => <CatalogRow key={e.id} e={e} onPick={onPick} />)}
+              {sortedCurated.map((e) => <CatalogRow key={e.id} e={e} onPick={onPick} onPrefer={onPrefer} />)}
               <div className="list-row">
                 <div className="row between wrap-gap">
                   <div style={{ flex: 1, minWidth: 200 }}>
@@ -3152,44 +3250,63 @@ function CliSection() {
   const [clis, setClis] = useState<CliStatus[] | null>(null);
   const [open, setOpen] = useState(true);
   const [offering, setOffering] = useState(false);
+  const [catalog, setCatalog] = useState<CliCatalogEntry[] | null>(null);
   const [q, setQ] = useState('');
+  const [results, setResults] = useState<CliCatalogEntry[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const [check, setCheck] = useState<CliCheckResult | null>(null);
-  const [checking, setChecking] = useState(false);
   const seq = useRef(0);
 
   useEffect(() => {
     void api.clis().then(setClis).catch(() => setClis([]));
   }, []);
 
-  // Debounced ad-hoc availability check, so you can look up a command that isn't
-  // in the known list (psql, terraform, …), not just filter the known ones.
+  // The lookup: what could I install that answers to this? Two things happen per
+  // query and they answer different questions — the catalogs say what the tool
+  // *is* and whether it is the one the provider recommends, the PATH probe says
+  // whether this exact command is already here. Debounced together, one
+  // generation at a time, so a slow npm reply can't overwrite a newer query.
   useEffect(() => {
-    const name = q.trim();
+    const query = q.trim();
     setCheck(null);
-    if (!name) { setChecking(false); return; }
-    setChecking(true);
+    if (!query) {
+      setResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
     const mine = ++seq.current;
     const t = setTimeout(() => {
       void api
-        .checkCli(name)
+        .checkCli(query)
         .then((r) => { if (mine === seq.current) setCheck(r); })
-        .catch(() => { if (mine === seq.current) setCheck(null); })
-        .finally(() => { if (mine === seq.current) setChecking(false); });
+        .catch(() => { /* the catalog result is the useful half */ });
+      void api
+        .searchClis(query)
+        .then((r) => { if (mine === seq.current) setResults(r); })
+        .catch(() => { if (mine === seq.current) setResults([]); })
+        .finally(() => { if (mine === seq.current) setSearching(false); });
     }, 350);
     return () => clearTimeout(t);
   }, [q]);
 
+  // The browse list is the same data the search draws on, so it loads on first
+  // open rather than with the page.
+  const openOffer = useCallback(() => {
+    setOffering((v) => !v);
+    if (!catalog) void api.cliCatalog().then(setCatalog).catch(() => setCatalog([]));
+  }, [catalog]);
+
   const installed = (clis ?? []).filter((c) => c.found);
-  const available = (clis ?? []).filter((c) => !c.found);
   const query = q.trim().toLowerCase();
   const matches = (c: CliStatus): boolean =>
     !query || c.name.toLowerCase().includes(query) || c.command.toLowerCase().includes(query) || c.description.toLowerCase().includes(query);
   const filtered = installed.filter(matches);
-  // The ad-hoc probe answers for anything on PATH, so it only earns a row when
-  // the list above can't already answer: an exact command we detected is that
-  // row, not a second one saying the same thing.
-  const knownExact = installed.some((c) => c.command.toLowerCase() === query);
-  const showAdhoc = query.length > 0 && !knownExact;
+  const available = (catalog ?? []).filter((c) => !c.installed);
+  // A command found on PATH that no catalog row covers still earns a row: it is
+  // the honest answer to "have I got this?" for anything at all, catalogued or not.
+  const covered = (results ?? []).some((r) => r.command.toLowerCase() === query) || installed.some((c) => c.command.toLowerCase() === query);
+  const showAdhoc = !!check?.found && !covered;
 
   return (
     <>
@@ -3204,8 +3321,12 @@ function CliSection() {
         <div className="panel">
           <div className="catalog-search">
             <span className="cs-ic">🔎</span>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Check if a command is installed (docker, uvx, terraform…)" />
-            {checking && <span className="small muted">checking…</span>}
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Find a tool to install, or check one you have (playwright, docker, jq…)"
+            />
+            {searching && <span className="small muted">searching…</span>}
             {q && <button className="btn sm btn-ghost" onClick={() => setQ('')}>Clear</button>}
           </div>
           <div className="list">
@@ -3213,29 +3334,46 @@ function CliSection() {
               <div className="list-row small muted">Detecting installed tools…</div>
             ) : (
               <>
-                {showAdhoc && <CliCheckRow name={q.trim()} result={check} checking={checking} />}
+                {showAdhoc && <CliCheckRow name={q.trim()} result={check} checking={false} />}
                 {filtered.map((c) => <CliRow key={c.id} c={c} />)}
-                {filtered.length === 0 && !showAdhoc && (
-                  <div className="list-row small muted">
-                    {query ? <>Nothing installed matches “{q.trim()}”.</> : <>No known tools detected on your PATH yet.</>}
-                  </div>
-                )}
+                {!query && filtered.length === 0 && <div className="list-row small muted">No known tools detected on your PATH yet.</div>}
               </>
             )}
           </div>
-          {available.length > 0 && (
-            <div className="row between wrap-gap" style={{ marginTop: 12 }}>
-              <span className="small muted">
-                {available.length} more {available.length === 1 ? 'tool' : 'tools'} Hypergate knows how to use.
-              </span>
-              <button className="btn sm" onClick={() => setOffering((v) => !v)}>
-                {offering ? 'Close' : 'Install a tool'}
-              </button>
+          {query && (
+            <div style={{ marginTop: 12 }}>
+              <div className="small muted" style={{ marginBottom: 6 }}>
+                Available to install — the curated set first, then the npm registry and Homebrew core.
+              </div>
+              <div className="list">
+                {results === null ? (
+                  <div className="list-row small muted">Looking up “{q.trim()}”…</div>
+                ) : results.length === 0 ? (
+                  <div className="list-row small muted">
+                    No installable tool found for “{q.trim()}” on npm or in Homebrew core.
+                    {check && !check.found && <> It isn’t on your PATH either.</>}
+                  </div>
+                ) : (
+                  results.map((c) => <CliInstallRow key={c.id} c={c} />)
+                )}
+              </div>
             </div>
           )}
-          {offering && (
+          {!query && (
+            <div className="row between wrap-gap" style={{ marginTop: 12 }}>
+              <span className="small muted">Search above for any tool, or browse the ones Hypergate knows how to use.</span>
+              <button className="btn sm" onClick={openOffer}>{offering ? 'Close' : 'Install a tool'}</button>
+            </div>
+          )}
+          {!query && offering && (
             <div className="list" style={{ marginTop: 10 }}>
-              {available.map((c) => <CliInstallRow key={c.id} c={c} />)}
+              {catalog === null ? (
+                <div className="list-row small muted">Loading the catalog…</div>
+              ) : available.length === 0 ? (
+                <div className="list-row small muted">You already have every tool in the curated set.</div>
+              ) : (
+                available.map((c) => <CliInstallRow key={c.id} c={c} />)
+              )}
             </div>
           )}
         </div>
@@ -3244,43 +3382,61 @@ function CliSection() {
   );
 }
 
+const CLI_CHANNEL_CHIP: Record<string, string> = { curated: 'curated', npm: 'npm', brew: 'Homebrew' };
+
 /**
- * One tool you could install. `install` in the catalog is written three ways —
- * a shell command, a URL, or a sentence like "Comes with Node.js" — because
- * that is genuinely how these tools are obtained, so each gets the control it
- * deserves: a command you can copy, a link you can open, or plain words.
+ * One tool you could install: what it is, whether it's the one its provider
+ * recommends, and the ways to get it on *this* machine.
+ *
+ * Install routes are genuinely of three kinds — a command, a download page, or a
+ * sentence like "Comes with Node.js" — because that is how these tools are
+ * actually obtained, so each gets the control it deserves. A tool with several
+ * commands shows them all: `npm install -g` and `winget install` are not the same
+ * choice, and choosing for the user is how you end up offering Homebrew on Windows.
  */
-function CliInstallRow({ c }: { c: CliStatus }) {
+function CliInstallRow({ c }: { c: CliCatalogEntry }) {
   const [copied, copy] = useCopy();
-  const hint = c.install?.trim();
-  const isUrl = !!hint && /^https?:\/\//i.test(hint);
-  // A command, as opposed to prose: no spaces around a sentence, and it starts
-  // with something you'd actually type.
-  const isCommand = !!hint && !isUrl && /^(npm|npx|pnpm|yarn|bun|brew|pipx|pip|winget|choco|scoop|apt|cargo|go) /i.test(hint);
+  const routes = (c.installs ?? []).filter((option) => !/^https?:\/\//i.test(option.command));
+  const download = (c.installs ?? []).find((option) => /^https?:\/\//i.test(option.command));
+  // Neither a command nor a link: "Comes with Node.js" is the whole answer.
+  const prose = routes.length === 0 && !download ? c.install?.trim() : undefined;
 
   return (
     <div className="list-row">
       <div className="row between wrap-gap">
         <div style={{ flex: 1, minWidth: 200 }}>
           <div className="row wrap-gap" style={{ gap: 8 }}>
+            {c.recommended && <span className="rec-star" title="Recommended">★</span>}
             <span className="server-name">{c.name}</span>
             <span className="chip mono">{c.command}</span>
+            {c.installed && <span className="pill pill-ready"><span className="dot" />installed</span>}
             <span className="chip">{c.category}</span>
+            {c.channel !== 'curated' && <span className="chip chip-accent">{CLI_CHANNEL_CHIP[c.channel] ?? c.channel}</span>}
+            {c.latest && <span className="small muted">v{c.latest}</span>}
+            {typeof c.popularity === 'number' && (
+              <span className="small muted" title="Homebrew installs in the last 30 days">{fmtNum(c.popularity)} installs/mo</span>
+            )}
           </div>
           {c.description && <div className="small muted" style={{ marginTop: 3 }}>{c.description}</div>}
-          {hint && !isUrl && !isCommand && <div className="small muted" style={{ marginTop: 3 }}>{hint}</div>}
+          <AdviceNote advice={c.advice} onPrefer={(advice) => advice.prefer?.install && copy(`pref-${c.id}`, advice.prefer.install)} />
+          {prose && <div className="small muted" style={{ marginTop: 3 }}>{prose}</div>}
+          {routes.length > 0 && (
+            <div className="cli-installs">
+              {routes.map((option) => (
+                <span key={`${option.label}-${option.command}`} className="cli-install">
+                  <span className="small muted">{option.label}</span>
+                  <code className="mono">{option.command}</code>
+                  <button className="btn sm btn-ghost" onClick={() => copy(`cli-${c.id}-${option.label}`, option.command)}>
+                    {copied === `cli-${c.id}-${option.label}` ? 'Copied!' : 'Copy'}
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="row">
-          {isCommand && (
-            <>
-              <code className="chip mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>{hint}</code>
-              <button className="btn sm" onClick={() => copy(`cli-${c.id}`, hint)}>
-                {copied === `cli-${c.id}` ? 'Copied!' : 'Copy'}
-              </button>
-            </>
-          )}
-          {isUrl && <a className="btn sm" href={hint} target="_blank" rel="noreferrer">Get it ↗</a>}
-          {c.homepage && !isUrl && <a className="small muted" href={c.homepage} target="_blank" rel="noreferrer">docs</a>}
+          {download && <a className="btn sm" href={download.command} target="_blank" rel="noreferrer">Get it ↗</a>}
+          {c.homepage && <a className="small muted" href={c.homepage} target="_blank" rel="noreferrer">docs</a>}
         </div>
       </div>
     </div>

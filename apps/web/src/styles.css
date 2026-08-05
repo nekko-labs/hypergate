@@ -489,6 +489,51 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 /* Ad-hoc CLI availability-check row sits atop the known list, subtly set apart */
 .cli-check { background: var(--paper-2); }
 
+/* ── "is this the right one?" ────────────────────────────────────────────────
+   The verdict under a search result. A left rule carries the tint, so a row can
+   hold one without a second box competing with the row's own border, and the
+   tint gradient means a whole list of results reads as one column of answers
+   rather than a wall of coloured cards. */
+.advice {
+  display: flex; gap: 7px; align-items: flex-start;
+  margin-top: 6px; padding: 5px 0 5px 9px;
+  border-left: 2px solid var(--line);
+  font-size: 12px; line-height: 1.45; color: var(--ink-2);
+}
+.advice-ic { flex: none; font-size: 11px; line-height: 1.6; opacity: 0.9; }
+.advice-body { min-width: 0; }
+.advice-label { font-weight: 650; margin-right: 5px; }
+.advice-msg { color: var(--ink-3); }
+.advice-prefer { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: 6px; }
+.advice-prefer b, .advice-prefer a { color: var(--ink); }
+.advice-prefer .btn.sm { padding: 1px 7px; font-size: 11px; }
+.advice-recommended { border-left-color: var(--warning); }
+.advice-recommended .advice-label, .advice-recommended .advice-ic { color: var(--warning); }
+.advice-official { border-left-color: color-mix(in srgb, var(--success) 55%, transparent); }
+.advice-official .advice-label, .advice-official .advice-ic { color: var(--success); }
+.advice-superseded { border-left-color: var(--accent); }
+.advice-superseded .advice-label, .advice-superseded .advice-ic { color: var(--accent); }
+.advice-deprecated { border-left-color: var(--danger); }
+.advice-deprecated .advice-label, .advice-deprecated .advice-ic { color: var(--danger); }
+.advice-community, .advice-unverified { border-left-color: color-mix(in srgb, var(--ink-3) 45%, transparent); }
+
+/* ── install routes on a CLI row ─────────────────────────────────────────────
+   Several ways to get one tool, each its own copyable unit. They wrap rather
+   than scroll: a command you can only half see is not a command you can trust. */
+.cli-installs { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
+.cli-install { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.cli-install .small { min-width: 62px; }
+.cli-install code {
+  font-size: 11.5px; padding: 2.5px 8px; border-radius: 7px;
+  background: var(--paper); border: 1px solid var(--line); color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* The one-time OAuth app setup, as three numbered things to do. */
+.oauth-steps { margin: 4px 0 12px; padding-left: 20px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.oauth-steps li { line-height: 1.5; }
+.oauth-steps .field { margin-top: 8px; }
+
 pre.snippet, pre.logs {
   background: var(--paper); border: 1px solid var(--line); color: var(--ink-2);
   border-radius: 10px; padding: 11px 13px; font-size: 12px; overflow: auto; margin: 10px 0 0;

@@ -10,7 +10,9 @@ import type {
   UpdateSettingsRequest,
   PopularityMap,
   CliStatus,
+  CliCatalogEntry,
   CliCheckResult,
+  OAuthAppInfo,
   ConnectTargetsInfo,
   AgentConnectInfo,
   ConnectResult,
@@ -58,6 +60,21 @@ export const api = {
   // CLIs section: detect installed command-line tools + ad-hoc availability check.
   clis: () => j<CliStatus[]>('/api/clis'),
   checkCli: (name: string) => j<CliCheckResult>(`/api/clis/check?name=${encodeURIComponent(name)}`),
+  // Tools you could install: the curated catalog (local), and the same lookup
+  // against npm + Homebrew that the MCP registry search is modelled on.
+  cliCatalog: () => j<CliCatalogEntry[]>('/api/clis/catalog'),
+  searchClis: (q: string) => j<CliCatalogEntry[]>(`/api/clis/search?q=${encodeURIComponent(q)}`),
+  // The one-time OAuth app for a provider that registers none itself (GitHub).
+  // The daemon answers with the exact redirect URI to register and never returns
+  // a whole credential back.
+  oauthApp: (id: string) => j<OAuthAppInfo>(`/api/oauth/app/${encodeURIComponent(id)}`),
+  saveOAuthApp: (id: string, clientId: string, clientSecret?: string) =>
+    j<{ ok: boolean; configured: boolean }>(`/api/oauth/app/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clientId, clientSecret }),
+    }),
+  clearOAuthApp: (id: string) => j<{ ok: boolean }>(`/api/oauth/app/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   clients: () => j<AgentClientInfo[]>('/api/clients'),
   // `target` marks the agent as a known harness from the catalog: the daemon
   // takes its name from there and then refuses to rename it.
