@@ -68,13 +68,20 @@ export const api = {
   // The daemon answers with the exact redirect URI to register and never returns
   // a whole credential back.
   oauthApp: (id: string) => j<OAuthAppInfo>(`/api/oauth/app/${encodeURIComponent(id)}`),
-  saveOAuthApp: (id: string, clientId: string, clientSecret?: string) =>
+  // Writing one needs the master token and a same-origin request, like the
+  // shutdown and update actions: it decides which OAuth app the next sign-in
+  // goes to, so a page the user happens to be visiting must not be able to set it.
+  saveOAuthApp: (id: string, clientId: string, clientSecret: string | undefined, token: string) =>
     j<{ ok: boolean; configured: boolean }>(`/api/oauth/app/${encodeURIComponent(id)}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ clientId, clientSecret }),
     }),
-  clearOAuthApp: (id: string) => j<{ ok: boolean }>(`/api/oauth/app/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  clearOAuthApp: (id: string, token: string) =>
+    j<{ ok: boolean }>(`/api/oauth/app/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    }),
   clients: () => j<AgentClientInfo[]>('/api/clients'),
   // `target` marks the agent as a known harness from the catalog: the daemon
   // takes its name from there and then refuses to rename it.

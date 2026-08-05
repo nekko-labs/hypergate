@@ -224,23 +224,31 @@ const emptySearch = await (await fetch(`${BASE}/api/clis/search?q=`)).json();
 if (!Array.isArray(emptySearch) || emptySearch.length !== 0) fail('an empty CLI query must not search anything');
 ok(`CLI catalog serves ${cliCatalog.length} tools with verdicts and install routes; an empty query stays local`);
 
-// ── the one-time OAuth app (read-only + the guard) ───────────────────────────
-// Deliberately no successful POST here: a stored app goes into the real OS
-// keychain under `oauth:github`, which a smoke run has no business writing to on
-// somebody's machine. The write path is exercised by hand against an isolated
+// ── the one-time OAuth app (read + the guards) ───────────────────────────────
+// Deliberately no *successful* POST here: a stored app goes into the real OS
+// keychain under `oauth-app:github`, which a smoke run has no business writing to
+// on somebody's machine. The write path is exercised by hand against an isolated
 // daemon (see the epic in TASKS.md).
 const ghApp = await (await fetch(`${BASE}/api/oauth/app/github`)).json();
 if (ghApp.configured !== false) fail('a fresh data dir should report no configured GitHub OAuth app');
 if (ghApp.redirectUri !== `${BASE}/oauth/callback`) fail(`the setup must offer this daemon's own redirect URI, got ${ghApp.redirectUri}`);
 if (!ghApp.requirement?.registerUrl) fail('GitHub must declare where to register an OAuth app');
-const noSecret = await fetch(`${BASE}/api/oauth/app/github`, {
-  method: 'POST', headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ clientId: 'Ov23liSMOKE' }),
-});
-if (noSecret.status !== 400) fail(`GitHub requires a client secret; POST without one should 400, got ${noSecret.status}`);
 const unknownProvider = await fetch(`${BASE}/api/oauth/app/not-a-provider`);
 if (unknownProvider.status !== 404) fail(`an unknown provider should 404, got ${unknownProvider.status}`);
-ok('OAuth app setup reports this port’s callback, demands GitHub’s secret, and 404s an unknown provider');
+
+// Which OAuth app the next sign-in goes to is not something a page the user
+// happens to be visiting may decide, so writes carry the shutdown guards.
+const appPost = (headers, body = { clientId: 'Ov23liSMOKE', clientSecret: 'smoke' }) =>
+  fetch(`${BASE}/api/oauth/app/github`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+const appNoToken = await appPost({ origin: BASE });
+if (appNoToken.status !== 401) fail(`storing an OAuth app without a token should 401, got ${appNoToken.status}`);
+const appForeign = await appPost({ origin: 'https://evil.example', authorization: `Bearer ${master}` });
+if (appForeign.status !== 403) fail(`a cross-origin page must not store an OAuth app, got ${appForeign.status}`);
+const appDelete = await fetch(`${BASE}/api/oauth/app/github`, { method: 'DELETE', headers: { origin: 'https://evil.example' } });
+if (appDelete.status !== 403) fail(`a cross-origin page must not clear an OAuth app, got ${appDelete.status}`);
+const noSecret = await appPost({ origin: BASE, authorization: `Bearer ${master}` }, { clientId: 'Ov23liSMOKE' });
+if (noSecret.status !== 400) fail(`GitHub requires a client secret; POST without one should 400, got ${noSecret.status}`);
+ok('OAuth app setup reports this port’s callback, 404s an unknown provider, demands GitHub’s secret, and refuses no-token / cross-origin writes');
 
 // ── persistence across a restart ────────────────────────────────────────────
 const before = analytics.totalCalls;

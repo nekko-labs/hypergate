@@ -23,11 +23,14 @@ import { Dialog } from '../Dialog';
 export function OAuthAppDialog({
   name,
   info,
+  token,
   onClose,
   onSaved,
 }: {
   name: string;
   info: OAuthAppInfo;
+  /** The master gateway token: saving an app is a privileged, same-origin action. */
+  token?: string;
   onClose: () => void;
   /** Called once credentials are stored, so the caller can continue signing in. */
   onSaved: () => void;
@@ -58,10 +61,14 @@ export function OAuthAppDialog({
       setError(`${name} needs the client secret as well — generate one on the app's page.`);
       return;
     }
+    if (!token) {
+      setError("Couldn't reach the daemon's credentials. Reload the manager and try again.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await api.saveOAuthApp(info.serverId, clientId.trim(), clientSecret.trim() || undefined);
+      await api.saveOAuthApp(info.serverId, clientId.trim(), clientSecret.trim() || undefined, token);
       onSaved();
     } catch {
       setError('Could not save the app details. Check them and try again.');

@@ -659,23 +659,13 @@ const settingsInfo = (): SettingsInfo => {
 // Secret Service) this falls back to exactly the previous file behaviour, so
 // nothing breaks; the grants are simply no better protected than before.
 const oauthFile = (id: string): string => join(OAUTH_DIR, `${encodeURIComponent(id)}.json`);
-const readOAuthFile = (id: string): Record<string, string> => {
-  try {
-    if (existsSync(oauthFile(id))) return JSON.parse(readFileSync(oauthFile(id), 'utf8')) as Record<string, string>;
-  } catch {
-    /* corrupt file → start fresh */
-  }
-  return {};
-};
-const writeOAuthFile = (id: string, blob: Record<string, string>): void => {
-  mkdirSync(OAUTH_DIR, { recursive: true });
-  writeFileSync(oauthFile(id), JSON.stringify(blob, null, 2));
-};
 
 /** Keychain entry name for one server's grant blob. */
 const oauthKey = (id: string): string => `oauth:${id}`;
+/** Where a registered OAuth app falls back to when there is no keychain. */
+const appFile = (id: string): string => join(OAUTH_DIR, `${encodeURIComponent(id)}.app.json`);
 /** In-memory cache, so repeated `load()` calls don't each spawn a subprocess. */
-const oauthCache = new Map<string, Record<string, string>>();
+const blobCache = new Map<string, Record<string, string>>();
 /** Whether the keychain is usable. Probed once; false means stay on files. */
 let keychainOk: boolean | undefined;
 const useKeychain = (): boolean => {
@@ -683,54 +673,68 @@ const useKeychain = (): boolean => {
   return keychainOk;
 };
 
-const readOAuth = (id: string): Record<string, string> => {
-  const cached = oauthCache.get(id);
+const readFileBlob = (file: string): Record<string, string> => {
+  try {
+    if (existsSync(file)) return JSON.parse(readFileSync(file, 'utf8')) as Record<string, string>;
+  } catch {
+    /* corrupt file → start fresh */
+  }
+  return {};
+};
+
+const readBlob = (key: string, file: string, migrateLabel?: string): Record<string, string> => {
+  const cached = blobCache.get(key);
   if (cached) return cached;
 
   let blob: Record<string, string> = {};
   if (useKeychain()) {
-    const raw = shell.secretGet(oauthKey(id));
+    const raw = shell.secretGet(key);
     if (raw) {
       try {
         blob = JSON.parse(raw) as Record<string, string>;
       } catch {
         /* corrupt entry → start fresh */
       }
-    } else {
-      // One-time migration: adopt an existing plaintext grant, then delete it.
-      const fromFile = readOAuthFile(id);
-      if (Object.keys(fromFile).length > 0 && shell.secretSet(oauthKey(id), JSON.stringify(fromFile))) {
+    } else if (migrateLabel) {
+      // One-time migration: adopt an existing plaintext blob, then delete it.
+      const fromFile = readFileBlob(file);
+      if (Object.keys(fromFile).length > 0 && shell.secretSet(key, JSON.stringify(fromFile))) {
         blob = fromFile;
         try {
-          rmSync(oauthFile(id));
-          process.stderr.write(`[oauth] moved ${id} grant into the OS keychain\n`);
+          rmSync(file);
+          process.stderr.write(`[oauth] moved ${migrateLabel} into the OS keychain\n`);
         } catch {
           /* best-effort */
         }
       }
     }
   } else {
-    blob = readOAuthFile(id);
+    blob = readFileBlob(file);
   }
-  oauthCache.set(id, blob);
+  blobCache.set(key, blob);
   return blob;
 };
 
-const writeOAuth = (id: string, blob: Record<string, string>): void => {
-  oauthCache.set(id, blob);
-  if (useKeychain() && shell.secretSet(oauthKey(id), JSON.stringify(blob))) return;
-  writeOAuthFile(id, blob);
+const writeBlob = (key: string, file: string, blob: Record<string, string>): void => {
+  blobCache.set(key, blob);
+  if (useKeychain() && shell.secretSet(key, JSON.stringify(blob))) return;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(blob, null, 2));
 };
 
-const secretStore = (id: string): OAuthStore => ({
-  load: (key) => readOAuth(id)[key],
-  save: (key, value) => writeOAuth(id, { ...readOAuth(id), [key]: value }),
-  remove: (key) => {
-    const blob = { ...readOAuth(id) };
-    delete blob[key];
-    writeOAuth(id, blob);
+/** One keychain entry (or file, without a keychain) as a keyed store. */
+const secretStoreFor = (key: string, file: string, migrateLabel?: string): OAuthStore => ({
+  load: (k) => readBlob(key, file, migrateLabel)[k],
+  save: (k, value) => writeBlob(key, file, { ...readBlob(key, file, migrateLabel), [k]: value }),
+  remove: (k) => {
+    const blob = { ...readBlob(key, file, migrateLabel) };
+    delete blob[k];
+    writeBlob(key, file, blob);
   },
 });
+
+/** A server's OAuth grant: tokens, PKCE state, the cached account. */
+const secretStore = (id: string): OAuthStore => secretStoreFor(oauthKey(id), oauthFile(id), `${id} grant`);
 /**
  * Pre-registered OAuth credentials for a provider that lacks dynamic registration
  * (e.g. GitHub). Resolved from the server config, or from env so they can be set
@@ -752,14 +756,38 @@ const envKey = (prefix: string, id: string): string | undefined =>
  * browser, so the app now walks the user through it once and keeps the result
  * here — in the same keychain entry as that server's grant, never in servers.json.
  */
-const K_APP_CLIENT_ID = 'app_client_id';
-const K_APP_CLIENT_SECRET = 'app_client_secret';
-const storedClientId = (id: string): string | undefined => secretStore(id).load(K_APP_CLIENT_ID);
-const storedClientSecret = (id: string): string | undefined => secretStore(id).load(K_APP_CLIENT_SECRET);
+const K_APP_CLIENT_ID = 'client_id';
+const K_APP_CLIENT_SECRET = 'client_secret';
+/**
+ * The registered app lives in its own keychain entry (`oauth-app:<id>`), not in
+ * the server's grant blob, because the two have different lifetimes: removing a
+ * server is meant to erase the sign-in (v0.16.1's "Remove is the whole eraser"),
+ * while the app is provider configuration the user spent minutes registering at
+ * the provider. Sharing the blob meant one Remove, or one rolled-back add, sent
+ * them back to GitHub's form to make another one.
+ */
+const appStore = (id: string): OAuthStore => secretStoreFor(`oauth-app:${id}`, appFile(id));
+const storedClientId = (id: string): string | undefined => appStore(id).load(K_APP_CLIENT_ID);
+const storedClientSecret = (id: string): string | undefined => appStore(id).load(K_APP_CLIENT_SECRET);
+/**
+ * The full resolution order for the OAuth flow itself: what the packager set,
+ * then what the user registered in the app.
+ */
 const resolvedClientId = (cfg: ManagedServerConfig): string | undefined =>
-  cfg.clientId || envKey('HYPERGATE_CLIENTID', cfg.id) || storedClientId(cfg.id);
+  packagerClientId(cfg) || storedClientId(cfg.id);
 const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined =>
   cfg.clientSecret || envKey('HYPERGATE_CLIENTSECRET', cfg.id) || storedClientSecret(cfg.id);
+/**
+ * Only what a *packager* set, which is the narrower question `usesOAuth` asks.
+ *
+ * A config/env client id is a deliberate statement that this provider's token
+ * entries should really go through OAuth. An app the user registered is not: they
+ * may well have set one up and then chosen "API key or token" anyway, and letting
+ * the stored app answer here turned that explicit choice into a sign-in the user
+ * never asked for, with the pasted token saved and never used.
+ */
+const packagerClientId = (cfg: ManagedServerConfig): string | undefined =>
+  cfg.clientId || envKey('HYPERGATE_CLIENTID', cfg.id);
 /**
  * Enough of a credential to recognise it, and never enough to use it. A client id
  * is not a secret, but returning it whole would make the API a way to read one
@@ -771,7 +799,7 @@ const maskCredential = (value: string): string =>
 const clientIdSource = (cfg: ManagedServerConfig): OAuthAppInfo['source'] =>
   cfg.clientId ? 'config' : envKey('HYPERGATE_CLIENTID', cfg.id) ? 'env' : storedClientId(cfg.id) ? 'keychain' : undefined;
 /** Token-auth entries can still use OAuth when the user has supplied an app id. */
-const usesOAuth = (cfg: ManagedServerConfig): boolean => cfg.auth === 'oauth' || (cfg.auth === 'token' && !!resolvedClientId(cfg));
+const usesOAuth = (cfg: ManagedServerConfig): boolean => cfg.auth === 'oauth' || (cfg.auth === 'token' && !!packagerClientId(cfg));
 const storedBearerToken = (cfg: ManagedServerConfig): string | undefined => secretStore(cfg.id).load(TOKEN_KEY);
 const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
   new HypergateOAuthProvider(secretStore(cfg.id), {
@@ -841,9 +869,14 @@ const forgetAccount = (id: string): void => {
  * the same server came back already signed in as whoever set it up last, and
  * "remove" quietly meant "hide". A grant is the most sensitive thing we hold
  * on a user's behalf; when they remove the server they are done with it.
+ *
+ * The OAuth *app* the user registered at the provider is deliberately not in
+ * here: it lives in its own entry (see `appStore`), because it is configuration
+ * for the provider rather than part of any one sign-in, and re-registering one is
+ * a trip to the provider's website.
  */
 const deleteOAuth = (id: string): void => {
-  oauthCache.delete(id);
+  blobCache.delete(oauthKey(id));
   accountProbed.delete(id);
   accountMemo.delete(id);
   if (useKeychain()) shell.secretDelete(oauthKey(id));
@@ -2035,10 +2068,12 @@ if (STDIO_MODE) {
       const cfg = servers.find((s) => s.id === authM[1]);
       if (!cfg) return json(res, 404, { error: 'not_found' });
       if (cfg.runtime !== 'remote') return json(res, 400, { error: 'not a remote server' });
-      if (cfg.auth === 'token' && !resolvedClientId(cfg))
+      if (cfg.auth === 'token' && !packagerClientId(cfg))
         return json(res, 200, supervisor.markAuthorizing(cfg, `Paste a ${cfg.name} access token to connect.`));
       // A token entry that got here is on the client-id escape hatch, and stays
-      // a token entry: the hatch is derived from the env, never written down.
+      // a token entry. The hatch is only what a packager set (config or env): an
+      // app the *user* registered must never convert a connection they explicitly
+      // chose to authenticate with a pasted token.
       if (cfg.auth !== 'token') cfg.auth = cfg.auth === 'none' ? 'none' : 'oauth';
       const result = await runOAuth(cfg);
       if (result.authorized) {
@@ -2082,6 +2117,18 @@ if (STDIO_MODE) {
         };
         return json(res, 200, info);
       }
+      // Writing one is guarded exactly like /api/shutdown, and for the same
+      // reason: `/api/*` is unauthenticated on localhost and every reply carries
+      // `Access-Control-Allow-Origin: *`, so without this any page the user
+      // visits could plant its own client id and send the next sign-in to an app
+      // it controls, or delete the app they registered. The token alone would be
+      // theatre (`/api/gateway` hands it to any local caller), so the same-origin
+      // check on the Origin header is the actual barrier: absent means not a
+      // browser, and foreign or `null` is refused.
+      if (req.method === 'POST' || req.method === 'DELETE') {
+        if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
+        if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      }
       if (req.method === 'POST') {
         try {
           const body = JSON.parse(await readBody(req)) as { clientId?: unknown; clientSecret?: unknown };
@@ -2090,14 +2137,15 @@ if (STDIO_MODE) {
           if (!clientId) return json(res, 400, { error: 'clientId required' });
           if (requirement?.secretRequired && !clientSecret)
             return json(res, 400, { error: `${entry.name} requires a client secret as well as a client ID.` });
-          const store = secretStore(id);
+          const store = appStore(id);
           store.save(K_APP_CLIENT_ID, clientId);
           if (clientSecret) store.save(K_APP_CLIENT_SECRET, clientSecret);
           else store.remove(K_APP_CLIENT_SECRET);
-          // A previous failed attempt can leave a dynamically-registered client and
-          // a half-finished PKCE flow behind; both would win over what was just
-          // saved, so the next sign-in starts from the app the user registered.
-          store.remove('client_information');
+          // A previous attempt can leave a dynamically-registered client and a
+          // half-finished PKCE flow behind in the *grant*; both would outlive what
+          // was just saved, so the next sign-in starts from the user's own app.
+          // `'client'` is the SDK's own key for that registration (core/oauth.ts).
+          secretStore(id).remove('client');
           makeProvider(cfg).clearFlowState();
           process.stderr.write(`[oauth] stored an OAuth app for ${id} (${useKeychain() ? 'keychain' : 'file'})\n`);
           return json(res, 200, { ok: true, configured: true });
@@ -2106,9 +2154,12 @@ if (STDIO_MODE) {
         }
       }
       if (req.method === 'DELETE') {
-        const store = secretStore(id);
+        const store = appStore(id);
         store.remove(K_APP_CLIENT_ID);
         store.remove(K_APP_CLIENT_SECRET);
+        // Clearing the app also drops any auto-registered client, so a later
+        // sign-in cannot quietly fall back to a registration nobody remembers.
+        secretStore(id).remove('client');
         return json(res, 200, { ok: true });
       }
     }

@@ -701,6 +701,7 @@ export function App() {
                     <OAuthAppDialog
                       name={oauthApp.name}
                       info={oauthApp.info}
+                      token={gateway?.token}
                       onClose={() => setOauthApp(null)}
                       onSaved={() => {
                         const pending = oauthApp;
@@ -2271,8 +2272,13 @@ function trustChip(e: RegistryEntry): { label: string; chipClass: string } | und
       return { label: '◑ Verified publisher', chipClass: 'chip-verified' };
     case 'community':
       return { label: 'Community', chipClass: '' };
+    // `superseded` is a community server we *can* name a publisher for, so it
+    // keeps the Community chip the row used to carry: "Unverified" over a note
+    // naming the publisher is the contradiction the chip exists to remove.
     case 'superseded':
+      return { label: 'Community', chipClass: '' };
     case 'deprecated':
+      return { label: 'Deprecated', chipClass: 'chip-danger' };
     case 'unverified':
       return { label: 'Unverified', chipClass: '' };
     default:
