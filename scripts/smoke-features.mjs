@@ -200,6 +200,48 @@ try {
   ok(`registry search endpoint reachable (network result skipped: ${e instanceof Error ? e.message : e})`);
 }
 
+// ── trust advice on the catalog ─────────────────────────────────────────────
+// Every row the UI can show has to carry a verdict, because the chip and the
+// sentence under it are both derived from it: a row with no advice renders as an
+// unlabelled result, which is the state this feature exists to remove.
+const catalogEntries = await (await fetch(`${BASE}/api/registry`)).json();
+const unjudged = catalogEntries.filter((e) => !e.advice?.kind || !e.advice?.message);
+if (unjudged.length) fail(`${unjudged.length} curated entr(ies) carry no advice, e.g. ${unjudged[0].id}`);
+const playwrightServer = catalogEntries.find((e) => e.id === 'playwright');
+if (playwrightServer?.advice?.prefer?.kind !== 'cli')
+  fail(`the Playwright server should point at the CLI, got ${JSON.stringify(playwrightServer?.advice?.prefer)}`);
+ok(`every curated server carries a verdict (${catalogEntries.length} entries, Playwright names its CLI)`);
+
+// ── the CLI catalog (local; the lookup itself is network and lives above) ────
+const cliCatalog = await (await fetch(`${BASE}/api/clis/catalog`)).json();
+const playwrightCli = cliCatalog.find((c) => c.id === 'playwright-cli');
+if (!playwrightCli) fail('the CLI catalog is missing the official Playwright CLI');
+if (playwrightCli.advice?.kind !== 'recommended') fail(`Playwright CLI should be recommended, got ${playwrightCli.advice?.kind}`);
+if (!(playwrightCli.installs ?? []).some((i) => i.command.includes('@playwright/cli')))
+  fail('the Playwright CLI row has no install command');
+if (typeof playwrightCli.installed !== 'boolean') fail('a curated CLI row must answer whether it is installed');
+const emptySearch = await (await fetch(`${BASE}/api/clis/search?q=`)).json();
+if (!Array.isArray(emptySearch) || emptySearch.length !== 0) fail('an empty CLI query must not search anything');
+ok(`CLI catalog serves ${cliCatalog.length} tools with verdicts and install routes; an empty query stays local`);
+
+// ── the one-time OAuth app (read-only + the guard) ───────────────────────────
+// Deliberately no successful POST here: a stored app goes into the real OS
+// keychain under `oauth:github`, which a smoke run has no business writing to on
+// somebody's machine. The write path is exercised by hand against an isolated
+// daemon (see the epic in TASKS.md).
+const ghApp = await (await fetch(`${BASE}/api/oauth/app/github`)).json();
+if (ghApp.configured !== false) fail('a fresh data dir should report no configured GitHub OAuth app');
+if (ghApp.redirectUri !== `${BASE}/oauth/callback`) fail(`the setup must offer this daemon's own redirect URI, got ${ghApp.redirectUri}`);
+if (!ghApp.requirement?.registerUrl) fail('GitHub must declare where to register an OAuth app');
+const noSecret = await fetch(`${BASE}/api/oauth/app/github`, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ clientId: 'Ov23liSMOKE' }),
+});
+if (noSecret.status !== 400) fail(`GitHub requires a client secret; POST without one should 400, got ${noSecret.status}`);
+const unknownProvider = await fetch(`${BASE}/api/oauth/app/not-a-provider`);
+if (unknownProvider.status !== 404) fail(`an unknown provider should 404, got ${unknownProvider.status}`);
+ok('OAuth app setup reports this port’s callback, demands GitHub’s secret, and 404s an unknown provider');
+
 // ── persistence across a restart ────────────────────────────────────────────
 const before = analytics.totalCalls;
 await new Promise((r) => setTimeout(r, 2300)); // let the debounced writer flush
