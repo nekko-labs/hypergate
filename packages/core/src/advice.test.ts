@@ -47,8 +47,8 @@ describe('adviceForServer', () => {
     expect(adviceForServer(registryEntry('github')!).prefer).toBeUndefined();
   });
 
-  it('trusts a domain-verified registry namespace', () => {
-    const advice = adviceForServer(searchHit({ official: true, publisher: 'com.atlassian' }));
+  it('trusts a domain-verified registry namespace that matches the entry', () => {
+    const advice = adviceForServer(searchHit({ name: 'Atlassian Jira', official: true, publisher: 'com.atlassian' }));
     expect(advice.kind).toBe('official');
     expect(advice.message).toContain('com.atlassian');
   });
@@ -147,5 +147,30 @@ describe('unscoped official packages', () => {
     const advice = adviceForCli(cli({ name: 'storybook-archiver', package: '@someone/storybook-archiver', description: 'archives with playwright' }));
     expect(advice.kind).toBe('unverified');
     expect(advice.prefer?.entryId).toBe('playwright-cli');
+  });
+});
+
+describe('namespace verification vs first-party', () => {
+  it('says Official only when the verified domain is the service the entry is about', () => {
+    const atlassian = adviceForServer(searchHit({ name: 'jira', description: 'Atlassian Jira issues', official: true, publisher: 'com.atlassian' }));
+    expect(atlassian.kind).toBe('official');
+    // A domain-verified third party wrapping someone else's service is not the
+    // service's own server, and calling it "Official" is the one lie that matters
+    // in a trust badge.
+    const wrapper = adviceForServer(searchHit({ name: 'notion', description: 'Notion workspace tools', official: true, publisher: 'com.mcparmory' }));
+    expect(wrapper.kind).toBe('verified');
+    expect(wrapper.message).toContain('com.mcparmory');
+  });
+
+  it('does not read a github.com homepage or an io.github id as being about GitHub', () => {
+    const advice = adviceForServer(searchHit({
+      id: 'io-github-awkoy-notion-mcp-server',
+      name: 'notion-mcp-server',
+      description: 'Notion API tools. Source: https://github.com/awkoy/notion-mcp-server',
+      official: false,
+      publisher: 'io.github.awkoy',
+    }));
+    expect(advice.kind).toBe('community');
+    expect(advice.prefer).toBeUndefined();
   });
 });

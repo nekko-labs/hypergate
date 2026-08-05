@@ -318,12 +318,14 @@ export interface OAuthAppInfo {
  *
  * - `official` — published by the vendor it claims to be from. Go ahead.
  * - `recommended` — official *and* the approach that vendor points agents at.
+ * - `verified` — we know who published it, but not that they are the service's
+ *   own vendor (a domain-verified third-party wrapper).
  * - `superseded` — real, but the provider now recommends something else (`prefer`).
  * - `deprecated` — the maintainer has marked it deprecated, in their own words.
  * - `community` — a third-party implementation of someone else's service.
  * - `unverified` — nothing about the publisher could be established.
  */
-export type AdviceKind = 'recommended' | 'official' | 'superseded' | 'deprecated' | 'community' | 'unverified';
+export type AdviceKind = 'recommended' | 'official' | 'verified' | 'superseded' | 'deprecated' | 'community' | 'unverified';
 
 /** What to use instead, when this result isn't the recommended path. */
 export interface AdvicePreference {

@@ -158,9 +158,38 @@ export const OFFICIAL_ALTERNATIVES: AlternativeRule[] = [
   },
 ];
 
+/**
+ * Text worth matching a service name against: what the thing calls itself and
+ * what it says it does, with URLs taken out.
+ *
+ * URLs have to go, and the reason is worth remembering: nearly every community
+ * MCP server has a `github.com` homepage and a registry id like
+ * `io-github-someone-notion-mcp-server`, so matching on those told every one of
+ * them to go and use GitHub's official server instead. A hosting URL is not a
+ * statement about which service a tool is for.
+ */
+const searchable = (...parts: (string | undefined)[]): string =>
+  parts.filter(Boolean).join(' ').replace(/https?:\/\/\S+/g, ' ');
+
 /** The official path for a service named in this text, if there is one. */
 export const officialAlternative = (text: string): AlternativeRule | undefined =>
   OFFICIAL_ALTERNATIVES.find((rule) => rule.match.test(text));
+
+/**
+ * Does a domain-verified namespace belong to the service the entry is *about*?
+ *
+ * The MCP registry's namespace check proves control of a domain, and nothing more.
+ * `com.atlassian/jira` and `com.mcparmory/notion` both clear it, but only the
+ * first is the service's own server — and a row that says "Official" about the
+ * second is telling the user something untrue in the one place they are deciding
+ * who to trust. So compare the namespace's organisation label (the segment after
+ * the reverse-DNS TLD) with what the entry says it is.
+ */
+export function namespaceMatchesEntry(namespace: string, name: string, description = ''): boolean {
+  const org = namespace.split('.')[1]?.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  if (!org || org.length < 3) return false;
+  return searchable(name, description).replace(/[^a-z0-9]/gi, '').toLowerCase().includes(org);
+}
 
 /**
  * The replacement out of a maintainer's deprecation notice. npm's convention is
@@ -184,7 +213,7 @@ const oneLine = (text: string, max = 220): string => {
 /** The verdict for one MCP catalog row (curated or a live registry hit). */
 export function adviceForServer(entry: RegistryEntry): Advice {
   const vendor = entry.publisher;
-  const haystack = `${entry.name} ${entry.id} ${entry.description ?? ''} ${entry.homepage ?? ''}`;
+  const haystack = searchable(entry.name, entry.description);
 
   if (entry.source !== 'registry') {
     // Curated: added by hand from the vendor's docs, so this is the one place
@@ -216,14 +245,23 @@ export function adviceForServer(entry: RegistryEntry): Advice {
     };
   }
 
+  const alternative = officialAlternative(haystack);
+
   if (entry.official === true) {
+    // The namespace check proves a domain, so say which claim it actually backs.
+    if (vendor && namespaceMatchesEntry(vendor, entry.name, entry.description)) {
+      return {
+        kind: 'official',
+        message: `Official. Published under the domain-verified namespace ${vendor}, which only that domain's owner can publish to.`,
+      };
+    }
     return {
-      kind: 'official',
-      message: `Official. Published under the domain-verified namespace ${vendor ?? 'its own domain'}, which only the domain's owner can publish to.`,
+      kind: 'verified',
+      message: `Verified publisher ${vendor ?? 'domain'}, which proves who published it and not that it's the service's own server. Third-party wrappers are legitimate; check whose credentials it wants.`,
+      prefer: alternative?.prefer,
     };
   }
 
-  const alternative = officialAlternative(haystack);
   if (entry.official === false) {
     if (alternative) {
       return {
@@ -249,7 +287,7 @@ export function adviceForServer(entry: RegistryEntry): Advice {
 
 /** The verdict for one CLI row (curated, or looked up on npm or Homebrew). */
 export function adviceForCli(entry: CliCatalogEntry): Advice {
-  const haystack = `${entry.name} ${entry.id} ${entry.package ?? ''} ${entry.description ?? ''}`;
+  const haystack = searchable(entry.name, entry.package, entry.description);
   const alternative = officialAlternative(haystack);
 
   if (entry.deprecated) {
@@ -296,7 +334,7 @@ export function adviceForCli(entry: CliCatalogEntry): Advice {
   // mentioning it: `some-playwright-runner` invites the mistake, while a Chromatic
   // integration for Playwright is its own tool that happens to work with one. Both
   // get told where the official route is; only the first is told not to take this one.
-  const impersonates = officialAlternative(`${entry.name} ${entry.package ?? ''} ${entry.command}`);
+  const impersonates = officialAlternative(searchable(entry.name, entry.package, entry.command));
   const who = entry.publisher ? ` (${entry.publisher})` : '';
   if (impersonates) {
     return {

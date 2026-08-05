@@ -511,6 +511,8 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .advice-recommended .advice-label, .advice-recommended .advice-ic { color: var(--warning); }
 .advice-official { border-left-color: color-mix(in srgb, var(--success) 55%, transparent); }
 .advice-official .advice-label, .advice-official .advice-ic { color: var(--success); }
+.advice-verified { border-left-color: color-mix(in srgb, var(--info) 55%, transparent); }
+.advice-verified .advice-label, .advice-verified .advice-ic { color: var(--info); }
 .advice-superseded { border-left-color: var(--accent); }
 .advice-superseded .advice-label, .advice-superseded .advice-ic { color: var(--accent); }
 .advice-deprecated { border-left-color: var(--danger); }

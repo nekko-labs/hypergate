@@ -52,6 +52,7 @@ export function AdviceNote({
 const LABEL: Record<Advice['kind'], string> = {
   recommended: 'Recommended',
   official: 'Official',
+  verified: 'Verified publisher',
   superseded: 'Not the recommended route',
   deprecated: 'Deprecated',
   community: 'Community',
@@ -61,6 +62,8 @@ const LABEL: Record<Advice['kind'], string> = {
 const GLYPH: Record<Advice['kind'], string> = {
   recommended: '★',
   official: '✓',
+  verified: '◑',
+  // Placed here so the two "we know less than Official" kinds read as a pair.
   superseded: '↪',
   deprecated: '⚠',
   community: '👥',
