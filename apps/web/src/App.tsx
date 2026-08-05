@@ -2257,6 +2257,33 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
   );
 }
 
+/**
+ * The two-word version of the row's verdict. Derived from the advice so the chip
+ * and the sentence under it can never disagree; falls back to the raw `official`
+ * flag for a daemon too old to send advice at all.
+ */
+function trustChip(e: RegistryEntry): { label: string; chipClass: string } | undefined {
+  switch (e.advice?.kind) {
+    case 'recommended':
+    case 'official':
+      return { label: '✓ Official', chipClass: 'chip-official' };
+    case 'verified':
+      return { label: '◑ Verified publisher', chipClass: 'chip-verified' };
+    case 'community':
+      return { label: 'Community', chipClass: '' };
+    case 'superseded':
+    case 'deprecated':
+    case 'unverified':
+      return { label: 'Unverified', chipClass: '' };
+    default:
+      return e.official === true
+        ? { label: '✓ Official', chipClass: 'chip-official' }
+        : e.official === false
+          ? { label: 'Community', chipClass: '' }
+          : undefined;
+  }
+}
+
 /** One catalog row (curated or registry-search result) with an Add button. */
 function CatalogRow({
   e,
@@ -2274,6 +2301,7 @@ function CatalogRow({
   const runnable = selected.runnable !== false;
   const oauth = selected.runtime === 'remote' && selected.auth === 'oauth';
   const token = selected.runtime === 'remote' && selected.auth === 'token';
+  const trust = trustChip(e);
   return (
     <div className="list-row">
       <div className="row between wrap-gap">
@@ -2281,11 +2309,12 @@ function CatalogRow({
           <div className="row" style={{ gap: 8 }}>
             {e.recommended && <span className="rec-star" title="Recommended">★</span>}
             <span className="server-name">{e.name}</span>
-            {e.official === true && (
-              <span className="chip chip-official" title={e.publisher ? `Verified publisher: ${e.publisher}` : 'First-party / official server'}>✓ Official</span>
-            )}
-            {e.official === false && (
-              <span className="chip" title={e.publisher ? `Community namespace: ${e.publisher}` : 'Community server (not first-party)'}>Community</span>
+            {/* The chip is the verdict in two words, so it comes from the same
+                verdict as the sentence below it. Before, the chip read the raw
+                `official` namespace flag and could say "Official" over a note
+                explaining the publisher is merely verified. */}
+            {trust && (
+              <span className={`chip ${trust.chipClass}`} title={e.publisher ? `Publisher: ${e.publisher}` : trust.label}>{trust.label}</span>
             )}
             <span className="chip">{RUNTIME_CHIP[selected.runtime] ?? '💻 local'}</span>
             {oauth && <span className="chip chip-accent">🔐 OAuth</span>}

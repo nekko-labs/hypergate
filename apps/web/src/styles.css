@@ -476,6 +476,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .chip.mono { font-size: 10.5px; }
 .chip-accent { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 /* Official / verified-publisher chip (green, like the ready pill) */
+.chip-verified { background: color-mix(in srgb, var(--info) 14%, transparent); color: var(--info); border-color: color-mix(in srgb, var(--info) 32%, transparent); font-weight: 600; }
 .chip-official { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); border-color: color-mix(in srgb, var(--success) 32%, transparent); font-weight: 600; }
 /* Who a signed-in remote server is signed in as. Tinted like the OAuth state it
    belongs to, so "connected" and "as whom" read as one fact. */
