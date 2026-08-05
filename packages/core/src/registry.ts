@@ -1,6 +1,23 @@
 import type { RegistryEntry, PopularityMap } from '@hypergate/shared';
 
-const githubOAuthNote = 'GitHub sign-in needs a pre-registered OAuth App client ID via config clientId or HYPERGATE_CLIENTID_GITHUB. The token option needs no setup.';
+/**
+ * GitHub's authorization server (`https://github.com/login/oauth`) publishes RFC
+ * 8414 metadata with **no `registration_endpoint`**, so there is no dynamic client
+ * registration to fall back on: browser sign-in only works against an OAuth App
+ * somebody registered by hand. It also requires client authentication at the token
+ * endpoint even with PKCE, so that app needs a secret as well as an id.
+ *
+ * Hypergate therefore walks the user through registering one, once — see
+ * `oauthApp` below and `/api/oauth/app/:id` in the daemon.
+ */
+const githubOAuthNote = 'Browser sign-in needs a one-time GitHub OAuth app (Hypergate sets it up with you, about two minutes). A personal access token needs no setup at all.';
+
+const githubOAuthApp = {
+  registerUrl: 'https://github.com/settings/applications/new',
+  secretRequired: true,
+  docsUrl: 'https://docs.github.com/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app',
+  hint: 'Name it anything (e.g. "Hypergate"), set the homepage to https://hypergate.app, and paste the callback URL below exactly as shown.',
+};
 
 /**
  * Curated catalog of popular MCP servers users can add in one click. Process
@@ -103,22 +120,24 @@ export const REGISTRY: RegistryEntry[] = [
     auth: 'oauth',
     official: true,
     note: githubOAuthNote,
+    oauthApp: githubOAuthApp,
     connections: [
       {
         id: 'oauth',
-        label: 'Auto-connect',
-        description: 'Sign in with GitHub in your browser.',
+        label: 'Sign in with GitHub',
+        description: 'Browser sign-in, scoped consent, nothing to paste. Needs a one-time OAuth app, which Hypergate sets up with you.',
         runtime: 'remote',
         command: '',
         url: 'https://api.githubcopilot.com/mcp/',
         transport: 'http',
         auth: 'oauth',
         note: githubOAuthNote,
+        oauthApp: githubOAuthApp,
       },
       {
         id: 'token',
         label: 'API key or token',
-        description: 'Paste a GitHub personal access token.',
+        description: 'Paste a GitHub personal access token. Nothing to register.',
         runtime: 'remote',
         command: '',
         url: 'https://api.githubcopilot.com/mcp/',
@@ -131,14 +150,34 @@ export const REGISTRY: RegistryEntry[] = [
       {
         id: 'local',
         label: 'Run locally',
-        description: 'Run the GitHub MCP server on this machine.',
-        runtime: 'process',
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-github'],
+        // GitHub's own server, not the npm reference one: that package
+        // (`@modelcontextprotocol/server-github`) is marked "no longer supported"
+        // on npm, and GitHub ships this image itself.
+        description: "GitHub's own server image on this machine, over stdio. Needs Docker.",
+        runtime: 'docker',
+        command: '',
+        image: 'ghcr.io/github/github-mcp-server',
         requires: ['GITHUB_PERSONAL_ACCESS_TOKEN'],
+        note: 'Runs the official `ghcr.io/github/github-mcp-server` image with your token injected at launch. Needs Docker installed.',
       },
     ],
     homepage: 'https://github.com/github/github-mcp-server',
+  },
+  {
+    id: 'playwright',
+    name: 'Playwright',
+    description: 'Give an agent a real browser: navigate, click, fill forms, read the accessibility tree, screenshot. Runs locally, no account.',
+    runtime: 'process',
+    command: 'npx',
+    args: ['-y', '@playwright/mcp@latest'],
+    official: true,
+    // Microsoft ships two ways to hand an agent a browser and they are not
+    // interchangeable: the MCP server keeps a stateful session and streams page
+    // state into the model's context, while the CLI writes it to disk and lets the
+    // agent read what it needs (measured at a fraction of the tokens). The server
+    // is the right answer for a harness that cannot run shell commands.
+    note: 'Best for harnesses that can’t run shell commands. If yours can, the Playwright CLI does the same job for far fewer tokens (see the CLI tools section).',
+    homepage: 'https://github.com/microsoft/playwright-mcp',
   },
   {
     id: 'cloudflare',
@@ -266,11 +305,15 @@ export const REGISTRY: RegistryEntry[] = [
     id: 'fetch',
     name: 'Fetch',
     description: 'Fetch a URL and return its content as Markdown.',
+    // The reference fetch server is published to PyPI, not npm: there is no
+    // `@modelcontextprotocol/server-fetch` package at all (this entry pointed at
+    // one until v0.22.0, so adding it always failed).
     runtime: 'process',
-    command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-fetch'],
+    command: 'uvx',
+    args: ['mcp-server-fetch'],
     official: true,
-    homepage: 'https://github.com/modelcontextprotocol/servers',
+    note: 'Python server — needs `uv`/`uvx` on PATH (see the CLI tools section).',
+    homepage: 'https://github.com/modelcontextprotocol/servers/tree/main/src/fetch',
   },
   {
     id: 'postgres',
@@ -281,6 +324,7 @@ export const REGISTRY: RegistryEntry[] = [
     args: ['-y', '@modelcontextprotocol/server-postgres'],
     requires: ['DATABASE_URL'],
     official: true,
+    note: 'The reference Postgres server is marked "no longer supported" on npm; it still runs, but search the registry for a maintained alternative if you need one.',
     homepage: 'https://github.com/modelcontextprotocol/servers',
   },
   {

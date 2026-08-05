@@ -21,6 +21,11 @@ import {
   REGISTRY,
   searchRegistry,
   KNOWN_CLIS,
+  adviceForCli,
+  adviceForServer,
+  cliCatalogEntry,
+  matchesCli,
+  searchCliCatalog,
   CONNECT_TARGETS,
   ENTRY_NAME,
   agentConnectTarget,
@@ -51,6 +56,7 @@ import {
   userinfoEndpoint,
   type OAuthStore,
 } from '@hypergate/core';
+import { registryConnections } from '@hypergate/shared';
 import { openStore } from './store.ts';
 import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
@@ -68,7 +74,9 @@ import type {
   RegistryEntry,
   PopularityMap,
   CliStatus,
+  CliCatalogEntry,
   CliCheckResult,
+  OAuthAppInfo,
   ConnectTargetStatus,
   ConnectTargetsInfo,
   AgentConnectInfo,
@@ -125,7 +133,7 @@ const TOKEN_KEY = 'bearerToken';
 // sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
-const VERSION = '0.21.0';
+const VERSION = '0.22.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -522,6 +530,47 @@ const detectClisCached = async (): Promise<CliStatus[]> => {
   return result;
 };
 
+/**
+ * Looking up a tool you could install (as opposed to detecting one you have).
+ *
+ * The lookup itself is in core (npm registry + Homebrew formulae — see
+ * cli-search.ts for why those two). Here we add the two things only the daemon
+ * knows: whether the command is already on this machine, and the verdict on
+ * whether it's the tool the vendor actually recommends.
+ *
+ * `installed` is set to `true` or left absent, never `false`, for a looked-up
+ * Homebrew formula: the API doesn't list a formula's executables, so `ripgrep`
+ * installing `rg` would otherwise be reported as missing. Curated and npm entries
+ * carry a real command, so those can answer both ways.
+ */
+const annotateCli = async (entry: CliCatalogEntry): Promise<CliCatalogEntry> => {
+  const path = resolveOnPath(entry.command);
+  const known = path
+    ? { installed: true, path, version: await probeVersion(path, entry.versionArgs ?? ['--version']) }
+    : entry.channel === 'brew'
+      ? {}
+      : { installed: false };
+  const annotated = { ...entry, ...known };
+  return { ...annotated, advice: adviceForCli(annotated) };
+};
+
+const searchClis = async (query: string, limit: number, signal: AbortSignal): Promise<CliCatalogEntry[]> => {
+  const found = await searchCliCatalog(query, { limit, signal, platform: process.platform });
+  return Promise.all(found.map(annotateCli));
+};
+
+/** Curated catalog rows, so the CLI section can offer tools with no search typed. */
+const cliCatalog = async (): Promise<CliCatalogEntry[]> =>
+  Promise.all(KNOWN_CLIS.map((tool) => annotateCli(cliCatalogEntry(tool, process.platform))));
+
+/**
+ * The catalog with its trust verdicts attached. Computed here rather than in the
+ * browser so the UI, the CLI and any future surface read the same sentence, and
+ * so `@hypergate/core` never has to be bundled into the web app.
+ */
+const withAdvice = (entries: RegistryEntry[]): RegistryEntry[] =>
+  entries.map((entry) => ({ ...entry, advice: adviceForServer(entry) }));
+
 // ── connecting agent harnesses (the "Connected agents" one-click) ───────────
 // Same PATH scan as above, over the clients we know how to wire up. For a `cli`
 // client we can run its own `mcp add` for the user; the argv comes from the
@@ -610,23 +659,13 @@ const settingsInfo = (): SettingsInfo => {
 // Secret Service) this falls back to exactly the previous file behaviour, so
 // nothing breaks; the grants are simply no better protected than before.
 const oauthFile = (id: string): string => join(OAUTH_DIR, `${encodeURIComponent(id)}.json`);
-const readOAuthFile = (id: string): Record<string, string> => {
-  try {
-    if (existsSync(oauthFile(id))) return JSON.parse(readFileSync(oauthFile(id), 'utf8')) as Record<string, string>;
-  } catch {
-    /* corrupt file → start fresh */
-  }
-  return {};
-};
-const writeOAuthFile = (id: string, blob: Record<string, string>): void => {
-  mkdirSync(OAUTH_DIR, { recursive: true });
-  writeFileSync(oauthFile(id), JSON.stringify(blob, null, 2));
-};
 
 /** Keychain entry name for one server's grant blob. */
 const oauthKey = (id: string): string => `oauth:${id}`;
+/** Where a registered OAuth app falls back to when there is no keychain. */
+const appFile = (id: string): string => join(OAUTH_DIR, `${encodeURIComponent(id)}.app.json`);
 /** In-memory cache, so repeated `load()` calls don't each spawn a subprocess. */
-const oauthCache = new Map<string, Record<string, string>>();
+const blobCache = new Map<string, Record<string, string>>();
 /** Whether the keychain is usable. Probed once; false means stay on files. */
 let keychainOk: boolean | undefined;
 const useKeychain = (): boolean => {
@@ -634,54 +673,68 @@ const useKeychain = (): boolean => {
   return keychainOk;
 };
 
-const readOAuth = (id: string): Record<string, string> => {
-  const cached = oauthCache.get(id);
+const readFileBlob = (file: string): Record<string, string> => {
+  try {
+    if (existsSync(file)) return JSON.parse(readFileSync(file, 'utf8')) as Record<string, string>;
+  } catch {
+    /* corrupt file → start fresh */
+  }
+  return {};
+};
+
+const readBlob = (key: string, file: string, migrateLabel?: string): Record<string, string> => {
+  const cached = blobCache.get(key);
   if (cached) return cached;
 
   let blob: Record<string, string> = {};
   if (useKeychain()) {
-    const raw = shell.secretGet(oauthKey(id));
+    const raw = shell.secretGet(key);
     if (raw) {
       try {
         blob = JSON.parse(raw) as Record<string, string>;
       } catch {
         /* corrupt entry → start fresh */
       }
-    } else {
-      // One-time migration: adopt an existing plaintext grant, then delete it.
-      const fromFile = readOAuthFile(id);
-      if (Object.keys(fromFile).length > 0 && shell.secretSet(oauthKey(id), JSON.stringify(fromFile))) {
+    } else if (migrateLabel) {
+      // One-time migration: adopt an existing plaintext blob, then delete it.
+      const fromFile = readFileBlob(file);
+      if (Object.keys(fromFile).length > 0 && shell.secretSet(key, JSON.stringify(fromFile))) {
         blob = fromFile;
         try {
-          rmSync(oauthFile(id));
-          process.stderr.write(`[oauth] moved ${id} grant into the OS keychain\n`);
+          rmSync(file);
+          process.stderr.write(`[oauth] moved ${migrateLabel} into the OS keychain\n`);
         } catch {
           /* best-effort */
         }
       }
     }
   } else {
-    blob = readOAuthFile(id);
+    blob = readFileBlob(file);
   }
-  oauthCache.set(id, blob);
+  blobCache.set(key, blob);
   return blob;
 };
 
-const writeOAuth = (id: string, blob: Record<string, string>): void => {
-  oauthCache.set(id, blob);
-  if (useKeychain() && shell.secretSet(oauthKey(id), JSON.stringify(blob))) return;
-  writeOAuthFile(id, blob);
+const writeBlob = (key: string, file: string, blob: Record<string, string>): void => {
+  blobCache.set(key, blob);
+  if (useKeychain() && shell.secretSet(key, JSON.stringify(blob))) return;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(blob, null, 2));
 };
 
-const secretStore = (id: string): OAuthStore => ({
-  load: (key) => readOAuth(id)[key],
-  save: (key, value) => writeOAuth(id, { ...readOAuth(id), [key]: value }),
-  remove: (key) => {
-    const blob = { ...readOAuth(id) };
-    delete blob[key];
-    writeOAuth(id, blob);
+/** One keychain entry (or file, without a keychain) as a keyed store. */
+const secretStoreFor = (key: string, file: string, migrateLabel?: string): OAuthStore => ({
+  load: (k) => readBlob(key, file, migrateLabel)[k],
+  save: (k, value) => writeBlob(key, file, { ...readBlob(key, file, migrateLabel), [k]: value }),
+  remove: (k) => {
+    const blob = { ...readBlob(key, file, migrateLabel) };
+    delete blob[k];
+    writeBlob(key, file, blob);
   },
 });
+
+/** A server's OAuth grant: tokens, PKCE state, the cached account. */
+const secretStore = (id: string): OAuthStore => secretStoreFor(oauthKey(id), oauthFile(id), `${id} grant`);
 /**
  * Pre-registered OAuth credentials for a provider that lacks dynamic registration
  * (e.g. GitHub). Resolved from the server config, or from env so they can be set
@@ -692,10 +745,61 @@ const secretStore = (id: string): OAuthStore => ({
  */
 const envKey = (prefix: string, id: string): string | undefined =>
   process.env[`${prefix}_${id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`];
-const resolvedClientId = (cfg: ManagedServerConfig): string | undefined => cfg.clientId || envKey('HYPERGATE_CLIENTID', cfg.id);
-const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined => cfg.clientSecret || envKey('HYPERGATE_CLIENTSECRET', cfg.id);
+
+/**
+ * …or registered by the user, in the app.
+ *
+ * Env vars mean whoever packaged Hypergate has to have registered an app with
+ * the provider, and for GitHub nobody has: `github.com/login/oauth` advertises no
+ * `registration_endpoint`, so dynamic registration is impossible and sign-in
+ * simply failed for every user. Registering an OAuth app takes two minutes in a
+ * browser, so the app now walks the user through it once and keeps the result
+ * here — in the same keychain entry as that server's grant, never in servers.json.
+ */
+const K_APP_CLIENT_ID = 'client_id';
+const K_APP_CLIENT_SECRET = 'client_secret';
+/**
+ * The registered app lives in its own keychain entry (`oauth-app:<id>`), not in
+ * the server's grant blob, because the two have different lifetimes: removing a
+ * server is meant to erase the sign-in (v0.16.1's "Remove is the whole eraser"),
+ * while the app is provider configuration the user spent minutes registering at
+ * the provider. Sharing the blob meant one Remove, or one rolled-back add, sent
+ * them back to GitHub's form to make another one.
+ */
+const appStore = (id: string): OAuthStore => secretStoreFor(`oauth-app:${id}`, appFile(id));
+const storedClientId = (id: string): string | undefined => appStore(id).load(K_APP_CLIENT_ID);
+const storedClientSecret = (id: string): string | undefined => appStore(id).load(K_APP_CLIENT_SECRET);
+/**
+ * The full resolution order for the OAuth flow itself: what the packager set,
+ * then what the user registered in the app.
+ */
+const resolvedClientId = (cfg: ManagedServerConfig): string | undefined =>
+  packagerClientId(cfg) || storedClientId(cfg.id);
+const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined =>
+  cfg.clientSecret || envKey('HYPERGATE_CLIENTSECRET', cfg.id) || storedClientSecret(cfg.id);
+/**
+ * Only what a *packager* set, which is the narrower question `usesOAuth` asks.
+ *
+ * A config/env client id is a deliberate statement that this provider's token
+ * entries should really go through OAuth. An app the user registered is not: they
+ * may well have set one up and then chosen "API key or token" anyway, and letting
+ * the stored app answer here turned that explicit choice into a sign-in the user
+ * never asked for, with the pasted token saved and never used.
+ */
+const packagerClientId = (cfg: ManagedServerConfig): string | undefined =>
+  cfg.clientId || envKey('HYPERGATE_CLIENTID', cfg.id);
+/**
+ * Enough of a credential to recognise it, and never enough to use it. A client id
+ * is not a secret, but returning it whole would make the API a way to read one
+ * back out of the keychain, which is a habit worth not having.
+ */
+const maskCredential = (value: string): string =>
+  value.length <= 10 ? `${value.slice(0, 2)}…` : `${value.slice(0, 6)}…${value.slice(-4)}`;
+/** Where a resolved client id came from, for the setup UI to report honestly. */
+const clientIdSource = (cfg: ManagedServerConfig): OAuthAppInfo['source'] =>
+  cfg.clientId ? 'config' : envKey('HYPERGATE_CLIENTID', cfg.id) ? 'env' : storedClientId(cfg.id) ? 'keychain' : undefined;
 /** Token-auth entries can still use OAuth when the user has supplied an app id. */
-const usesOAuth = (cfg: ManagedServerConfig): boolean => cfg.auth === 'oauth' || (cfg.auth === 'token' && !!resolvedClientId(cfg));
+const usesOAuth = (cfg: ManagedServerConfig): boolean => cfg.auth === 'oauth' || (cfg.auth === 'token' && !!packagerClientId(cfg));
 const storedBearerToken = (cfg: ManagedServerConfig): string | undefined => secretStore(cfg.id).load(TOKEN_KEY);
 const makeProvider = (cfg: ManagedServerConfig): HypergateOAuthProvider =>
   new HypergateOAuthProvider(secretStore(cfg.id), {
@@ -765,9 +869,14 @@ const forgetAccount = (id: string): void => {
  * the same server came back already signed in as whoever set it up last, and
  * "remove" quietly meant "hide". A grant is the most sensitive thing we hold
  * on a user's behalf; when they remove the server they are done with it.
+ *
+ * The OAuth *app* the user registered at the provider is deliberately not in
+ * here: it lives in its own entry (see `appStore`), because it is configuration
+ * for the provider rather than part of any one sign-in, and re-registering one is
+ * a trip to the provider's website.
  */
 const deleteOAuth = (id: string): void => {
-  oauthCache.delete(id);
+  blobCache.delete(oauthKey(id));
   accountProbed.delete(id);
   accountMemo.delete(id);
   if (useKeychain()) shell.secretDelete(oauthKey(id));
@@ -984,9 +1093,10 @@ const runOAuth = async (
   } catch (e) {
     let msg = e instanceof Error ? e.message : String(e);
     // The common gotcha: the provider needs a pre-registered app (id [+ secret]).
-    const ID = cfg.id.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    // Answer with what the user can do about it, in the app, rather than with the
+    // env vars a packager would use.
     if (/dynamic client registration/i.test(msg) && !resolvedClientId(cfg))
-      msg = `${cfg.name} doesn't support automatic app registration — it needs a pre-registered OAuth app. Register one (callback ${OAUTH_REDIRECT}) and set HYPERGATE_CLIENTID_${ID} (and HYPERGATE_CLIENTSECRET_${ID} if the provider requires a secret, e.g. GitHub).`;
+      msg = `${cfg.name} doesn't register apps automatically, so browser sign-in needs a one-time OAuth app. Set one up in Hypergate (it takes a couple of minutes and uses the callback ${OAUTH_REDIRECT}), or connect with a token instead.`;
     return { authorized: false, error: msg };
   }
 };
@@ -1436,7 +1546,7 @@ if (STDIO_MODE) {
     }
 
     if (pathname === '/health') return json(res, 200, { ok: true, service: 'hypergated', version: VERSION, servers: supervisor.list().length });
-    if (pathname === '/api/registry') return json(res, 200, REGISTRY);
+    if (pathname === '/api/registry') return json(res, 200, withAdvice(REGISTRY));
 
     // Search the official MCP Registry. The one deliberate outbound call, and only
     // on an explicit user search — never on boot. Soft-fails to [] so the UI degrades.
@@ -1446,7 +1556,7 @@ if (STDIO_MODE) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 8000);
       try {
-        return json(res, 200, await searchRegistry(q, { limit, signal: ctrl.signal }));
+        return json(res, 200, withAdvice(await searchRegistry(q, { limit, signal: ctrl.signal })));
       } catch (e) {
         process.stderr.write(`[registry] search failed: ${e instanceof Error ? e.message : String(e)}\n`);
         return json(res, 200, []);
@@ -1476,6 +1586,30 @@ if (STDIO_MODE) {
 
     // CLIs section: which command-line tools are installed (local, no network).
     if (pathname === '/api/clis' && req.method === 'GET') return json(res, 200, await detectClisCached());
+    // The curated CLI catalog with install routes for this platform. Local too:
+    // the rows are built in, only `/api/clis/search` reaches out.
+    if (pathname === '/api/clis/catalog' && req.method === 'GET') return json(res, 200, await cliCatalog());
+    // Look up an installable CLI. The second deliberate outbound search (after the
+    // MCP registry), on the same terms: only when the user types, bounded, and
+    // soft-failing to the curated matches so the section still answers offline.
+    if (pathname === '/api/clis/search' && req.method === 'GET') {
+      const q = (url.searchParams.get('q') ?? '').trim();
+      if (!q) return json(res, 200, []);
+      const limit = Math.min(20, Math.max(1, Number(url.searchParams.get('limit')) || 6));
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        return json(res, 200, await searchClis(q, limit, ctrl.signal));
+      } catch (e) {
+        process.stderr.write(`[clis] search failed: ${e instanceof Error ? e.message : String(e)}\n`);
+        const curated = await Promise.all(
+          KNOWN_CLIS.filter((tool) => matchesCli(tool, q)).map((tool) => annotateCli(cliCatalogEntry(tool, process.platform))),
+        );
+        return json(res, 200, curated);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
     // Ad-hoc "is <name> available?" search. Name is validated to a safe charset
     // and only used for a PATH filename lookup — never passed to a shell.
     if (pathname === '/api/clis/check' && req.method === 'GET') {
@@ -1934,10 +2068,12 @@ if (STDIO_MODE) {
       const cfg = servers.find((s) => s.id === authM[1]);
       if (!cfg) return json(res, 404, { error: 'not_found' });
       if (cfg.runtime !== 'remote') return json(res, 400, { error: 'not a remote server' });
-      if (cfg.auth === 'token' && !resolvedClientId(cfg))
+      if (cfg.auth === 'token' && !packagerClientId(cfg))
         return json(res, 200, supervisor.markAuthorizing(cfg, `Paste a ${cfg.name} access token to connect.`));
       // A token entry that got here is on the client-id escape hatch, and stays
-      // a token entry: the hatch is derived from the env, never written down.
+      // a token entry. The hatch is only what a packager set (config or env): an
+      // app the *user* registered must never convert a connection they explicitly
+      // chose to authenticate with a pasted token.
       if (cfg.auth !== 'token') cfg.auth = cfg.auth === 'none' ? 'none' : 'oauth';
       const result = await runOAuth(cfg);
       if (result.authorized) {
@@ -1948,6 +2084,84 @@ if (STDIO_MODE) {
       }
       supervisor.markAuthorizing(cfg);
       return json(res, 200, { ...statusFor(cfg), authUrl: result.authUrl, error: result.error } as ServerStatus);
+    }
+
+    // ── the one-time OAuth app, for providers that don't register one for you ──
+    // Read: is an app configured for this provider, where did it come from, and
+    // what redirect URI does this daemon actually use (the provider's form wants
+    // it character-for-character, and the port is not always 7777).
+    //
+    // The id names a *catalog* entry, not a managed server, because the setup
+    // happens before the server is added: it is the thing that makes adding it
+    // work. Only ids we ship an entry for are answerable, so this can't be used
+    // to fish around the keychain.
+    const oauthAppM = /^\/api\/oauth\/app\/([A-Za-z0-9._-]{1,64})$/.exec(pathname);
+    if (oauthAppM) {
+      const id = oauthAppM[1];
+      const entry = REGISTRY.find((e) => e.id === id);
+      if (!entry) return json(res, 404, { error: 'unknown_provider' });
+      const cfg = servers.find((s) => s.id === id) ?? ({ id, name: entry.name } as ManagedServerConfig);
+      const requirement = registryConnections(entry).find((connection) => connection.oauthApp)?.oauthApp ?? entry.oauthApp;
+
+      if (req.method === 'GET') {
+        const clientId = resolvedClientId(cfg);
+        const info: OAuthAppInfo = {
+          serverId: id,
+          configured: !!clientId,
+          source: clientIdSource(cfg),
+          clientIdHint: clientId ? maskCredential(clientId) : undefined,
+          hasSecret: !!resolvedClientSecret(cfg),
+          redirectUri: OAUTH_REDIRECT,
+          storage: useKeychain() ? 'keychain' : 'file',
+          requirement,
+        };
+        return json(res, 200, info);
+      }
+      // Writing one is guarded exactly like /api/shutdown, and for the same
+      // reason: `/api/*` is unauthenticated on localhost and every reply carries
+      // `Access-Control-Allow-Origin: *`, so without this any page the user
+      // visits could plant its own client id and send the next sign-in to an app
+      // it controls, or delete the app they registered. The token alone would be
+      // theatre (`/api/gateway` hands it to any local caller), so the same-origin
+      // check on the Origin header is the actual barrier: absent means not a
+      // browser, and foreign or `null` is refused.
+      if (req.method === 'POST' || req.method === 'DELETE') {
+        if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
+        if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      }
+      if (req.method === 'POST') {
+        try {
+          const body = JSON.parse(await readBody(req)) as { clientId?: unknown; clientSecret?: unknown };
+          const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+          const clientSecret = typeof body.clientSecret === 'string' ? body.clientSecret.trim() : '';
+          if (!clientId) return json(res, 400, { error: 'clientId required' });
+          if (requirement?.secretRequired && !clientSecret)
+            return json(res, 400, { error: `${entry.name} requires a client secret as well as a client ID.` });
+          const store = appStore(id);
+          store.save(K_APP_CLIENT_ID, clientId);
+          if (clientSecret) store.save(K_APP_CLIENT_SECRET, clientSecret);
+          else store.remove(K_APP_CLIENT_SECRET);
+          // A previous attempt can leave a dynamically-registered client and a
+          // half-finished PKCE flow behind in the *grant*; both would outlive what
+          // was just saved, so the next sign-in starts from the user's own app.
+          // `'client'` is the SDK's own key for that registration (core/oauth.ts).
+          secretStore(id).remove('client');
+          makeProvider(cfg).clearFlowState();
+          process.stderr.write(`[oauth] stored an OAuth app for ${id} (${useKeychain() ? 'keychain' : 'file'})\n`);
+          return json(res, 200, { ok: true, configured: true });
+        } catch {
+          return json(res, 400, { error: 'invalid_json' });
+        }
+      }
+      if (req.method === 'DELETE') {
+        const store = appStore(id);
+        store.remove(K_APP_CLIENT_ID);
+        store.remove(K_APP_CLIENT_SECRET);
+        // Clearing the app also drops any auto-registered client, so a later
+        // sign-in cannot quietly fall back to a registration nobody remembers.
+        secretStore(id).remove('client');
+        return json(res, 200, { ok: true });
+      }
     }
 
     // Set or replace a bearer credential without ever putting it in the server

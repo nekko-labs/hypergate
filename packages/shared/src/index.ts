@@ -41,6 +41,8 @@ export interface RegistryConnection {
   tokenUrl?: string;
   requires?: string[];
   note?: string;
+  /** Set when this connection's OAuth needs an app registered once (no dynamic registration). */
+  oauthApp?: OAuthAppRequirement;
 }
 
 /**
@@ -260,13 +262,94 @@ export interface RegistryEntry {
    * daemon's `/api/registry/popularity` when the catalog opens; absent until then.
    */
   popularity?: number;
+  /**
+   * This provider registers no OAuth clients for itself, so browser sign-in needs
+   * an app registered once — by the packager (env / `clientId`) or by the user, in
+   * the app. Its presence is what lets the UI offer that setup instead of failing.
+   */
+  oauthApp?: OAuthAppRequirement;
   /** Alternative connection configurations for this logical server. */
   connections?: RegistryConnection[];
+  /**
+   * Whether this is the approach the provider itself recommends, stated in one
+   * sentence under the row. Computed by the daemon (see `@hypergate/core`'s
+   * `adviceForServer`) so the same verdict backs the UI and the CLI.
+   */
+  advice?: Advice;
+}
+
+/**
+ * A provider with no dynamic client registration: browser sign-in needs an OAuth
+ * app registered once, either by whoever packaged Hypergate (env/catalog) or by
+ * the user in the app. Present on an entry, it tells the UI it can offer that
+ * setup instead of failing the add.
+ */
+export interface OAuthAppRequirement {
+  /** The provider's "register a new OAuth app" page. */
+  registerUrl: string;
+  /** True when the provider also demands client authentication at the token endpoint (GitHub does, even with PKCE). */
+  secretRequired?: boolean;
+  /** Provider documentation for the registration, when it has a dedicated page. */
+  docsUrl?: string;
+  /** What to put in the app's name/description fields, when the provider is fussy. */
+  hint?: string;
+}
+
+/** Whether a configured OAuth app exists for a provider, and where it came from. */
+export interface OAuthAppInfo {
+  serverId: string;
+  configured: boolean;
+  /** `config` = in servers.json, `env` = HYPERGATE_CLIENTID_*, `keychain` = set up in the app. */
+  source?: 'config' | 'env' | 'keychain';
+  /** First and last few characters only — enough to recognise, never the whole id. */
+  clientIdHint?: string;
+  /** Whether a client secret is stored alongside it. */
+  hasSecret?: boolean;
+  /** The exact redirect URI this daemon will use, for pasting into the provider's form. */
+  redirectUri: string;
+  /** Where credentials would be stored if saved now. */
+  storage: 'keychain' | 'file';
+  requirement?: OAuthAppRequirement;
+}
+
+/**
+ * "Is this the right thing to install?" — the one-sentence verdict shown directly
+ * under a search result, and the whole point of the search being trustworthy:
+ *
+ * - `official` — published by the vendor it claims to be from. Go ahead.
+ * - `recommended` — official *and* the approach that vendor points agents at.
+ * - `verified` — we know who published it, but not that they are the service's
+ *   own vendor (a domain-verified third-party wrapper).
+ * - `superseded` — real, but the provider now recommends something else (`prefer`).
+ * - `deprecated` — the maintainer has marked it deprecated, in their own words.
+ * - `community` — a third-party implementation of someone else's service.
+ * - `unverified` — nothing about the publisher could be established.
+ */
+export type AdviceKind = 'recommended' | 'official' | 'verified' | 'superseded' | 'deprecated' | 'community' | 'unverified';
+
+/** What to use instead, when this result isn't the recommended path. */
+export interface AdvicePreference {
+  name: string;
+  /** A curated catalog id, when the alternative is something Hypergate ships. */
+  entryId?: string;
+  /** Which catalog the alternative lives in. */
+  kind?: 'mcp' | 'cli';
+  /** A ready-to-run install command, for a CLI alternative. */
+  install?: string;
+  /** Docs for the alternative. */
+  url?: string;
+}
+
+export interface Advice {
+  kind: AdviceKind;
+  /** One sentence, written for the person deciding whether to click Add. */
+  message: string;
+  prefer?: AdvicePreference;
 }
 
 const registryConnectionFields = [
   'runtime', 'command', 'args', 'image', 'url', 'transport', 'auth', 'clientId',
-  'scope', 'tokenLabel', 'tokenUrl', 'requires', 'note',
+  'scope', 'tokenLabel', 'tokenUrl', 'requires', 'note', 'oauthApp',
 ] as const;
 
 /** Return the available connection options, including a synthesized default. */
@@ -344,6 +427,52 @@ export interface CliTool {
   install?: string;
   /** Args used to read the version; defaults to `['--version']`. */
   versionArgs?: string[];
+  /** First-party tool from the vendor it says it's from (hand-set on curated entries, derived on looked-up ones). */
+  official?: boolean;
+  /** In Hypergate's recommended set for agent work — sorts first, gets a ★. */
+  recommended?: boolean;
+  /** Who publishes it: an npm scope/owner, a Homebrew tap, or a vendor name. */
+  publisher?: string;
+}
+
+/** Which catalog an installable CLI was found in. */
+export type CliChannel = 'curated' | 'npm' | 'brew';
+
+/** One way to install a tool, ready to copy. `platforms` limits where it applies. */
+export interface CliInstallOption {
+  /** How it's obtained: `npm`, `Homebrew`, `winget`, `download`… */
+  label: string;
+  /** The exact command to run, or a URL when there is no command. */
+  command: string;
+  platforms?: string[];
+}
+
+/**
+ * A command-line tool you could install — the CLI equivalent of a catalog
+ * entry. Curated ones ship with Hypergate; the rest come from a lookup against
+ * the npm registry or Homebrew's formulae API when the user searches (see
+ * SPEC §3.3, and `cli-search.ts` for why those two are the authoritative
+ * sources). Never fetched on boot.
+ */
+export interface CliCatalogEntry extends CliTool {
+  channel: CliChannel;
+  /** The package/formula id in its channel (`@playwright/cli`, `jq`). */
+  package?: string;
+  /** Latest published version, when the channel states one. */
+  latest?: string;
+  /** Popularity in its own channel: npm downloads/month, or Homebrew 30-day installs. */
+  popularity?: number;
+  /** The maintainer's own deprecation notice, verbatim. */
+  deprecated?: string;
+  /** Install routes, best-first for the machine that asked. */
+  installs?: CliInstallOption[];
+  /** Whether the command was on PATH when this result was assembled. */
+  installed?: boolean;
+  /** Version found on PATH, when installed. */
+  version?: string;
+  /** Absolute path on PATH, when installed. */
+  path?: string;
+  advice?: Advice;
 }
 
 /** Detection result for a known CLI: is it on PATH, where, and what version. */
