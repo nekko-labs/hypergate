@@ -46,15 +46,25 @@ describe('REGISTRY catalog', () => {
       homepage: 'https://github.com/github/github-mcp-server',
     });
     expect(registryEntry('github')?.connections?.map((connection) => connection.id)).toEqual(['oauth', 'token', 'local']);
-    expect(registryEntry('github')?.connections?.[0]).toMatchObject({ label: 'Auto-connect', auth: 'oauth' });
+    // GitHub has no dynamic client registration, so the OAuth option has to carry
+    // the one-time app setup with it or it can only ever fail.
+    expect(registryEntry('github')?.connections?.[0]).toMatchObject({
+      label: 'Sign in with GitHub',
+      auth: 'oauth',
+      oauthApp: { registerUrl: 'https://github.com/settings/applications/new', secretRequired: true },
+    });
+    expect(registryEntry('github')?.oauthApp?.secretRequired).toBe(true);
     expect(registryEntry('github')?.connections?.[1]).toMatchObject({
       label: 'API key or token',
       auth: 'token',
       tokenLabel: 'GitHub personal access token',
     });
+    // Running it locally means GitHub's own image, not the npm reference server —
+    // that package is marked "no longer supported" on npm.
     expect(registryEntry('github')?.connections?.[2]).toMatchObject({
       label: 'Run locally',
-      runtime: 'process',
+      runtime: 'docker',
+      image: 'ghcr.io/github/github-mcp-server',
       requires: ['GITHUB_PERSONAL_ACCESS_TOKEN'],
     });
     expect(registryEntry('github-pat')).toBeUndefined();

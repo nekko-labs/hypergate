@@ -5,6 +5,8 @@ export * from './proxy.js';
 export * from './registry.js';
 export * from './registry-search.js';
 export * from './clis.js';
+export * from './cli-search.js';
+export * from './advice.js';
 export * from './connect.js';
 export * from './agents.js';
 export * from './oauth.js';

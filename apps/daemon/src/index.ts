@@ -21,6 +21,11 @@ import {
   REGISTRY,
   searchRegistry,
   KNOWN_CLIS,
+  adviceForCli,
+  adviceForServer,
+  cliCatalogEntry,
+  matchesCli,
+  searchCliCatalog,
   CONNECT_TARGETS,
   ENTRY_NAME,
   agentConnectTarget,
@@ -51,6 +56,7 @@ import {
   userinfoEndpoint,
   type OAuthStore,
 } from '@hypergate/core';
+import { registryConnections } from '@hypergate/shared';
 import { openStore } from './store.ts';
 import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
@@ -68,7 +74,9 @@ import type {
   RegistryEntry,
   PopularityMap,
   CliStatus,
+  CliCatalogEntry,
   CliCheckResult,
+  OAuthAppInfo,
   ConnectTargetStatus,
   ConnectTargetsInfo,
   AgentConnectInfo,
@@ -522,6 +530,47 @@ const detectClisCached = async (): Promise<CliStatus[]> => {
   return result;
 };
 
+/**
+ * Looking up a tool you could install (as opposed to detecting one you have).
+ *
+ * The lookup itself is in core (npm registry + Homebrew formulae — see
+ * cli-search.ts for why those two). Here we add the two things only the daemon
+ * knows: whether the command is already on this machine, and the verdict on
+ * whether it's the tool the vendor actually recommends.
+ *
+ * `installed` is set to `true` or left absent, never `false`, for a looked-up
+ * Homebrew formula: the API doesn't list a formula's executables, so `ripgrep`
+ * installing `rg` would otherwise be reported as missing. Curated and npm entries
+ * carry a real command, so those can answer both ways.
+ */
+const annotateCli = async (entry: CliCatalogEntry): Promise<CliCatalogEntry> => {
+  const path = resolveOnPath(entry.command);
+  const known = path
+    ? { installed: true, path, version: await probeVersion(path, entry.versionArgs ?? ['--version']) }
+    : entry.channel === 'brew'
+      ? {}
+      : { installed: false };
+  const annotated = { ...entry, ...known };
+  return { ...annotated, advice: adviceForCli(annotated) };
+};
+
+const searchClis = async (query: string, limit: number, signal: AbortSignal): Promise<CliCatalogEntry[]> => {
+  const found = await searchCliCatalog(query, { limit, signal, platform: process.platform });
+  return Promise.all(found.map(annotateCli));
+};
+
+/** Curated catalog rows, so the CLI section can offer tools with no search typed. */
+const cliCatalog = async (): Promise<CliCatalogEntry[]> =>
+  Promise.all(KNOWN_CLIS.map((tool) => annotateCli(cliCatalogEntry(tool, process.platform))));
+
+/**
+ * The catalog with its trust verdicts attached. Computed here rather than in the
+ * browser so the UI, the CLI and any future surface read the same sentence, and
+ * so `@hypergate/core` never has to be bundled into the web app.
+ */
+const withAdvice = (entries: RegistryEntry[]): RegistryEntry[] =>
+  entries.map((entry) => ({ ...entry, advice: adviceForServer(entry) }));
+
 // ── connecting agent harnesses (the "Connected agents" one-click) ───────────
 // Same PATH scan as above, over the clients we know how to wire up. For a `cli`
 // client we can run its own `mcp add` for the user; the argv comes from the
@@ -692,8 +741,35 @@ const secretStore = (id: string): OAuthStore => ({
  */
 const envKey = (prefix: string, id: string): string | undefined =>
   process.env[`${prefix}_${id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`];
-const resolvedClientId = (cfg: ManagedServerConfig): string | undefined => cfg.clientId || envKey('HYPERGATE_CLIENTID', cfg.id);
-const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined => cfg.clientSecret || envKey('HYPERGATE_CLIENTSECRET', cfg.id);
+
+/**
+ * …or registered by the user, in the app.
+ *
+ * Env vars mean whoever packaged Hypergate has to have registered an app with
+ * the provider, and for GitHub nobody has: `github.com/login/oauth` advertises no
+ * `registration_endpoint`, so dynamic registration is impossible and sign-in
+ * simply failed for every user. Registering an OAuth app takes two minutes in a
+ * browser, so the app now walks the user through it once and keeps the result
+ * here — in the same keychain entry as that server's grant, never in servers.json.
+ */
+const K_APP_CLIENT_ID = 'app_client_id';
+const K_APP_CLIENT_SECRET = 'app_client_secret';
+const storedClientId = (id: string): string | undefined => secretStore(id).load(K_APP_CLIENT_ID);
+const storedClientSecret = (id: string): string | undefined => secretStore(id).load(K_APP_CLIENT_SECRET);
+const resolvedClientId = (cfg: ManagedServerConfig): string | undefined =>
+  cfg.clientId || envKey('HYPERGATE_CLIENTID', cfg.id) || storedClientId(cfg.id);
+const resolvedClientSecret = (cfg: ManagedServerConfig): string | undefined =>
+  cfg.clientSecret || envKey('HYPERGATE_CLIENTSECRET', cfg.id) || storedClientSecret(cfg.id);
+/**
+ * Enough of a credential to recognise it, and never enough to use it. A client id
+ * is not a secret, but returning it whole would make the API a way to read one
+ * back out of the keychain, which is a habit worth not having.
+ */
+const maskCredential = (value: string): string =>
+  value.length <= 10 ? `${value.slice(0, 2)}…` : `${value.slice(0, 6)}…${value.slice(-4)}`;
+/** Where a resolved client id came from, for the setup UI to report honestly. */
+const clientIdSource = (cfg: ManagedServerConfig): OAuthAppInfo['source'] =>
+  cfg.clientId ? 'config' : envKey('HYPERGATE_CLIENTID', cfg.id) ? 'env' : storedClientId(cfg.id) ? 'keychain' : undefined;
 /** Token-auth entries can still use OAuth when the user has supplied an app id. */
 const usesOAuth = (cfg: ManagedServerConfig): boolean => cfg.auth === 'oauth' || (cfg.auth === 'token' && !!resolvedClientId(cfg));
 const storedBearerToken = (cfg: ManagedServerConfig): string | undefined => secretStore(cfg.id).load(TOKEN_KEY);
@@ -984,9 +1060,10 @@ const runOAuth = async (
   } catch (e) {
     let msg = e instanceof Error ? e.message : String(e);
     // The common gotcha: the provider needs a pre-registered app (id [+ secret]).
-    const ID = cfg.id.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    // Answer with what the user can do about it, in the app, rather than with the
+    // env vars a packager would use.
     if (/dynamic client registration/i.test(msg) && !resolvedClientId(cfg))
-      msg = `${cfg.name} doesn't support automatic app registration — it needs a pre-registered OAuth app. Register one (callback ${OAUTH_REDIRECT}) and set HYPERGATE_CLIENTID_${ID} (and HYPERGATE_CLIENTSECRET_${ID} if the provider requires a secret, e.g. GitHub).`;
+      msg = `${cfg.name} doesn't register apps automatically, so browser sign-in needs a one-time OAuth app. Set one up in Hypergate (it takes a couple of minutes and uses the callback ${OAUTH_REDIRECT}), or connect with a token instead.`;
     return { authorized: false, error: msg };
   }
 };
@@ -1436,7 +1513,7 @@ if (STDIO_MODE) {
     }
 
     if (pathname === '/health') return json(res, 200, { ok: true, service: 'hypergated', version: VERSION, servers: supervisor.list().length });
-    if (pathname === '/api/registry') return json(res, 200, REGISTRY);
+    if (pathname === '/api/registry') return json(res, 200, withAdvice(REGISTRY));
 
     // Search the official MCP Registry. The one deliberate outbound call, and only
     // on an explicit user search — never on boot. Soft-fails to [] so the UI degrades.
@@ -1446,7 +1523,7 @@ if (STDIO_MODE) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 8000);
       try {
-        return json(res, 200, await searchRegistry(q, { limit, signal: ctrl.signal }));
+        return json(res, 200, withAdvice(await searchRegistry(q, { limit, signal: ctrl.signal })));
       } catch (e) {
         process.stderr.write(`[registry] search failed: ${e instanceof Error ? e.message : String(e)}\n`);
         return json(res, 200, []);
@@ -1476,6 +1553,30 @@ if (STDIO_MODE) {
 
     // CLIs section: which command-line tools are installed (local, no network).
     if (pathname === '/api/clis' && req.method === 'GET') return json(res, 200, await detectClisCached());
+    // The curated CLI catalog with install routes for this platform. Local too:
+    // the rows are built in, only `/api/clis/search` reaches out.
+    if (pathname === '/api/clis/catalog' && req.method === 'GET') return json(res, 200, await cliCatalog());
+    // Look up an installable CLI. The second deliberate outbound search (after the
+    // MCP registry), on the same terms: only when the user types, bounded, and
+    // soft-failing to the curated matches so the section still answers offline.
+    if (pathname === '/api/clis/search' && req.method === 'GET') {
+      const q = (url.searchParams.get('q') ?? '').trim();
+      if (!q) return json(res, 200, []);
+      const limit = Math.min(20, Math.max(1, Number(url.searchParams.get('limit')) || 6));
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        return json(res, 200, await searchClis(q, limit, ctrl.signal));
+      } catch (e) {
+        process.stderr.write(`[clis] search failed: ${e instanceof Error ? e.message : String(e)}\n`);
+        const curated = await Promise.all(
+          KNOWN_CLIS.filter((tool) => matchesCli(tool, q)).map((tool) => annotateCli(cliCatalogEntry(tool, process.platform))),
+        );
+        return json(res, 200, curated);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
     // Ad-hoc "is <name> available?" search. Name is validated to a safe charset
     // and only used for a PATH filename lookup — never passed to a shell.
     if (pathname === '/api/clis/check' && req.method === 'GET') {
@@ -1948,6 +2049,68 @@ if (STDIO_MODE) {
       }
       supervisor.markAuthorizing(cfg);
       return json(res, 200, { ...statusFor(cfg), authUrl: result.authUrl, error: result.error } as ServerStatus);
+    }
+
+    // ── the one-time OAuth app, for providers that don't register one for you ──
+    // Read: is an app configured for this provider, where did it come from, and
+    // what redirect URI does this daemon actually use (the provider's form wants
+    // it character-for-character, and the port is not always 7777).
+    //
+    // The id names a *catalog* entry, not a managed server, because the setup
+    // happens before the server is added: it is the thing that makes adding it
+    // work. Only ids we ship an entry for are answerable, so this can't be used
+    // to fish around the keychain.
+    const oauthAppM = /^\/api\/oauth\/app\/([A-Za-z0-9._-]{1,64})$/.exec(pathname);
+    if (oauthAppM) {
+      const id = oauthAppM[1];
+      const entry = REGISTRY.find((e) => e.id === id);
+      if (!entry) return json(res, 404, { error: 'unknown_provider' });
+      const cfg = servers.find((s) => s.id === id) ?? ({ id, name: entry.name } as ManagedServerConfig);
+      const requirement = registryConnections(entry).find((connection) => connection.oauthApp)?.oauthApp ?? entry.oauthApp;
+
+      if (req.method === 'GET') {
+        const clientId = resolvedClientId(cfg);
+        const info: OAuthAppInfo = {
+          serverId: id,
+          configured: !!clientId,
+          source: clientIdSource(cfg),
+          clientIdHint: clientId ? maskCredential(clientId) : undefined,
+          hasSecret: !!resolvedClientSecret(cfg),
+          redirectUri: OAUTH_REDIRECT,
+          storage: useKeychain() ? 'keychain' : 'file',
+          requirement,
+        };
+        return json(res, 200, info);
+      }
+      if (req.method === 'POST') {
+        try {
+          const body = JSON.parse(await readBody(req)) as { clientId?: unknown; clientSecret?: unknown };
+          const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+          const clientSecret = typeof body.clientSecret === 'string' ? body.clientSecret.trim() : '';
+          if (!clientId) return json(res, 400, { error: 'clientId required' });
+          if (requirement?.secretRequired && !clientSecret)
+            return json(res, 400, { error: `${entry.name} requires a client secret as well as a client ID.` });
+          const store = secretStore(id);
+          store.save(K_APP_CLIENT_ID, clientId);
+          if (clientSecret) store.save(K_APP_CLIENT_SECRET, clientSecret);
+          else store.remove(K_APP_CLIENT_SECRET);
+          // A previous failed attempt can leave a dynamically-registered client and
+          // a half-finished PKCE flow behind; both would win over what was just
+          // saved, so the next sign-in starts from the app the user registered.
+          store.remove('client_information');
+          makeProvider(cfg).clearFlowState();
+          process.stderr.write(`[oauth] stored an OAuth app for ${id} (${useKeychain() ? 'keychain' : 'file'})\n`);
+          return json(res, 200, { ok: true, configured: true });
+        } catch {
+          return json(res, 400, { error: 'invalid_json' });
+        }
+      }
+      if (req.method === 'DELETE') {
+        const store = secretStore(id);
+        store.remove(K_APP_CLIENT_ID);
+        store.remove(K_APP_CLIENT_SECRET);
+        return json(res, 200, { ok: true });
+      }
     }
 
     // Set or replace a bearer credential without ever putting it in the server
