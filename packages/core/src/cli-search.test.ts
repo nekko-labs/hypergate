@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { binCommand, categoryFor, lookupBrewFormula, mapBrewFormula, mapNpmCli, searchCliCatalog, searchCuratedClis, searchNpmClis } from './cli-search.js';
+import { binCommand, categoryFor, lookupBrewFormula, mapBrewFormula, mapNpmCli, publisherOf, searchCliCatalog, searchCuratedClis, searchNpmClis } from './cli-search.js';
 import { cliCatalogEntry, KNOWN_CLIS, knownCli, matchesCli, sortCliCatalog } from './clis.js';
 import type { CliCatalogEntry } from '@hypergate/shared';
 
@@ -233,5 +233,17 @@ describe('sortCliCatalog', () => {
       entry('star', { recommended: true }),
     ]);
     expect(sorted.map((e) => e.id)).toEqual(['star', 'plain', 'npm-one', 'brew-one', 'dead']);
+  });
+});
+
+describe('publisherOf', () => {
+  it('names the repository owner rather than the CI account that pushed', () => {
+    expect(publisherOf({ repository: { url: 'git+https://github.com/microsoft/playwright-cli.git' } }, 'GitHub Actions')).toBe('microsoft on GitHub');
+  });
+
+  it('falls back to the npm publisher, unless it is a CI robot', () => {
+    expect(publisherOf({}, 'sindresorhus')).toBe('sindresorhus');
+    expect(publisherOf({ author: 'A Human' }, 'github-actions')).toBe('A Human');
+    expect(publisherOf({}, 'GitHub Actions')).toBeUndefined();
   });
 });

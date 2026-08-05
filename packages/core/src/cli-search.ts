@@ -77,6 +77,23 @@ const repoUrl = (manifest: NpmManifest): string | undefined => {
   return raw?.replace(/^git\+/, '').replace(/\.git$/, '');
 };
 
+/**
+ * Who to name as the publisher.
+ *
+ * npm's search index reports the account that *pushed* the release, which for
+ * anything with CI is literally "GitHub Actions" — true, and no help at all to
+ * someone deciding whether a package is Microsoft's. The repository owner is the
+ * more useful answer and the one a person would go and check, so it wins when
+ * there is one.
+ */
+export function publisherOf(manifest: NpmManifest, npmPublisher?: string): string | undefined {
+  const owner = repoUrl(manifest)?.match(/github\.com[/:]([^/]+)/i)?.[1];
+  if (owner) return `${owner} on GitHub`;
+  if (npmPublisher && !/^github[ -]?actions$/i.test(npmPublisher)) return npmPublisher;
+  const author = typeof manifest.author === 'string' ? manifest.author : manifest.author?.name;
+  return author;
+}
+
 /** How to categorise a looked-up tool, from the words it describes itself with. */
 export function categoryFor(text: string): string {
   const t = text.toLowerCase();
@@ -112,7 +129,7 @@ export function mapNpmCli(
     latest: manifest.version,
     deprecated: manifest.deprecated,
     homepage: manifest.homepage ?? meta.links?.homepage ?? repoUrl(manifest),
-    publisher: meta.publisher,
+    publisher: publisherOf(manifest, meta.publisher),
     installs,
     install: installs[0].command,
   };

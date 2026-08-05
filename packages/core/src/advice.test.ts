@@ -135,3 +135,17 @@ describe('officialAlternative', () => {
     expect(officialAlternative('delinearize matrices')).toBeUndefined();
   });
 });
+
+describe('unscoped official packages', () => {
+  it('does not call Microsoft’s own `playwright` package a lookalike', () => {
+    const advice = adviceForCli(cli({ name: 'playwright', package: 'playwright', publisher: 'microsoft on GitHub' }));
+    expect(advice.kind).toBe('official');
+    expect(advice.message).toContain('Microsoft');
+  });
+
+  it('suggests rather than scolds when only the description mentions the service', () => {
+    const advice = adviceForCli(cli({ name: 'storybook-archiver', package: '@someone/storybook-archiver', description: 'archives with playwright' }));
+    expect(advice.kind).toBe('unverified');
+    expect(advice.prefer?.entryId).toBe('playwright-cli');
+  });
+});

@@ -64,9 +64,26 @@ export const VENDOR_SCOPES: Record<string, string> = {
   '@types': 'DefinitelyTyped',
 };
 
-/** The vendor behind an npm scope, when we can name one. */
+/**
+ * Unscoped packages that *are* the vendor's, name by name.
+ *
+ * A scope is self-verifying; a bare name is not, so each of these was checked
+ * against the project's own repository and homepage. The list has to exist at all
+ * because several of the most official CLIs there are predate npm scopes — calling
+ * `playwright` an unverified lookalike of Playwright would be worse than saying
+ * nothing.
+ */
+export const VENDOR_PACKAGES: Record<string, string> = {
+  playwright: 'Microsoft (Playwright)',
+  'playwright-core': 'Microsoft (Playwright)',
+  wrangler: 'Cloudflare',
+  vercel: 'Vercel',
+  supabase: 'Supabase',
+};
+
+/** The vendor behind an npm package name, when we can name one. */
 export const vendorForPackage = (pkg: string): string | undefined =>
-  pkg.startsWith('@') ? VENDOR_SCOPES[pkg.split('/')[0]] : undefined;
+  pkg.startsWith('@') ? VENDOR_SCOPES[pkg.split('/')[0]] : VENDOR_PACKAGES[pkg];
 
 /**
  * Where a provider's own recommendation differs from what a search turns up.
@@ -262,27 +279,38 @@ export function adviceForCli(entry: CliCatalogEntry): Advice {
   if (vendor) {
     return {
       kind: 'official',
-      message: `Official. Published to the ${entry.package?.split('/')[0]} npm scope, which only ${vendor} can publish to.`,
+      message: entry.package?.startsWith('@')
+        ? `Official. Published to the ${entry.package.split('/')[0]} npm scope, which only ${vendor} can publish to.`
+        : `Official. ${vendor}'s own package, checked against its repository.`,
     };
   }
 
   if (entry.channel === 'brew') {
     return {
       kind: 'official',
-      message: `In Homebrew core, built from ${entry.homepage ? 'the upstream project' : 'upstream'}'s own release. Homebrew reviews what goes in, though the project doesn't endorse this route specifically.`,
+      message: `In Homebrew core, built from the upstream project's own release. Homebrew reviews what goes in, though the project doesn't endorse this route specifically.`,
     };
   }
 
-  if (alternative) {
+  // Wearing the service's name and not being it is a different thing from merely
+  // mentioning it: `some-playwright-runner` invites the mistake, while a Chromatic
+  // integration for Playwright is its own tool that happens to work with one. Both
+  // get told where the official route is; only the first is told not to take this one.
+  const impersonates = officialAlternative(`${entry.name} ${entry.package ?? ''} ${entry.command}`);
+  const who = entry.publisher ? ` (${entry.publisher})` : '';
+  if (impersonates) {
     return {
       kind: 'superseded',
-      message: `Unverified publisher${entry.publisher ? ` (${entry.publisher})` : ''}, and ${alternative.reason} — take the official route instead.`,
-      prefer: alternative.prefer,
+      message: `Not verifiably first-party${who}, and ${impersonates.reason}. Use the official route if what you want is the service itself.`,
+      prefer: impersonates.prefer,
     };
   }
 
   return {
     kind: 'unverified',
-    message: `Hypergate can't tie ${entry.publisher ? `${entry.publisher} ` : 'this publisher '}to the project it claims to be from. Check the repository before installing.`,
+    message: alternative
+      ? `Hypergate can't tie this publisher${who} to a project it names. It may be exactly what you want; ${alternative.reason}, if that's what you were after.`
+      : `Hypergate can't tie this publisher${who} to the project it claims to be from. Check the repository before installing.`,
+    prefer: alternative?.prefer,
   };
 }
