@@ -36,7 +36,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogConsole } from './components/LogConsole';
 import { ThemeSwitch } from './components/ThemeSwitch';
 import { WindowButtons } from './components/WindowButtons';
-import { beginWindowDrag, inShell, shell, toggleMaximizeOnDoubleClick } from './lib/shell';
+import { inShell, onTitleBarMouseDown, shell } from './lib/shell';
 import { OAuthAppDialog } from './components/servers/OAuthAppDialog';
 import { TokenDialog } from './components/servers/TokenDialog';
 import { useToast } from './toast';
@@ -573,7 +573,7 @@ export function App() {
           sits in the top-left corner of the window, the controls run to the
           top-right, and the window buttons continue that line rather than
           living in a frame above it. In a browser it is simply the top bar. */}
-      <header className="topbar" onMouseDown={beginWindowDrag} onDoubleClick={toggleMaximizeOnDoubleClick}>
+      <header className="topbar" onMouseDown={onTitleBarMouseDown}>
         <div className="topbar-in">
           <GateMark />
           <span className="wordmark">Hypergate</span>
