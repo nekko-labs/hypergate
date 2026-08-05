@@ -102,6 +102,20 @@ pub(crate) enum Wake {
     /// have loaded. Close anyway — a window that refuses to close is worse than
     /// a question that went unasked.
     CloseDeadline,
+    /// The manager window has no OS frame, so its title bar is the page's own
+    /// top bar and these arrive from the buttons drawn there.
+    Window(WindowCommand),
+}
+
+/// What the window frame used to offer, asked for by the page instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowCommand {
+    Minimize,
+    ToggleMaximize,
+    /// Start an OS window-move gesture; the pointer is already down.
+    Drag,
+    /// Exactly what the frame's X used to mean, close preference and all.
+    Close,
 }
 
 /// Everything the running tray owns.
@@ -350,48 +364,77 @@ pub fn run(with_window: bool) -> Result<(), String> {
                 quit(&mut tray, &stop_tx, control_flow, false);
             }
 
-            // Closing the manager is a real choice, not a foregone conclusion:
-            // Hypergate is a resident agent, but it is also what is running the
-            // user's servers. Whichever way it goes the window is *hidden*, not
-            // destroyed, so reopening is instant and the page keeps its state.
+            // Alt+F4 and the macOS traffic light still come through the frame;
+            // the button the page draws sends `Wake::Window(Close)` directly.
+            // Both land in the same arm below, so a close means the same thing
+            // however it was asked for.
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 window_id,
                 ..
             } => {
                 if window.as_ref().is_some_and(|w| w.id() == window_id) {
-                    match close_action {
-                        CloseAction::Tray => {
+                    let _ = window_proxy.send_event(Wake::Window(WindowCommand::Close));
+                }
+            }
+
+            // Snapping, double-clicking the title bar and dragging an edge all
+            // change whether the page's middle button should say "restore".
+            Event::WindowEvent {
+                event: WindowEvent::Resized(_),
+                window_id,
+                ..
+            } => {
+                if let Some(w) = &window
+                    && w.id() == window_id
+                {
+                    w.notify_window_state();
+                }
+            }
+
+            // Closing the manager is a real choice, not a foregone conclusion:
+            // Hypergate is a resident agent, but it is also what is running the
+            // user's servers. Whichever way it goes the window is *hidden*, not
+            // destroyed, so reopening is instant and the page keeps its state.
+            Event::UserEvent(Wake::Window(WindowCommand::Close)) => {
+                match close_action {
+                    CloseAction::Tray => {
+                        if let Some(w) = &window {
+                            w.hide();
+                        }
+                    }
+                    CloseAction::Quit => quit(&mut tray, &stop_tx, control_flow, true),
+                    CloseAction::Ask => {
+                        if awaiting_close {
+                            // The prompt is already up and the user clicked
+                            // the X again — take that as "yes, go away".
                             if let Some(w) = &window {
                                 w.hide();
                             }
-                        }
-                        CloseAction::Quit => quit(&mut tray, &stop_tx, control_flow, true),
-                        CloseAction::Ask => {
-                            if awaiting_close {
-                                // The prompt is already up and the user clicked
-                                // the X again — take that as "yes, go away".
-                                if let Some(w) = &window {
-                                    w.hide();
-                                }
-                                awaiting_close = false;
-                            } else if let Some(w) = &window {
-                                awaiting_close = true;
-                                prompt_shown = false;
-                                w.ask_close();
-                                // A page that failed to load cannot answer, and
-                                // a window that will not close is worse than a
-                                // missed question. Cancelled the moment the page
-                                // says the prompt is up, so a user reading it is
-                                // never interrupted.
-                                let deadline = window_proxy.clone();
-                                std::thread::spawn(move || {
-                                    std::thread::sleep(Duration::from_secs(3));
-                                    let _ = deadline.send_event(Wake::CloseDeadline);
-                                });
-                            }
+                            awaiting_close = false;
+                        } else if let Some(w) = &window {
+                            awaiting_close = true;
+                            prompt_shown = false;
+                            w.ask_close();
+                            // A page that failed to load cannot answer, and
+                            // a window that will not close is worse than a
+                            // missed question. Cancelled the moment the page
+                            // says the prompt is up, so a user reading it is
+                            // never interrupted.
+                            let deadline = window_proxy.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(Duration::from_secs(3));
+                                let _ = deadline.send_event(Wake::CloseDeadline);
+                            });
                         }
                     }
+                }
+            }
+
+            // Minimise, maximise and drag: no decision to make, just do it.
+            Event::UserEvent(Wake::Window(cmd)) => {
+                if let Some(w) = &window {
+                    w.command(cmd);
                 }
             }
 
