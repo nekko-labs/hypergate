@@ -14,13 +14,27 @@
 //!
 //! The page can talk back: {@link ManagerWindow::ask_close} calls into it, and
 //! the answer arrives over wry's IPC channel as a `Wake::Close`.
+//!
+//! # The title bar is the page
+//!
+//! The window has no OS title bar. The page's own top bar — mark, wordmark,
+//! version, theme, health — *is* the title bar, so the app gets one strip of
+//! chrome instead of an OS one stacked above its own, and the window buttons
+//! sit in the app's background rather than in a frame around it.
+//!
+//! That costs the shell what the frame used to give it for free: dragging,
+//! minimising, maximising and closing all arrive from the page as IPC
+//! messages, and the page has to be told which platform it is drawing for
+//! (see {@link ManagerWindow::shell_init_script}). macOS is the exception —
+//! its traffic lights stay native, floating over a transparent title bar, and
+//! it draws no buttons of its own.
 
 use tao::dpi::LogicalSize;
 use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
 use tao::window::{Window, WindowBuilder, WindowId};
 use wry::{NewWindowFeatures, NewWindowResponse};
 
-use crate::tray::{CloseDecision, Wake};
+use crate::tray::{CloseDecision, Wake, WindowCommand};
 use crate::{api, icon};
 
 /// Whether a URL is one we're willing to hand to the OS.
@@ -57,6 +71,14 @@ const MINIMUM: (f64, f64) = (600.0, 420.0);
 /// differently.
 const SCREEN_FRACTION: f64 = 0.9;
 
+/// Height of the page's title bar, in CSS pixels.
+///
+/// The shell needs the number for two things: placing the macOS traffic lights
+/// on the wordmark's line (once the title bar is transparent, where they sit is
+/// ours to decide), and telling the page what it agreed to. Keep it in step
+/// with `--titlebar-h` in `apps/web/src/styles.css`.
+const TITLEBAR_HEIGHT: f64 = 52.0;
+
 pub struct ManagerWindow {
     window: Window,
     /// Owned so it lives exactly as long as the window; dropped together.
@@ -74,6 +96,7 @@ impl ManagerWindow {
             .with_title("Hypergate")
             .with_inner_size(Self::default_size(target))
             .with_min_inner_size(LogicalSize::new(MINIMUM.0, MINIMUM.1));
+        builder = Self::without_titlebar(builder);
         // Windows and Linux take the icon per-window; macOS ignores it (the
         // Dock/switcher icon comes from the .app bundle instead).
         if let Ok(mark) = icon::window_icon() {
@@ -87,6 +110,54 @@ impl ManagerWindow {
 
         window.set_focus();
         Ok(Self { window, webview })
+    }
+
+    /// Take the OS title bar away so the page's own top bar can be it.
+    ///
+    /// macOS keeps its frame: the traffic lights are the only way to close a
+    /// Mac window that Mac users trust, and the platform hands us exactly what
+    /// we want — a transparent title bar over a full-size content view, with
+    /// the buttons floating on top of the page and nothing else drawn.
+    #[cfg(target_os = "macos")]
+    fn without_titlebar(builder: WindowBuilder) -> WindowBuilder {
+        use tao::dpi::LogicalPosition;
+        use tao::platform::macos::WindowBuilderExtMacOS;
+        builder
+            .with_titlebar_transparent(true)
+            .with_title_hidden(true)
+            .with_fullsize_content_view(true)
+            // Centred on our strip: the buttons are 16px tall, so half the
+            // difference puts them on the wordmark's line rather than above it.
+            .with_traffic_light_inset(LogicalPosition::new(20.0, (TITLEBAR_HEIGHT - 16.0) / 2.0))
+    }
+
+    /// Windows and Linux have no equivalent, so the frame goes entirely and the
+    /// page draws its own buttons. Both still resize from the window edges and
+    /// still raise `CloseRequested` for Alt+F4.
+    #[cfg(not(target_os = "macos"))]
+    fn without_titlebar(builder: WindowBuilder) -> WindowBuilder {
+        builder.with_decorations(false)
+    }
+
+    /// What the page needs to know before it renders a single pixel.
+    ///
+    /// The same bundle is served to a browser tab, where none of this applies,
+    /// so the page keys off the *existence* of `__hypergateShell`: no object,
+    /// no title bar of its own. `buttons` is what actually differs between
+    /// platforms — on macOS the OS is still drawing them.
+    fn shell_init_script() -> String {
+        format!(
+            "window.__hypergateShell = {{ platform: '{platform}', buttons: {buttons}, titleBarHeight: {height} }};",
+            platform = if cfg!(target_os = "macos") {
+                "macos"
+            } else if cfg!(windows) {
+                "windows"
+            } else {
+                "linux"
+            },
+            buttons = !cfg!(target_os = "macos"),
+            height = TITLEBAR_HEIGHT,
+        )
     }
 
     /// The default size, shrunk to fit when the screen is smaller than we want.
@@ -137,6 +208,17 @@ impl ManagerWindow {
                 "close:tray" => Wake::Close(CloseDecision::Tray),
                 "close:quit" => Wake::Close(CloseDecision::Quit),
                 "close:cancel" => Wake::Close(CloseDecision::Cancel),
+                // The title bar is the page's, so these are the frame's old job
+                // coming back to us from the buttons that replaced it. They go
+                // round through the event loop rather than acting here because
+                // the window lives there, not in this closure.
+                "window:minimize" => Wake::Window(WindowCommand::Minimize),
+                "window:maximize" => Wake::Window(WindowCommand::ToggleMaximize),
+                "window:drag" => Wake::Window(WindowCommand::Drag),
+                // Deliberately the same event the frame's X used to raise, so
+                // the close question and the remembered answer behave
+                // identically however the window was closed.
+                "window:close" => Wake::Window(WindowCommand::Close),
                 _ => return,
             };
             let _ = proxy.send_event(event);
@@ -148,6 +230,7 @@ impl ManagerWindow {
     fn attach_webview(window: &Window, proxy: EventLoopProxy<Wake>) -> Result<wry::WebView, String> {
         wry::WebViewBuilder::new()
             .with_url(api::ui_url())
+            .with_initialization_script(Self::shell_init_script())
             .with_ipc_handler(Self::ipc_handler(proxy))
             .with_new_window_req_handler(Self::open_externally)
             .build(window)
@@ -165,6 +248,7 @@ impl ManagerWindow {
             .ok_or("the manager window has no GTK container to hold a webview")?;
         wry::WebViewBuilder::new()
             .with_url(api::ui_url())
+            .with_initialization_script(Self::shell_init_script())
             .with_ipc_handler(Self::ipc_handler(proxy))
             .with_new_window_req_handler(Self::open_externally)
             .build_gtk(vbox)
@@ -186,6 +270,38 @@ impl ManagerWindow {
     /// server keep running, and the tray icon is how you come back.
     pub fn hide(&self) {
         self.window.set_visible(false);
+    }
+
+    /// Everything the frame used to do, now that the page's buttons ask for it.
+    pub fn command(&self, cmd: WindowCommand) {
+        match cmd {
+            WindowCommand::Minimize => self.window.set_minimized(true),
+            WindowCommand::ToggleMaximize => {
+                self.window.set_maximized(!self.window.is_maximized());
+                self.notify_window_state();
+            }
+            // Pointer-driven, so failure just means the gesture ended early
+            // (the button was already up, the compositor said no); there is
+            // nothing to report and nothing to retry.
+            WindowCommand::Drag => {
+                let _ = self.window.drag_window();
+            }
+            // Handled by the caller, which owns the close decision.
+            WindowCommand::Close => {}
+        }
+    }
+
+    /// Tell the page whether the window is maximised, so its middle button can
+    /// show "restore" instead.
+    ///
+    /// Pushed rather than polled, and pushed on every resize: snapping to half
+    /// the screen and double-clicking the title bar both change the answer
+    /// without going through our button.
+    pub fn notify_window_state(&self) {
+        let maximized = self.window.is_maximized();
+        let _ = self.webview.evaluate_script(&format!(
+            "window.__hypergateOnWindowState && window.__hypergateOnWindowState({{ maximized: {maximized} }})"
+        ));
     }
 
     /// Ask the page what closing should do. The answer comes back over IPC as a

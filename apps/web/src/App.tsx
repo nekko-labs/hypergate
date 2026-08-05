@@ -35,6 +35,8 @@ import { EmptyState } from './components/EmptyState';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogConsole } from './components/LogConsole';
 import { ThemeSwitch } from './components/ThemeSwitch';
+import { WindowButtons } from './components/WindowButtons';
+import { inShell, onTitleBarMouseDown, shell } from './lib/shell';
 import { OAuthAppDialog } from './components/servers/OAuthAppDialog';
 import { TokenDialog } from './components/servers/TokenDialog';
 import { useToast } from './toast';
@@ -565,16 +567,23 @@ export function App() {
   }, [view, agents.length, servers?.length, showCatalog, adding, stats]);
 
   return (
-    <div className="app">
+    <div className={inShell ? `app app-shell app-${shell!.platform}` : 'app'}>
       <CloseChoice />
-      <header className="topbar">
+      {/* In the desktop shell this strip *is* the window's title bar: the mark
+          sits in the top-left corner of the window, the controls run to the
+          top-right, and the window buttons continue that line rather than
+          living in a frame above it. In a browser it is simply the top bar. */}
+      <header className="topbar" onMouseDown={onTitleBarMouseDown}>
         <div className="topbar-in">
           <GateMark />
           <span className="wordmark">Hypergate</span>
-          <VersionBox version={version} u={updater} onOpenUpdates={() => openView('settings')} />
           <div className="spacer" />
-          <ThemeSwitch />
-          <ServerHealth offline={offline} gateway={gateway} />
+          <div className="topbar-tools">
+            <VersionBox version={version} u={updater} onOpenUpdates={() => openView('settings')} />
+            <ThemeSwitch />
+            <ServerHealth offline={offline} gateway={gateway} />
+          </div>
+          <WindowButtons />
         </div>
       </header>
 
@@ -758,23 +767,28 @@ export function App() {
               )}
             </ErrorBoundary>
           </main>
+        </div>
+      </div>
 
-          <div className="footer">
-            <span>
-              Local-first · MIT · made with <Heart /> by Nekko Labs Community
-            </span>
-            <div className="spacer" style={{ flex: 1 }} />
-            <a
-              className="foot-gh"
-              href="https://github.com/nekko-labs/hypergate"
-              target="_blank"
-              rel="noreferrer"
-              title="nekko-labs/hypergate on GitHub"
-              aria-label="Hypergate on GitHub"
-            >
-              <GitHubMark />
-            </a>
-          </div>
+      {/* Outside `.app-main`, so the rule and its two ends reach the window's
+          edges instead of stopping at the 1080px reading column. It is a rail
+          the whole window sits on, the mirror of the top bar. */}
+      <div className="footer">
+        <div className="footer-in">
+          <span>
+            Local-first · MIT · made with <Heart /> by Nekko Labs Community
+          </span>
+          <div className="spacer" style={{ flex: 1 }} />
+          <a
+            className="foot-gh"
+            href="https://github.com/nekko-labs/hypergate"
+            target="_blank"
+            rel="noreferrer"
+            title="nekko-labs/hypergate on GitHub"
+            aria-label="Hypergate on GitHub"
+          >
+            <GitHubMark />
+          </a>
         </div>
       </div>
     </div>
