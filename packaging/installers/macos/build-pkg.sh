@@ -66,10 +66,14 @@ PLIST
 # packaging); here the assembled bundle gets its seal, after Info.plist is
 # written, because the plist is part of what codesign seals. Unset means a
 # local unsigned build, unchanged.
+#
+# The web directory contains static assets (PNGs, etc.) that codesign rejects as
+# unsigned code objects. Move it out before signing the bundle, then restore it.
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+  mv "$APP/Contents/MacOS/web" "$WORK/web"
   codesign --force --options runtime --timestamp \
-    --sign "$MACOS_SIGN_IDENTITY" \
-    --exclude "$APP/Contents/MacOS/web" "$APP"
+    --sign "$MACOS_SIGN_IDENTITY" "$APP"
+  mv "$WORK/web" "$APP/Contents/MacOS/web"
 fi
 
 # The CLI on PATH. A relative symlink, so it keeps working if the bundle is
