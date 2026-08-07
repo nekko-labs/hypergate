@@ -72,6 +72,10 @@ PLIST
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   mv "$APP/Contents/MacOS/web" "$WORK/web"
   codesign --force --options runtime --timestamp \
+    --sign "$MACOS_SIGN_IDENTITY" "$APP/Contents/MacOS/hypergate"
+  codesign --force --options runtime --timestamp \
+    --sign "$MACOS_SIGN_IDENTITY" "$APP/Contents/MacOS/hypergated"
+  codesign --force --options runtime --timestamp \
     --sign "$MACOS_SIGN_IDENTITY" "$APP"
   mv "$WORK/web" "$APP/Contents/MacOS/web"
 fi

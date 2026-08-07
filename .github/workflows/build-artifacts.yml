@@ -200,6 +200,14 @@ jobs:
           codesign --force --options runtime --timestamp --sign "$IDENTITY" \
             dist-standalone/hypergated
 
+      - name: Sign the shell binary in the payload (macOS)
+        if: runner.os == 'macOS' && env.MACOS_SIGNING_CERTS_P12 != ''
+        env:
+          IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+            dist-standalone/hypergate
+
       # The macOS identities flow into build-pkg.sh, which signs the .app bundle
       # and productsigns the .pkg when they are set.
       - name: Build the installer
