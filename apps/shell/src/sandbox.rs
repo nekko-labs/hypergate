@@ -56,7 +56,7 @@ pub fn exec(program: &str, args: &[String], limits: Limits) -> Result<i32, Strin
         if limits.strict {
             return Err(format!("cannot honour the requested sandbox: {note}"));
         }
-        eprintln!("[sandbox] warning: {note}");
+        crate::diagnostic!("[sandbox] warning: {note}");
     }
 
     #[cfg(windows)]

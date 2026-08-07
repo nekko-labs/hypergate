@@ -92,6 +92,22 @@ impl ManagerWindow {
     /// webkit2gtk); the caller falls back to the browser, which serves the
     /// same UI, so the feature degrades instead of dying.
     pub fn open(target: &EventLoopWindowTarget<Wake>, proxy: EventLoopProxy<Wake>) -> Result<Self, String> {
+        Self::open_with(target, proxy, None)
+    }
+
+    pub fn open_starting(
+        target: &EventLoopWindowTarget<Wake>,
+        proxy: EventLoopProxy<Wake>,
+        html: String,
+    ) -> Result<Self, String> {
+        Self::open_with(target, proxy, Some(html))
+    }
+
+    fn open_with(
+        target: &EventLoopWindowTarget<Wake>,
+        proxy: EventLoopProxy<Wake>,
+        html: Option<String>,
+    ) -> Result<Self, String> {
         let mut builder = WindowBuilder::new()
             .with_title("Hypergate")
             .with_inner_size(Self::default_size(target))
@@ -106,10 +122,25 @@ impl ManagerWindow {
             .build(target)
             .map_err(|e| format!("could not create the manager window: {e}"))?;
 
-        let webview = Self::attach_webview(&window, proxy)?;
+        let webview = match html {
+            Some(html) => Self::attach_html(&window, proxy, html)?,
+            None => Self::attach_webview(&window, proxy)?,
+        };
 
         window.set_focus();
         Ok(Self { window, webview })
+    }
+
+    pub fn navigate(&self, url: &str) {
+        let _ = self.webview.load_url(url);
+    }
+
+    pub fn show_html(&self, html: &str) {
+        if let Ok(script) = serde_json::to_string(html) {
+            let _ = self.webview.evaluate_script(&format!(
+                "document.open();document.write({script});document.close();"
+            ));
+        }
     }
 
     /// Take the OS title bar away so the page's own top bar can be it.
@@ -219,6 +250,8 @@ impl ManagerWindow {
                 // the close question and the remembered answer behave
                 // identically however the window was closed.
                 "window:close" => Wake::Window(WindowCommand::Close),
+                "starting:retry" => Wake::RetryStartup,
+                "starting:browser" => Wake::OpenStartupBrowser,
                 _ => return,
             };
             let _ = proxy.send_event(event);
@@ -237,6 +270,17 @@ impl ManagerWindow {
             .map_err(|e| format!("could not create the webview: {e}"))
     }
 
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    fn attach_html(window: &Window, proxy: EventLoopProxy<Wake>, html: String) -> Result<wry::WebView, String> {
+        wry::WebViewBuilder::new()
+            .with_html(&html)
+            .with_initialization_script(Self::shell_init_script())
+            .with_ipc_handler(Self::ipc_handler(proxy))
+            .with_new_window_req_handler(Self::open_externally)
+            .build(window)
+            .map_err(|e| format!("could not create the webview: {e}"))
+    }
+
     /// Linux: tao windows are GTK, so the webview goes into the window's
     /// default vertical box rather than onto the raw handle.
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -248,6 +292,22 @@ impl ManagerWindow {
             .ok_or("the manager window has no GTK container to hold a webview")?;
         wry::WebViewBuilder::new()
             .with_url(api::ui_url())
+            .with_initialization_script(Self::shell_init_script())
+            .with_ipc_handler(Self::ipc_handler(proxy))
+            .with_new_window_req_handler(Self::open_externally)
+            .build_gtk(vbox)
+            .map_err(|e| format!("could not create the webview: {e}"))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn attach_html(window: &Window, proxy: EventLoopProxy<Wake>, html: String) -> Result<wry::WebView, String> {
+        use tao::platform::unix::WindowExtUnix;
+        use wry::WebViewBuilderExtUnix;
+        let vbox = window
+            .default_vbox()
+            .ok_or("the manager window has no GTK container to hold a webview")?;
+        wry::WebViewBuilder::new()
+            .with_html(&html)
             .with_initialization_script(Self::shell_init_script())
             .with_ipc_handler(Self::ipc_handler(proxy))
             .with_new_window_req_handler(Self::open_externally)

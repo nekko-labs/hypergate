@@ -84,18 +84,18 @@ pub fn spawn_child() -> Result<Child, String> {
 /// blocks the daemon on its next write. Draining also means `hypergate tray`
 /// run from a terminal shows daemon errors instead of swallowing them.
 fn drain(child: &mut Child) {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader};
     if let Some(out) = child.stdout.take() {
         std::thread::spawn(move || {
             for line in BufReader::new(out).lines().map_while(Result::ok) {
-                let _ = writeln!(std::io::stderr(), "[hypergated] {line}");
+                crate::diagnostic!("[hypergated] {line}");
             }
         });
     }
     if let Some(err) = child.stderr.take() {
         std::thread::spawn(move || {
             for line in BufReader::new(err).lines().map_while(Result::ok) {
-                let _ = writeln!(std::io::stderr(), "[hypergated] {line}");
+                crate::diagnostic!("[hypergated] {line}");
             }
         });
     }
@@ -169,6 +169,22 @@ pub fn wait_until_up(timeout: Duration) -> bool {
         std::thread::sleep(Duration::from_millis(120));
     }
     false
+}
+
+pub fn pid_is_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // Signal zero probes existence without stopping the process.
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}")])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+            .unwrap_or(false)
+    }
 }
 
 /// Stop a daemon this shell started. Returns whether anything was stopped.

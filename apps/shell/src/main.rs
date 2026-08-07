@@ -19,6 +19,7 @@ mod autostart;
 mod commands;
 mod daemon;
 mod icon;
+mod logging;
 mod paths;
 mod sandbox;
 mod secrets;
@@ -266,11 +267,12 @@ enum SecretAction {
 }
 
 fn main() -> ExitCode {
+    logging::init();
     let cli = Cli::parse();
     match dispatch(cli.command) {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("hypergate: {e}");
+            crate::diagnostic!("hypergate: {e}");
             ExitCode::FAILURE
         }
     }

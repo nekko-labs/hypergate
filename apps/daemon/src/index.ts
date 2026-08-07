@@ -1255,7 +1255,15 @@ if (STDIO_MODE) {
   // Started now, awaited just before we listen: managed servers come up while
   // the rest of the server is being wired, and nothing is served until they are
   // up, which is the ordering the top-level `await` used to give.
-  const booted = startEnabled();
+  let bootComplete = false;
+  void startEnabled()
+    .then(() => {
+      bootComplete = true;
+    })
+    .catch((error) => {
+      bootComplete = true;
+      process.stderr.write(`[boot] managed server startup failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    });
   const TOKEN = process.env.HYPERGATE_TOKEN ?? loadToken();
   const json = (res: ServerResponse, status: number, body: unknown): void => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -1545,7 +1553,14 @@ if (STDIO_MODE) {
       return oauthPage(res, true, `${cfg.name} is connected. You can close this tab and return to Hypergate.`);
     }
 
-    if (pathname === '/health') return json(res, 200, { ok: true, service: 'hypergated', version: VERSION, servers: supervisor.list().length });
+    if (pathname === '/health')
+      return json(res, 200, {
+        ok: true,
+        service: 'hypergated',
+        version: VERSION,
+        servers: supervisor.list().length,
+        bootComplete,
+      });
     if (pathname === '/api/registry') return json(res, 200, withAdvice(REGISTRY));
 
     // Search the official MCP Registry. The one deliberate outbound call, and only
@@ -2233,9 +2248,7 @@ if (STDIO_MODE) {
       });
   };
 
-  void booted.then(() =>
-    server.listen(PORT, '127.0.0.1', () =>
-      process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`),
-    ),
+  server.listen(PORT, '127.0.0.1', () =>
+    process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`),
   );
 }
