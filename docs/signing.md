@@ -3,11 +3,12 @@
 How Hypergate's release artifacts get signed, what is already wired, and what
 still needs a human with an account.
 
-Everything below is **secret-gated**: with no secrets configured, releases
-build and ship unsigned exactly as before. Adding the secrets turns signing on
-with no workflow changes. All secrets live on the `nekko-labs/hypergate` repo
-(`gh secret set <NAME>`), and the steps that use them are in
-`.github/workflows/build-artifacts.yml` and `release.yml`.
+Everything below is **secret-gated**. On-demand artifact builds may remain
+unsigned for local testing, but a tagged release now fails before building the
+macOS jobs when any signing credential is missing. A partially configured set
+also fails instead of producing a signed but unnotarized package. All secrets
+live on the `nekko-labs/hypergate` repo (`gh secret set <NAME>`), and the steps
+that use them are in `.github/workflows/build-artifacts.yml` and `release.yml`.
 
 ## Status at a glance
 
@@ -78,9 +79,11 @@ publisher" warning; reputation accrues to the certificate once signing starts.
 
 ## macOS: wired, needs Apple Developer enrollment
 
-The workflow already: signs both binaries with hardened runtime + timestamp,
-seals the `Hypergate.app` bundle, `productsign`s the `.pkg`, notarizes it with
-`notarytool` and staples the ticket. It needs these secrets:
+The workflow signs both binaries with hardened runtime + timestamp, seals the
+`Hypergate.app` bundle, `productsign`s the `.pkg`, notarizes it with
+`notarytool`, and staples the ticket. It then validates the ticket and asks both
+`pkgutil` and Gatekeeper to assess the finished installer. It needs these
+secrets:
 
 | Secret | What it is |
 | --- | --- |

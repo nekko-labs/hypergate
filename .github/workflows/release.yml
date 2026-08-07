@@ -20,6 +20,8 @@ jobs:
     uses: ./.github/workflows/build-artifacts.yml
     # The signing secrets (docs/signing.md). With none configured the build
     # runs unsigned, exactly as before.
+    with:
+      require_macos_signing: true
     secrets: inherit
 
   publish:

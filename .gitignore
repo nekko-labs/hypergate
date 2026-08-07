@@ -9,3 +9,4 @@ dist-npm/
 dist-standalone/
 dist-installers/
 dist-mcpb/
+.secrets/
