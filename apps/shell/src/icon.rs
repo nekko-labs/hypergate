@@ -46,8 +46,7 @@ fn sample(x: f32, y: f32, size: u32, coloured: bool) -> ([f32; 3], f32) {
     // Several violet-dominant bands sweep around the ring, echoing the site's
     // animated shader without making the static mark look noisy.
     let angle = dy.atan2(dx); // -PI..PI
-    let band = 0.34
-        + 0.26 * (0.5 + 0.5 * (angle * 3.0 + 0.28 * (angle * 5.0).sin()).sin());
+    let band = 0.34 + 0.26 * (0.5 + 0.5 * (angle * 3.0 + 0.28 * (angle * 5.0).sin()).sin());
     let mut ring_rgb = [
         VIOLET[0] + (CYAN[0] - VIOLET[0]) * band,
         VIOLET[1] + (CYAN[1] - VIOLET[1]) * band,

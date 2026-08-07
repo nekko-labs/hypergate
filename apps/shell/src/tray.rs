@@ -389,7 +389,10 @@ pub fn run(with_window: bool) -> Result<(), String> {
 
             Event::UserEvent(Wake::DaemonFailed) => {
                 startup_waiting = false;
-                crate::diagnostic!("[hypergate] daemon startup failed; see {}", crate::logging::path().display());
+                crate::diagnostic!(
+                    "[hypergate] daemon startup failed; see {}",
+                    crate::logging::path().display()
+                );
                 if let Some(w) = &window {
                     w.show_html(&startup_html(Some("Hypergate could not start the local daemon.")));
                 }
@@ -504,7 +507,9 @@ pub fn run(with_window: bool) -> Result<(), String> {
                 // reversible outcome, so that is the one we default to.
                 if awaiting_close && !prompt_shown {
                     awaiting_close = false;
-                    crate::diagnostic!("[hypergate] the manager page did not answer the close prompt; hiding to the tray");
+                    crate::diagnostic!(
+                        "[hypergate] the manager page did not answer the close prompt; hiding to the tray"
+                    );
                     if let Some(w) = &window {
                         w.hide();
                     }
@@ -716,7 +721,11 @@ svg{{width:116px;height:116px;margin-bottom:12px}}h1{{font-size:24px;margin:0 0 
 <p><code>{log}</code></p><button onclick="window.ipc.postMessage('starting:retry')">Retry</button><button onclick="window.ipc.postMessage('starting:browser')">Open in browser</button>
 </main></body></html>"#,
         svg = icon::svg(),
-        title = if error.is_some() { "Hypergate did not start" } else { "Starting Hypergate…" },
+        title = if error.is_some() {
+            "Hypergate did not start"
+        } else {
+            "Starting Hypergate…"
+        },
         message = message,
         log = esc(&log),
     )

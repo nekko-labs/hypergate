@@ -684,7 +684,8 @@ pub fn mcp_headers(key: &str, create: bool) -> Result<String, String> {
     if agent.created {
         crate::diagnostic!(
             "hypergate: created connected agent \"{}\" ({}), with access to every server",
-            agent.name, agent.id
+            agent.name,
+            agent.id
         );
     }
     Ok(headers_json(&agent.token))

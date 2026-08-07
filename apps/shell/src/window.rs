@@ -137,9 +137,9 @@ impl ManagerWindow {
 
     pub fn show_html(&self, html: &str) {
         if let Ok(script) = serde_json::to_string(html) {
-            let _ = self.webview.evaluate_script(&format!(
-                "document.open();document.write({script});document.close();"
-            ));
+            let _ = self
+                .webview
+                .evaluate_script(&format!("document.open();document.write({script});document.close();"));
         }
     }
 
