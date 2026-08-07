@@ -187,7 +187,7 @@ pub fn pid_is_alive(pid: u32) -> bool {
             return false;
         };
         let mut code = 0;
-        let alive = unsafe { GetExitCodeProcess(handle, &mut code).is_ok() && code == STILL_ACTIVE.0 };
+        let alive = unsafe { GetExitCodeProcess(handle, &mut code).is_ok() && code == STILL_ACTIVE.0 as u32 };
         unsafe {
             let _ = CloseHandle(handle);
         }
