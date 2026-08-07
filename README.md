@@ -214,6 +214,7 @@ Everything is local, under `~/.hypergate/` (override with `HYPERGATE_DIR`):
 | --- | --- |
 | Server configs, agent tokens, settings | `servers.json`, `clients.json`, `settings.json` |
 | Usage history + server logs | `hypergate.db` (SQLite, WAL). Retention: 90 days of usage, 14 days of logs (`HYPERGATE_RETAIN_USAGE_DAYS` / `_LOG_DAYS`, `0` = forever) |
+| Desktop launch and daemon diagnostics | `hypergate.log` (capped at approximately 1 MB) |
 | Gateway token, OAuth grants | The **OS keychain** (Credential Manager / Keychain / Secret Service), falling back to files here where no keychain exists |
 
 `npm run dev` runs the daemon + web UI together and opens the site in your browser once Vite is ready (set `HYPERGATE_OPEN=0` to skip).

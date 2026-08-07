@@ -1,6 +1,6 @@
 //! The tray icon, drawn in code rather than shipped as an asset.
 //!
-//! It reproduces the Hypergate warp-gate mark (a hollow violet→cyan gradient
+//! It reproduces the Hypergate warp-gate mark (a hollow, banded violet→cyan
 //! ring) as raw RGBA. Generating it means no `.ico`/`.png` to embed, decode, or
 //! keep in sync across three platforms, and the brand colours live in one place
 //! next to the CSS tokens they mirror.
@@ -16,6 +16,10 @@ const SAMPLES: u32 = 3;
 const VIOLET: [f32; 3] = [109.0, 94.0, 252.0];
 /// `#22d3ee` — the cyan end.
 const CYAN: [f32; 3] = [34.0, 211.0, 238.0];
+/// `#a5f3fc` — the bright ice crest from the hero shader.
+const ICE: [f32; 3] = [165.0, 243.0, 252.0];
+/// `#7c6bff` — the halo tint used by the site.
+const HALO: [f32; 3] = [124.0, 107.0, 255.0];
 
 /// Smooth 0→1 ramp across `[edge0, edge1]`, for antialiased edges.
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
@@ -32,7 +36,7 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 /// All radii are expressed in the original 32px design grid and scaled to
 /// `size`, so one geometry definition serves a 16px tray slot and a 256px
 /// Explorer thumbnail alike.
-fn sample(x: f32, y: f32, size: u32) -> ([f32; 3], f32) {
+fn sample(x: f32, y: f32, size: u32, coloured: bool) -> ([f32; 3], f32) {
     let k = size as f32 / 32.0;
     let c = size as f32 / 2.0;
     let (dx, dy) = (x - c, y - c);
@@ -43,17 +47,26 @@ fn sample(x: f32, y: f32, size: u32) -> ([f32; 3], f32) {
     let feather = 1.2 / k.max(1.0);
     let ring = smoothstep(8.8, 8.8 + feather, r) * (1.0 - smoothstep(14.2 - feather, 14.2, r));
 
-    // Hue sweeps violet→cyan around the ring, so the gradient reads as motion.
+    // Several violet-dominant bands sweep around the ring, echoing the site's
+    // animated shader without making the static mark look noisy.
     let angle = dy.atan2(dx); // -PI..PI
-    let t = (angle + std::f32::consts::PI) / (2.0 * std::f32::consts::PI);
-    // Fold the sweep so both halves of the ring run through the full gradient
-    // instead of showing a hard seam where the angle wraps.
-    let t = 1.0 - (2.0 * t - 1.0).abs();
-    let mut ring_rgb = [
-        VIOLET[0] + (CYAN[0] - VIOLET[0]) * t,
-        VIOLET[1] + (CYAN[1] - VIOLET[1]) * t,
-        VIOLET[2] + (CYAN[2] - VIOLET[2]) * t,
-    ];
+    let phase = 0.5 + 0.5 * (angle * 3.0 + 0.28 * (angle * 5.0).sin()).sin();
+    let crest = phase.powf(3.2);
+    let mut ring_rgb = if crest < 0.68 {
+        let mix = crest / 0.68;
+        [
+            VIOLET[0] + (CYAN[0] - VIOLET[0]) * mix,
+            VIOLET[1] + (CYAN[1] - VIOLET[1]) * mix,
+            VIOLET[2] + (CYAN[2] - VIOLET[2]) * mix,
+        ]
+    } else {
+        let mix = ((crest - 0.68) / 0.32) * 0.67;
+        [
+            CYAN[0] + (ICE[0] - CYAN[0]) * mix,
+            CYAN[1] + (ICE[1] - CYAN[1]) * mix,
+            CYAN[2] + (ICE[2] - CYAN[2]) * mix,
+        ]
+    };
     // A short ice-white hot arc adds the premium highlight without painting
     // anything into the portal opening.
     let hot_arc = ((angle + 0.55).cos().max(0.0)).powf(18.0) * ring;
@@ -61,9 +74,28 @@ fn sample(x: f32, y: f32, size: u32) -> ([f32; 3], f32) {
     ring_rgb[1] += (255.0 - ring_rgb[1]) * hot_arc * 0.32;
     ring_rgb[2] += (255.0 - ring_rgb[2]) * hot_arc * 0.32;
     if ring <= 0.0 {
+        if coloured && r > 14.2 {
+            let halo = (1.0 - smoothstep(14.2, 15.0, r)) * 0.40;
+            if halo > 0.0 {
+                return ([HALO[0] * halo, HALO[1] * halo, HALO[2] * halo], halo);
+            }
+        }
         return ([0.0; 3], 0.0);
     }
-    ([ring_rgb[0] * ring, ring_rgb[1] * ring, ring_rgb[2] * ring], ring)
+    let halo = if coloured && r > 14.2 {
+        (1.0 - smoothstep(14.2, 15.0, r)) * 0.40
+    } else {
+        0.0
+    };
+    let coverage = (ring + halo).min(1.0);
+    (
+        [
+            ring_rgb[0] * ring + HALO[0] * halo,
+            ring_rgb[1] * ring + HALO[1] * halo,
+            ring_rgb[2] * ring + HALO[2] * halo,
+        ],
+        coverage,
+    )
 }
 
 /// Render the mark to RGBA8.
@@ -83,7 +115,7 @@ fn rgba_at(size: u32, template: bool) -> Vec<u8> {
                 for sx in 0..SAMPLES {
                     let x = px as f32 + (sx as f32 + 0.5) * step;
                     let y = py as f32 + (sy as f32 + 0.5) * step;
-                    let (rgb, a) = sample(x, y, size);
+                    let (rgb, a) = sample(x, y, size, !template);
                     acc[0] += rgb[0];
                     acc[1] += rgb[1];
                     acc[2] += rgb[2];
@@ -213,21 +245,29 @@ pub fn svg() -> String {
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
   <defs>
-    <linearGradient id="gate" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="gate" gradientUnits="userSpaceOnUse" x1="2" y1="16" x2="30" y2="16">
       <stop offset="0" stop-color="{violet}"/>
-      <stop offset="1" stop-color="{cyan}"/>
+      <stop offset=".18" stop-color="{violet}"/>
+      <stop offset=".32" stop-color="{cyan}" stop-opacity=".78"/>
+      <stop offset=".46" stop-color="{violet}"/>
+      <stop offset=".62" stop-color="{violet}"/>
+      <stop offset=".76" stop-color="{ice}" stop-opacity=".6"/>
+      <stop offset=".9" stop-color="{violet}"/>
+      <stop offset="1" stop-color="{violet}"/>
     </linearGradient>
-    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="1.2"/>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation=".7"/>
     </filter>
   </defs>
-  <circle cx="16" cy="16" r="11.5" fill="none" stroke="url(#gate)" stroke-width="5.4" opacity=".35" filter="url(#glow)"/>
+  <circle cx="16" cy="16" r="11.5" fill="none" stroke="{halo}" stroke-width="2.2" opacity=".4" filter="url(#glow)"/>
   <circle cx="16" cy="16" r="11.5" fill="none" stroke="url(#gate)" stroke-width="5.4"/>
   <path d="M 8.1 9.3 A 11.5 11.5 0 0 1 22.2 7.8" fill="none" stroke="#d8fbff" stroke-width="1.9" stroke-linecap="round" opacity=".7"/>
 </svg>
 "##,
         violet = hex(VIOLET),
         cyan = hex(CYAN),
+        ice = hex(ICE),
+        halo = hex(HALO),
     )
 }
 
@@ -266,7 +306,21 @@ mod tests {
         assert_eq!(alpha_at(16, 16), 0, "gate opening");
         assert!(alpha_at(23, 16) < 60, "space inside the ring");
         assert!(alpha_at(27, 16) > 200, "ring");
+        assert!(alpha_at(30, 16) > 0, "subtle outer halo");
+        assert!(alpha_at(30, 16) < 140, "halo must remain weaker than the ring");
         assert_eq!(alpha_at(31, 16), 0, "outside the ring");
+    }
+
+    #[test]
+    fn a_violet_trough_stays_brand_saturated() {
+        let (rgb, alpha) = sample(6.05, 10.25, SIZE, true);
+        assert!(alpha > 0.9, "trough sample should be inside the ring");
+        for (actual, expected) in rgb.into_iter().zip(VIOLET) {
+            assert!(
+                (actual - expected).abs() < 4.0,
+                "violet trough was diluted: {actual} vs {expected}"
+            );
+        }
     }
 
     #[test]
@@ -355,6 +409,11 @@ mod tests {
         assert!(svg.contains("viewBox=\"0 0 32 32\""));
         assert!(svg.contains("#6d5efc"), "violet stop missing");
         assert!(svg.contains("#22d3ee"), "cyan stop missing");
+        assert!(svg.contains("r=\"11.5\""), "SVG must use the design-grid ring radius");
+        assert!(
+            svg.contains("stroke=\"url(#gate)\""),
+            "SVG must use the banded stroke gradient"
+        );
         assert!(!svg.contains("#baf6ff"), "the hollow gate must not render a core");
         assert!(svg.contains("</svg>"));
     }
@@ -366,7 +425,12 @@ mod tests {
             let i = ((y * SIZE + x) * 4) as usize;
             (buf[i], buf[i + 1], buf[i + 2])
         };
-        // Top of the ring versus the right-hand side: different points on the sweep.
-        assert_ne!(px(16, 4), px(27, 16), "ring colour should change with angle");
+        // The static mark has multiple band transitions, not one folded sweep.
+        let points = [(16, 4), (27, 16), (16, 27), (5, 16), (16, 4)];
+        let changes = points
+            .windows(2)
+            .filter(|pair| px(pair[0].0, pair[0].1) != px(pair[1].0, pair[1].1))
+            .count();
+        assert!(changes >= 3, "ring colour should band more than once around the ring");
     }
 }

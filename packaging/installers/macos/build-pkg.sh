@@ -6,13 +6,14 @@
 # .dmg cannot do the former, and asking people to drag an app and then also run
 # a shell command is worse than one double-click.
 #
-# Usage: build-pkg.sh <payload-dir> <version> <arch> <output.pkg>
+# Usage: build-pkg.sh <payload-dir> <version> <arch> <output.pkg> <icon.icns>
 set -euo pipefail
 
 PAYLOAD="${1:?payload directory required}"
 VERSION="${2:?version required}"
 ARCH="${3:?arch required}"
 OUTPUT="${4:?output path required}"
+ICON="${5:?icns path required}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$(mktemp -d)"
@@ -27,6 +28,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$ROOT/usr/local/bin"
 cp "$PAYLOAD/hypergate" "$APP/Contents/MacOS/hypergate"
 cp "$PAYLOAD/hypergated" "$APP/Contents/MacOS/hypergated"
 cp -R "$PAYLOAD/web" "$APP/Contents/MacOS/web"
+cp "$ICON" "$APP/Contents/Resources/hypergate.icns"
 cp "$PAYLOAD/LICENSE" "$APP/Contents/Resources/LICENSE"
 chmod 755 "$APP/Contents/MacOS/hypergate" "$APP/Contents/MacOS/hypergated"
 
@@ -55,6 +57,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>Hypergate</string>
+  <key>CFBundleIconFile</key><string>hypergate.icns</string>
+  <key>CFBundleIconName</key><string>hypergate</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>LSUIElement</key><true/>
 </dict>

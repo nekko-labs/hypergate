@@ -533,7 +533,7 @@ pub fn call(tool: &str, json_body: Option<&str>, pairs: &[String]) -> Result<boo
     let text = render_tool_result(&result);
     let failed = result.get("isError").and_then(Value::as_bool).unwrap_or(false);
     if failed {
-        eprintln!("{text}");
+        crate::diagnostic!("{text}");
     } else {
         println!("{text}");
     }
@@ -682,9 +682,10 @@ pub fn mcp_headers(key: &str, create: bool) -> Result<String, String> {
     // Minting a credential is not something to do silently. stderr, because
     // stdout belongs to the client parsing this.
     if agent.created {
-        eprintln!(
+        crate::diagnostic!(
             "hypergate: created connected agent \"{}\" ({}), with access to every server",
-            agent.name, agent.id
+            agent.name,
+            agent.id
         );
     }
     Ok(headers_json(&agent.token))

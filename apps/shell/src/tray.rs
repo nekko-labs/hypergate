@@ -92,6 +92,14 @@ pub(crate) enum Wake {
     /// update --apply`, which has to get the tray out of the way before the
     /// files it is running from can be replaced.
     Quit,
+    /// The daemon became reachable after the starting page was shown.
+    DaemonReady,
+    /// The daemon could not become reachable before the startup budget expired.
+    DaemonFailed,
+    /// Retry a failed startup from the starting page.
+    RetryStartup,
+    /// Open the manager URL in the default browser from the startup page.
+    OpenStartupBrowser,
     /// The close question has an answer, from the window's own prompt.
     Close(CloseDecision),
     /// The page confirmed the prompt is on screen. Stops the deadline below:
@@ -226,17 +234,19 @@ pub fn run(with_window: bool) -> Result<(), String> {
     // the token via HYPERGATE_TOKEN and never writes a plaintext copy.
     let adopted = secrets::adopt_gateway_token();
     if adopted == secrets::Adopted::MigratedFromFile {
-        eprintln!("[hypergate] moved the gateway token into the OS keychain");
+        crate::diagnostic!("[hypergate] moved the gateway token into the OS keychain");
     }
 
     // Attach to a running daemon if there is one; otherwise start our own.
+    let mut startup_waiting = false;
     let child = if api::is_up() {
-        eprintln!("[hypergate] attached to the daemon already running on this port");
+        crate::diagnostic!("[hypergate] attached to the daemon already running on this port");
         None
     } else {
         let c = daemon::spawn_child()?;
-        if !daemon::wait_until_up(Duration::from_secs(20)) {
-            eprintln!("[hypergate] warning: the daemon did not answer /health within 20s");
+        if !daemon::wait_until_up(Duration::from_secs(2)) {
+            startup_waiting = true;
+            crate::diagnostic!("[hypergate] daemon is still starting; manager will wait for /health");
         }
         Some(c)
     };
@@ -319,6 +329,7 @@ pub fn run(with_window: bool) -> Result<(), String> {
 
     let mut tray: Option<Tray> = None;
     let mut window: Option<ManagerWindow> = None;
+    let startup_pid = child.as_ref().map(std::process::Child::id);
     let mut pending_child = child;
     // Nothing has been read from the daemon yet, so ask rather than assume.
     let mut close_action = CloseAction::Ask;
@@ -328,6 +339,9 @@ pub fn run(with_window: bool) -> Result<(), String> {
     let mut prompt_shown = false;
     // Handed to the manager window so its page can answer that question.
     let window_proxy = event_loop.create_proxy();
+    if startup_waiting && let Some(pid) = startup_pid {
+        start_readiness(window_proxy.clone(), pid);
+    }
 
     event_loop.run(move |event, target, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -340,11 +354,11 @@ pub fn run(with_window: bool) -> Result<(), String> {
                         // A successful build means the OS accepted the icon
                         // (Shell_NotifyIcon / NSStatusItem / SNI registration),
                         // so this line is the confirmation that the tray is live.
-                        eprintln!("[hypergate] tray icon registered · menu ready");
+                        crate::diagnostic!("[hypergate] tray icon registered · menu ready");
                         tray = Some(t);
                     }
                     Err(e) => {
-                        eprintln!("[hypergate] {e}");
+                        crate::diagnostic!("[hypergate] {e}");
                         *control_flow = ControlFlow::Exit;
                     }
                 }
@@ -352,16 +366,60 @@ pub fn run(with_window: bool) -> Result<(), String> {
                 // `hypergate tray` defers to the Start minimized preference,
                 // which is the only thing that setting was ever supposed to do.
                 if with_window || !api::start_minimized() {
-                    open_manager(&mut window, target, &window_proxy);
+                    open_manager(&mut window, target, &window_proxy, startup_waiting);
                 }
             }
 
             Event::UserEvent(Wake::OpenWindow) => {
-                open_manager(&mut window, target, &window_proxy);
+                open_manager(&mut window, target, &window_proxy, startup_waiting);
             }
 
             Event::UserEvent(Wake::Quit) => {
                 quit(&mut tray, &stop_tx, control_flow, false);
+            }
+
+            Event::UserEvent(Wake::DaemonReady) => {
+                startup_waiting = false;
+                if let Some(w) = &window {
+                    w.navigate(&api::ui_url());
+                }
+            }
+
+            Event::UserEvent(Wake::DaemonFailed) => {
+                startup_waiting = false;
+                crate::diagnostic!(
+                    "[hypergate] daemon startup failed; see {}",
+                    crate::logging::path().display()
+                );
+                if let Some(w) = &window {
+                    w.show_html(&startup_html(Some("Hypergate could not start the local daemon.")));
+                }
+            }
+
+            Event::UserEvent(Wake::RetryStartup) => {
+                if let Some(w) = &window {
+                    w.show_html(&startup_html(None));
+                }
+                if let Some(t) = &mut tray {
+                    match restart_daemon(t) {
+                        Ok(pid) => {
+                            startup_waiting = true;
+                            start_readiness(window_proxy.clone(), pid);
+                        }
+                        Err(e) => {
+                            crate::diagnostic!("[hypergate] retry could not start daemon: {e}");
+                            if let Some(w) = &window {
+                                w.show_html(&startup_html(Some(&format!("Could not start the daemon: {e}"))));
+                            }
+                        }
+                    }
+                } else if let Some(w) = &window {
+                    w.show_html(&startup_html(Some("The tray supervisor is not available.")));
+                }
+            }
+
+            Event::UserEvent(Wake::OpenStartupBrowser) => {
+                let _ = open::that_detached(api::ui_url());
             }
 
             // Alt+F4 and the macOS traffic light still come through the frame;
@@ -447,7 +505,9 @@ pub fn run(with_window: bool) -> Result<(), String> {
                 // reversible outcome, so that is the one we default to.
                 if awaiting_close && !prompt_shown {
                     awaiting_close = false;
-                    eprintln!("[hypergate] the manager page did not answer the close prompt; hiding to the tray");
+                    crate::diagnostic!(
+                        "[hypergate] the manager page did not answer the close prompt; hiding to the tray"
+                    );
                     if let Some(w) = &window {
                         w.hide();
                     }
@@ -483,13 +543,15 @@ pub fn run(with_window: bool) -> Result<(), String> {
                 let clicked = ev.id.as_ref();
                 match clicked {
                     id::OPEN => {
-                        open_manager(&mut window, target, &window_proxy);
+                        open_manager(&mut window, target, &window_proxy, startup_waiting);
                     }
                     id::START_ALL => act_on_all(true),
                     id::STOP_ALL => act_on_all(false),
                     id::RESTART_DAEMON => {
-                        if let Some(t) = &mut tray {
-                            restart_daemon(t);
+                        if let Some(t) = &mut tray
+                            && let Err(e) = restart_daemon(t)
+                        {
+                            crate::diagnostic!("[hypergate] could not restart the daemon: {e}");
                         }
                     }
                     id::AUTOSTART => {
@@ -504,7 +566,7 @@ pub fn run(with_window: bool) -> Result<(), String> {
                                 autostart::disable()
                             };
                             if let Err(e) = result {
-                                eprintln!("[hypergate] could not change the login item: {e}");
+                                crate::diagnostic!("[hypergate] could not change the login item: {e}");
                             }
                             t.autostart.set_checked(autostart::is_enabled());
                         }
@@ -547,7 +609,7 @@ fn quit(tray: &mut Option<Tray>, stop_tx: &mpsc::Sender<()>, control_flow: &mut 
         && !daemon::stop().unwrap_or(false)
         && let Err(e) = api::shutdown()
     {
-        eprintln!("[hypergate] could not stop the daemon on quit: {e}");
+        crate::diagnostic!("[hypergate] could not stop the daemon on quit: {e}");
     }
     *control_flow = ControlFlow::Exit;
 }
@@ -564,7 +626,7 @@ fn act_on_all(start: bool) {
                     api::stop_server(&s.id)
                 };
                 if let Err(e) = r {
-                    eprintln!(
+                    crate::diagnostic!(
                         "[hypergate] {} {} failed: {e}",
                         if start { "start" } else { "stop" },
                         s.id
@@ -572,26 +634,23 @@ fn act_on_all(start: bool) {
                 }
             }
         }
-        Err(e) => eprintln!("[hypergate] could not list servers: {e}"),
+        Err(e) => crate::diagnostic!("[hypergate] could not list servers: {e}"),
     });
 }
 
 /// Restart the daemon we own, replacing the child handle.
-fn restart_daemon(tray: &mut Tray) {
+fn restart_daemon(tray: &mut Tray) -> Result<u32, String> {
     if let Some(child) = &mut tray.child {
         let _ = child.kill();
         let _ = child.wait();
     } else if daemon::stop().is_err() {
-        eprintln!("[hypergate] this tray did not start the daemon, so it cannot restart it");
-        return;
+        return Err("this tray did not start the daemon, so it cannot restart it".to_string());
     }
-    match daemon::spawn_child() {
-        Ok(c) => {
-            tray.child = Some(c);
-            tray.status.set_text("Restarting daemon…");
-        }
-        Err(e) => eprintln!("[hypergate] could not restart the daemon: {e}"),
-    }
+    let c = daemon::spawn_child()?;
+    let pid = c.id();
+    tray.child = Some(c);
+    tray.status.set_text("Restarting daemon…");
+    Ok(pid)
 }
 
 /// Show the manager window, creating it if it isn't open and un-hiding it if a
@@ -601,18 +660,79 @@ fn open_manager(
     window: &mut Option<ManagerWindow>,
     target: &tao::event_loop::EventLoopWindowTarget<Wake>,
     proxy: &EventLoopProxy<Wake>,
+    starting: bool,
 ) {
     if let Some(w) = window.as_ref() {
         w.focus();
         return;
     }
-    match ManagerWindow::open(target, proxy.clone()) {
+    let result = if starting {
+        ManagerWindow::open_starting(target, proxy.clone(), startup_html(None))
+    } else {
+        ManagerWindow::open(target, proxy.clone())
+    };
+    match result {
         Ok(w) => *window = Some(w),
         Err(e) => {
-            eprintln!("[hypergate] {e}; opening the manager in the browser instead");
+            crate::diagnostic!("[hypergate] {e}; opening the manager in the browser instead");
             let _ = open::that_detached(api::ui_url());
         }
     }
+}
+
+fn start_readiness(proxy: EventLoopProxy<Wake>, pid: u32) {
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(90);
+        loop {
+            if api::is_up() {
+                let _ = proxy.send_event(Wake::DaemonReady);
+                return;
+            }
+            if !daemon::pid_is_alive(pid) || std::time::Instant::now() >= deadline {
+                let _ = proxy.send_event(Wake::DaemonFailed);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    });
+}
+
+fn startup_html(error: Option<&str>) -> String {
+    let log = crate::logging::path().display().to_string();
+    let esc = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    };
+    let message = error
+        .map(|e| format!("<p class=\"error\">{}</p>", esc(e)))
+        .unwrap_or_else(|| "<p>Starting the local daemon… this window will continue automatically.</p>".to_string());
+    let failure_details = error
+        .map(|_| {
+            format!(
+                "<p><code>{}</code></p><button onclick=\"window.ipc.postMessage('starting:retry')\">Retry</button><button onclick=\"window.ipc.postMessage('starting:browser')\">Open in browser</button>",
+                esc(&log)
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        r#"<!doctype html><html><head><meta charset="utf-8"><title>Hypergate</title>
+<style>
+:root{{color-scheme:dark}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1117;color:#e7e9ee;font:15px/1.5 system-ui,sans-serif}}
+main{{width:min(440px,calc(100vw - 48px));text-align:center;padding:40px 28px;border:1px solid #2a3042;border-radius:20px;background:#171b27;box-shadow:0 18px 60px #05060a99}}
+svg{{width:116px;height:116px;margin-bottom:12px}}h1{{font-size:24px;margin:0 0 8px}}p{{color:#aab3c7;margin:8px 0}}.error{{color:#ff9aab}}button{{margin:18px 6px 0;padding:9px 15px;border:1px solid #5662a4;border-radius:9px;background:#252c51;color:#f2f4ff;cursor:pointer}}button:hover{{background:#303a6b}}code{{font-size:12px;overflow-wrap:anywhere;color:#8fddec}}
+</style></head><body><main>{svg}<h1>{title}</h1>{message}
+{failure_details}</main></body></html>"#,
+        svg = icon::svg(),
+        title = if error.is_some() {
+            "Hypergate did not start"
+        } else {
+            "Starting Hypergate…"
+        },
+        message = message,
+        failure_details = failure_details,
+    )
 }
 
 /// Bind a loopback port as a single-instance lock. Cross-platform, and released
