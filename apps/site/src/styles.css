@@ -407,36 +407,21 @@ html[data-download-platform="mobile"] .hero-snippet { display: none; }
 }
 .reveal.in { opacity: 1; transform: none; }
 .hero .fly {
-  animation: flyThrough 1.1s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+  animation: flyThrough 0.45s cubic-bezier(0.2, 0.75, 0.2, 1) both;
   animation-delay: var(--rd, 0ms);
 }
-.hero-h1 .grad.fly { animation-name: flyThroughGlow; }
+.hero .fly.is-flying { will-change: opacity, transform; }
 @keyframes flyThrough {
   from {
     opacity: 0;
-    filter: blur(4px);
     transform: translate3d(0, 0, -900px) scale(0.35);
   }
   to {
     opacity: 1;
-    filter: none;
-    transform: none;
-  }
-}
-@keyframes flyThroughGlow {
-  from {
-    opacity: 0;
-    filter: drop-shadow(0 0 34px rgba(34, 211, 238, 0.35)) blur(4px);
-    transform: translate3d(0, 0, -900px) scale(0.35);
-  }
-  to {
-    opacity: 1;
-    filter: drop-shadow(0 0 34px rgba(34, 211, 238, 0.35));
     transform: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .reveal { opacity: 1; transform: none; transition: none; }
-  .hero .fly { opacity: 1; filter: none; transform: none; animation: none; }
-  .hero-h1 .grad.fly { filter: drop-shadow(0 0 34px rgba(34, 211, 238, 0.35)); }
+  .hero .fly { opacity: 1; transform: none; animation: none; }
 }

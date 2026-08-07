@@ -38,6 +38,21 @@ for (const el of document.querySelectorAll<HTMLElement>('.reveal, .fly')) {
   const d = el.dataset.delay;
   if (d) el.style.setProperty('--rd', `${d}ms`);
 }
+const heroFlyEls = [...document.querySelectorAll<HTMLElement>('.hero .fly')];
+const finishHeroFly = (el: HTMLElement) => {
+  el.classList.remove('is-flying');
+};
+for (const el of heroFlyEls) {
+  if (reduced) {
+    finishHeroFly(el);
+    continue;
+  }
+  el.classList.add('is-flying');
+  el.addEventListener('animationend', (e) => {
+    if (e.animationName === 'flyThrough') finishHeroFly(el);
+  });
+  el.addEventListener('animationcancel', () => finishHeroFly(el));
+}
 const io = new IntersectionObserver(
   (entries) => {
     for (const e of entries) {
