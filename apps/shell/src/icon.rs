@@ -82,7 +82,7 @@ fn sample(x: f32, y: f32, size: u32, coloured: bool) -> ([f32; 3], f32) {
         }
         return ([0.0; 3], 0.0);
     }
-    let halo = if coloured {
+    let halo = if coloured && r > 14.2 {
         (1.0 - smoothstep(14.2, 15.0, r)) * 0.40
     } else {
         0.0
@@ -307,7 +307,20 @@ mod tests {
         assert!(alpha_at(23, 16) < 60, "space inside the ring");
         assert!(alpha_at(27, 16) > 200, "ring");
         assert!(alpha_at(30, 16) > 0, "subtle outer halo");
+        assert!(alpha_at(30, 16) < 140, "halo must remain weaker than the ring");
         assert_eq!(alpha_at(31, 16), 0, "outside the ring");
+    }
+
+    #[test]
+    fn a_violet_trough_stays_brand_saturated() {
+        let (rgb, alpha) = sample(6.05, 10.25, SIZE, true);
+        assert!(alpha > 0.9, "trough sample should be inside the ring");
+        for (actual, expected) in rgb.into_iter().zip(VIOLET) {
+            assert!(
+                (actual - expected).abs() < 4.0,
+                "violet trough was diluted: {actual} vs {expected}"
+            );
+        }
     }
 
     #[test]

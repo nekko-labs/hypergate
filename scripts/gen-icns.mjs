@@ -62,7 +62,7 @@ const sample = (x, y, size) => {
     const halo = r > 14.2 ? (1 - smooth(14.2, 15.0, r)) * 0.4 : 0;
     return [HALO.map((v) => v * halo), halo];
   }
-  const halo = (1 - smooth(14.2, 15.0, r)) * 0.4;
+  const halo = r > 14.2 ? (1 - smooth(14.2, 15.0, r)) * 0.4 : 0;
   const coverage = Math.min(1, ring + halo);
   return [[hot[0] * ring + HALO[0] * halo, hot[1] * ring + HALO[1] * halo, hot[2] * ring + HALO[2] * halo], coverage];
 };
