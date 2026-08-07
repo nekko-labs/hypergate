@@ -68,7 +68,8 @@ PLIST
 # local unsigned build, unchanged.
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   codesign --force --options runtime --timestamp \
-    --sign "$MACOS_SIGN_IDENTITY" "$APP"
+    --sign "$MACOS_SIGN_IDENTITY" \
+    --exclude "$APP/Contents/MacOS/web" "$APP"
 fi
 
 # The CLI on PATH. A relative symlink, so it keeps working if the bundle is
