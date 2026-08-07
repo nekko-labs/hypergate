@@ -1,5 +1,5 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
@@ -34,6 +34,10 @@ pub fn line(message: String) {
     eprintln!("{message}");
     if let Some(file) = FILE.get() {
         if let Ok(mut file) = file.lock() {
+            if file.metadata().map(|m| m.len() >= MAX_BYTES).unwrap_or(false) {
+                let _ = file.set_len(0);
+                let _ = file.seek(SeekFrom::Start(0));
+            }
             let _ = writeln!(file, "{message}");
             let _ = file.flush();
         }
