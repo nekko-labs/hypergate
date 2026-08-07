@@ -329,6 +329,7 @@ pub fn run(with_window: bool) -> Result<(), String> {
 
     let mut tray: Option<Tray> = None;
     let mut window: Option<ManagerWindow> = None;
+    let startup_pid = child.as_ref().map(std::process::Child::id);
     let mut pending_child = child;
     // Nothing has been read from the daemon yet, so ask rather than assume.
     let mut close_action = CloseAction::Ask;
@@ -338,11 +339,8 @@ pub fn run(with_window: bool) -> Result<(), String> {
     let mut prompt_shown = false;
     // Handed to the manager window so its page can answer that question.
     let window_proxy = event_loop.create_proxy();
-    let startup_pid = child.as_ref().map(std::process::Child::id);
-    if startup_waiting {
-        if let Some(pid) = startup_pid {
-            start_readiness(window_proxy.clone(), pid);
-        }
+    if startup_waiting && let Some(pid) = startup_pid {
+        start_readiness(window_proxy.clone(), pid);
     }
 
     event_loop.run(move |event, target, control_flow| {
@@ -550,10 +548,10 @@ pub fn run(with_window: bool) -> Result<(), String> {
                     id::START_ALL => act_on_all(true),
                     id::STOP_ALL => act_on_all(false),
                     id::RESTART_DAEMON => {
-                        if let Some(t) = &mut tray {
-                            if let Err(e) = restart_daemon(t) {
-                                crate::diagnostic!("[hypergate] could not restart the daemon: {e}");
-                            }
+                        if let Some(t) = &mut tray
+                            && let Err(e) = restart_daemon(t)
+                        {
+                            crate::diagnostic!("[hypergate] could not restart the daemon: {e}");
                         }
                     }
                     id::AUTOSTART => {

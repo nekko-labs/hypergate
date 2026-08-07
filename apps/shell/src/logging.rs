@@ -38,15 +38,15 @@ pub fn init() {
 pub fn line(message: String) {
     let message = redact(&message);
     eprintln!("{message}");
-    if let Some(file) = FILE.get() {
-        if let Ok(mut file) = file.lock() {
-            if file.metadata().map(|m| m.len() >= MAX_BYTES).unwrap_or(false) {
-                let _ = file.set_len(0);
-                let _ = file.seek(SeekFrom::Start(0));
-            }
-            let _ = writeln!(file, "{message}");
-            let _ = file.flush();
+    if let Some(file) = FILE.get()
+        && let Ok(mut file) = file.lock()
+    {
+        if file.metadata().map(|m| m.len() >= MAX_BYTES).unwrap_or(false) {
+            let _ = file.set_len(0);
+            let _ = file.seek(SeekFrom::Start(0));
         }
+        let _ = writeln!(file, "{message}");
+        let _ = file.flush();
     }
 }
 
