@@ -6,7 +6,7 @@
 # .dmg cannot do the former, and asking people to drag an app and then also run
 # a shell command is worse than one double-click.
 #
-# Usage: build-pkg.sh <payload-dir> <version> <arch> <output.pkg>
+# Usage: build-pkg.sh <payload-dir> <version> <arch> <output.pkg> <icon.icns>
 set -euo pipefail
 
 PAYLOAD="${1:?payload directory required}"

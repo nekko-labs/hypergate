@@ -79,7 +79,7 @@ function windows() {
 function macos() {
   const output = join(OUT, `hypergate-${version}-macos-${ARCH}.pkg`);
   // Apple's own vocabulary for the architecture, not npm's.
-  const hostArch = buildTarget?.includes('aarch64') ? 'arm64' : buildTarget?.includes('x86_64') ? 'x86_64' : process.arch === 'arm64' ? 'arm64' : 'x86_64';
+  const hostArch = ARCH === 'arm64' ? 'arm64' : 'x86_64';
   const icon = join(OUT, 'hypergate.icns');
   run(process.execPath, [join(ROOT, 'scripts', 'gen-icns.mjs'), icon]);
   run('bash', [join(INSTALLERS, 'macos', 'build-pkg.sh'), PAYLOAD, version, hostArch, output, icon]);

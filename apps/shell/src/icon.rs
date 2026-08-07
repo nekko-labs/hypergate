@@ -60,7 +60,7 @@ fn sample(x: f32, y: f32, size: u32, coloured: bool) -> ([f32; 3], f32) {
     ring_rgb[2] += (255.0 - ring_rgb[2]) * hot_arc * 0.32;
     if ring <= 0.0 {
         if coloured && r > 14.2 {
-            let halo = (1.0 - smoothstep(14.2, 15.9, r)) * 0.10;
+            let halo = (1.0 - smoothstep(14.2, 15.0, r)) * 0.10;
             if halo > 0.0 {
                 return ([ring_rgb[0] * halo, ring_rgb[1] * halo, ring_rgb[2] * halo], halo);
             }
@@ -68,7 +68,7 @@ fn sample(x: f32, y: f32, size: u32, coloured: bool) -> ([f32; 3], f32) {
         return ([0.0; 3], 0.0);
     }
     let halo = if coloured {
-        (1.0 - smoothstep(14.2, 15.9, r)) * 0.10
+        (1.0 - smoothstep(14.2, 15.0, r)) * 0.10
     } else {
         0.0
     };
@@ -230,17 +230,22 @@ pub fn svg() -> String {
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
   <defs>
-    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="0.8"/>
+    <linearGradient id="gate" gradientUnits="userSpaceOnUse" x1="2" y1="16" x2="30" y2="16">
+      <stop offset="0" stop-color="{violet}"/>
+      <stop offset=".18" stop-color="{violet}"/>
+      <stop offset=".32" stop-color="{cyan}" stop-opacity=".62"/>
+      <stop offset=".46" stop-color="{violet}"/>
+      <stop offset=".62" stop-color="{violet}"/>
+      <stop offset=".76" stop-color="{cyan}" stop-opacity=".62"/>
+      <stop offset=".9" stop-color="{violet}"/>
+      <stop offset="1" stop-color="{violet}"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation=".7"/>
     </filter>
   </defs>
-  <circle cx="16" cy="16" r="13.8" fill="none" stroke="{violet}" stroke-width="1.8" opacity=".12" filter="url(#glow)"/>
-  <path d="M 16 2.8 A 13.2 13.2 0 0 1 27.4 9.4" fill="none" stroke="{violet}" stroke-width="5.4" stroke-linecap="round"/>
-  <path d="M 27.4 9.4 A 13.2 13.2 0 0 1 27.4 22.6" fill="none" stroke="{cyan}" stroke-width="5.4" stroke-linecap="round" opacity=".58"/>
-  <path d="M 27.4 22.6 A 13.2 13.2 0 0 1 16 29.2" fill="none" stroke="{violet}" stroke-width="5.4" stroke-linecap="round"/>
-  <path d="M 16 29.2 A 13.2 13.2 0 0 1 4.6 22.6" fill="none" stroke="{cyan}" stroke-width="5.4" stroke-linecap="round" opacity=".58"/>
-  <path d="M 4.6 22.6 A 13.2 13.2 0 0 1 4.6 9.4" fill="none" stroke="{violet}" stroke-width="5.4" stroke-linecap="round"/>
-  <path d="M 4.6 9.4 A 13.2 13.2 0 0 1 16 2.8" fill="none" stroke="{cyan}" stroke-width="5.4" stroke-linecap="round" opacity=".58"/>
+  <circle cx="16" cy="16" r="11.5" fill="none" stroke="url(#gate)" stroke-width="5.4" opacity=".1" filter="url(#glow)"/>
+  <circle cx="16" cy="16" r="11.5" fill="none" stroke="url(#gate)" stroke-width="5.4"/>
   <path d="M 8.1 9.3 A 11.5 11.5 0 0 1 22.2 7.8" fill="none" stroke="#d8fbff" stroke-width="1.9" stroke-linecap="round" opacity=".7"/>
 </svg>
 "##,
@@ -374,6 +379,11 @@ mod tests {
         assert!(svg.contains("viewBox=\"0 0 32 32\""));
         assert!(svg.contains("#6d5efc"), "violet stop missing");
         assert!(svg.contains("#22d3ee"), "cyan stop missing");
+        assert!(svg.contains("r=\"11.5\""), "SVG must use the design-grid ring radius");
+        assert!(
+            svg.contains("stroke=\"url(#gate)\""),
+            "SVG must use the banded stroke gradient"
+        );
         assert!(!svg.contains("#baf6ff"), "the hollow gate must not render a core");
         assert!(svg.contains("</svg>"));
     }

@@ -14,7 +14,17 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RUST = readFileSync(join(ROOT, 'apps/shell/src/icon.rs'), 'utf8');
-for (const literal of ['[109.0, 94.0, 252.0]', '[34.0, 211.0, 238.0]', '8.8', '14.2']) {
+for (const literal of [
+  '[109.0, 94.0, 252.0]',
+  '[34.0, 211.0, 238.0]',
+  '8.8',
+  '14.2',
+  '15.0',
+  'angle + 0.55',
+  'powf(18.0)',
+  'hot_arc * 0.32',
+  '* 0.10',
+]) {
   if (!RUST.includes(literal)) {
     throw new Error(`ICNS renderer drift guard failed: icon.rs no longer contains ${literal}`);
   }
@@ -27,7 +37,7 @@ const smooth = (a, b, x) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
-const pixel = (x, y, size) => {
+const sample = (x, y, size) => {
   const k = size / SIZE;
   const c = size / 2;
   const dx = x - c;
@@ -38,9 +48,15 @@ const pixel = (x, y, size) => {
   const angle = Math.atan2(dy, dx);
   const band = 0.34 + 0.26 * (0.5 + 0.5 * Math.sin(angle * 3 + 0.28 * Math.sin(angle * 5)));
   const rgb = VIOLET.map((v, i) => v + (CYAN[i] - v) * band);
-  const halo = r > 14.2 ? (1 - smooth(14.2, 15.9, r)) * 0.1 : 0;
+  const hotArc = Math.max(Math.cos(angle + 0.55), 0) ** 18 * ring;
+  const hot = rgb.map((v) => v + (255 - v) * hotArc * 0.32);
+  if (ring <= 0) {
+    const halo = r > 14.2 ? (1 - smooth(14.2, 15.0, r)) * 0.1 : 0;
+    return [hot.map((v) => v * halo), halo];
+  }
+  const halo = (1 - smooth(14.2, 15.0, r)) * 0.1;
   const coverage = Math.min(1, ring + halo);
-  return [...rgb, coverage];
+  return [[...hot].map((v) => v * (ring + halo)), coverage];
 };
 
 const crcTable = (() => {
@@ -66,20 +82,37 @@ const chunk = (type, data) => {
   out.writeUInt32BE(crc32(body), 8 + data.length);
   return out;
 };
-const png = (size) => {
+const rgba = (size) => {
   const scan = Buffer.alloc((size * 4 + 1) * size);
+  const samples = 3;
   for (let y = 0; y < size; y++) {
     const row = y * (size * 4 + 1);
     scan[row] = 0;
     for (let x = 0; x < size; x++) {
-      const [r, g, b, a] = pixel(x + 0.5, y + 0.5, size);
+      const acc = [0, 0, 0];
+      let alpha = 0;
+      for (let sy = 0; sy < samples; sy++) {
+        for (let sx = 0; sx < samples; sx++) {
+          const [rgb, a] = sample(x + (sx + 0.5) / samples, y + (sy + 0.5) / samples, size);
+          acc[0] += rgb[0];
+          acc[1] += rgb[1];
+          acc[2] += rgb[2];
+          alpha += a;
+        }
+      }
+      const n = samples * samples;
+      const a = alpha / n;
       const i = row + 1 + x * 4;
-      scan[i] = Math.round(r);
-      scan[i + 1] = Math.round(g);
-      scan[i + 2] = Math.round(b);
+      if (a <= 0.001) continue;
+      scan[i] = Math.max(0, Math.min(255, Math.round(acc[0] / n / a)));
+      scan[i + 1] = Math.max(0, Math.min(255, Math.round(acc[1] / n / a)));
+      scan[i + 2] = Math.max(0, Math.min(255, Math.round(acc[2] / n / a)));
       scan[i + 3] = Math.round(a * 255);
     }
   }
+  return scan;
+};
+const png = (size) => {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);
@@ -88,10 +121,18 @@ const png = (size) => {
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk('IHDR', ihdr),
-    chunk('IDAT', deflateSync(scan, { level: 9 })),
+    chunk('IDAT', deflateSync(rgba(size), { level: 9 })),
     chunk('IEND', Buffer.alloc(0)),
   ]);
 };
+
+if (process.argv[2] === '--raw') {
+  const size = Number(process.argv[3]);
+  const target = process.argv[4];
+  if (!Number.isInteger(size) || !target) throw new Error('usage: gen-icns.mjs --raw <size> <output>');
+  writeFileSync(target, rgba(size));
+  process.exit(0);
+}
 
 const entries = [
   ['icp4', 16],
@@ -101,6 +142,10 @@ const entries = [
   ['ic08', 256],
   ['ic09', 512],
   ['ic10', 1024],
+  ['ic11', 32],
+  ['ic12', 64],
+  ['ic13', 256],
+  ['ic14', 512],
 ];
 const bodies = entries.map(([, size]) => png(size));
 const total = 8 + bodies.reduce((n, b) => n + 8 + b.length, 0);
