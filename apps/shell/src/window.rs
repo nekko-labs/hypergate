@@ -95,6 +95,7 @@ impl ManagerWindow {
         Self::open_with(target, proxy, None)
     }
 
+    /// Create a manager window with the local startup status page.
     pub fn open_starting(
         target: &EventLoopWindowTarget<Wake>,
         proxy: EventLoopProxy<Wake>,
@@ -131,10 +132,12 @@ impl ManagerWindow {
         Ok(Self { window, webview })
     }
 
+    /// Replace the startup page with the daemon-backed manager URL.
     pub fn navigate(&self, url: &str) {
         let _ = self.webview.load_url(url);
     }
 
+    /// Replace the current document with a local status or error page.
     pub fn show_html(&self, html: &str) {
         if let Ok(script) = serde_json::to_string(html) {
             let _ = self
@@ -271,6 +274,7 @@ impl ManagerWindow {
     }
 
     #[cfg(not(all(unix, not(target_os = "macos"))))]
+    /// Attach a webview whose first document is supplied by the shell.
     fn attach_html(window: &Window, proxy: EventLoopProxy<Wake>, html: String) -> Result<wry::WebView, String> {
         wry::WebViewBuilder::new()
             .with_html(&html)
@@ -300,6 +304,7 @@ impl ManagerWindow {
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
+    /// Attach a GTK webview whose first document is supplied by the shell.
     fn attach_html(window: &Window, proxy: EventLoopProxy<Wake>, html: String) -> Result<wry::WebView, String> {
         use tao::platform::unix::WindowExtUnix;
         use wry::WebViewBuilderExtUnix;

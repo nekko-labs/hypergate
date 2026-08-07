@@ -402,21 +402,21 @@ pub fn run(with_window: bool) -> Result<(), String> {
                 if let Some(w) = &window {
                     w.show_html(&startup_html(None));
                 }
-                match daemon::spawn_child() {
-                    Ok(c) => {
-                        let pid = c.id();
-                        if let Some(t) = &mut tray {
-                            t.child = Some(c);
+                if let Some(t) = &mut tray {
+                    match restart_daemon(t) {
+                        Ok(pid) => {
+                            startup_waiting = true;
+                            start_readiness(window_proxy.clone(), pid);
                         }
-                        startup_waiting = true;
-                        start_readiness(window_proxy.clone(), pid);
-                    }
-                    Err(e) => {
-                        crate::diagnostic!("[hypergate] retry could not start daemon: {e}");
-                        if let Some(w) = &window {
-                            w.show_html(&startup_html(Some(&format!("Could not start the daemon: {e}"))));
+                        Err(e) => {
+                            crate::diagnostic!("[hypergate] retry could not start daemon: {e}");
+                            if let Some(w) = &window {
+                                w.show_html(&startup_html(Some(&format!("Could not start the daemon: {e}"))));
+                            }
                         }
                     }
+                } else if let Some(w) = &window {
+                    w.show_html(&startup_html(Some("The tray supervisor is not available.")));
                 }
             }
 
@@ -551,7 +551,9 @@ pub fn run(with_window: bool) -> Result<(), String> {
                     id::STOP_ALL => act_on_all(false),
                     id::RESTART_DAEMON => {
                         if let Some(t) = &mut tray {
-                            restart_daemon(t);
+                            if let Err(e) = restart_daemon(t) {
+                                crate::diagnostic!("[hypergate] could not restart the daemon: {e}");
+                            }
                         }
                     }
                     id::AUTOSTART => {
@@ -639,21 +641,18 @@ fn act_on_all(start: bool) {
 }
 
 /// Restart the daemon we own, replacing the child handle.
-fn restart_daemon(tray: &mut Tray) {
+fn restart_daemon(tray: &mut Tray) -> Result<u32, String> {
     if let Some(child) = &mut tray.child {
         let _ = child.kill();
         let _ = child.wait();
     } else if daemon::stop().is_err() {
-        crate::diagnostic!("[hypergate] this tray did not start the daemon, so it cannot restart it");
-        return;
+        return Err("this tray did not start the daemon, so it cannot restart it".to_string());
     }
-    match daemon::spawn_child() {
-        Ok(c) => {
-            tray.child = Some(c);
-            tray.status.set_text("Restarting daemon…");
-        }
-        Err(e) => crate::diagnostic!("[hypergate] could not restart the daemon: {e}"),
-    }
+    let c = daemon::spawn_child()?;
+    let pid = c.id();
+    tray.child = Some(c);
+    tray.status.set_text("Restarting daemon…");
+    Ok(pid)
 }
 
 /// Show the manager window, creating it if it isn't open and un-hiding it if a
@@ -711,6 +710,14 @@ fn startup_html(error: Option<&str>) -> String {
     let message = error
         .map(|e| format!("<p class=\"error\">{}</p>", esc(e)))
         .unwrap_or_else(|| "<p>Starting the local daemon… this window will continue automatically.</p>".to_string());
+    let failure_details = error
+        .map(|_| {
+            format!(
+                "<p><code>{}</code></p><button onclick=\"window.ipc.postMessage('starting:retry')\">Retry</button><button onclick=\"window.ipc.postMessage('starting:browser')\">Open in browser</button>",
+                esc(&log)
+            )
+        })
+        .unwrap_or_default();
     format!(
         r#"<!doctype html><html><head><meta charset="utf-8"><title>Hypergate</title>
 <style>
@@ -718,8 +725,7 @@ fn startup_html(error: Option<&str>) -> String {
 main{{width:min(440px,calc(100vw - 48px));text-align:center;padding:40px 28px;border:1px solid #2a3042;border-radius:20px;background:#171b27;box-shadow:0 18px 60px #05060a99}}
 svg{{width:116px;height:116px;margin-bottom:12px}}h1{{font-size:24px;margin:0 0 8px}}p{{color:#aab3c7;margin:8px 0}}.error{{color:#ff9aab}}button{{margin:18px 6px 0;padding:9px 15px;border:1px solid #5662a4;border-radius:9px;background:#252c51;color:#f2f4ff;cursor:pointer}}button:hover{{background:#303a6b}}code{{font-size:12px;overflow-wrap:anywhere;color:#8fddec}}
 </style></head><body><main>{svg}<h1>{title}</h1>{message}
-<p><code>{log}</code></p><button onclick="window.ipc.postMessage('starting:retry')">Retry</button><button onclick="window.ipc.postMessage('starting:browser')">Open in browser</button>
-</main></body></html>"#,
+{failure_details}</main></body></html>"#,
         svg = icon::svg(),
         title = if error.is_some() {
             "Hypergate did not start"
@@ -727,7 +733,7 @@ svg{{width:116px;height:116px;margin-bottom:12px}}h1{{font-size:24px;margin:0 0 
             "Starting Hypergate…"
         },
         message = message,
-        log = esc(&log),
+        failure_details = failure_details,
     )
 }
 

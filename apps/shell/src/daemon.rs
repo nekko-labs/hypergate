@@ -171,6 +171,8 @@ pub fn wait_until_up(timeout: Duration) -> bool {
     false
 }
 
+/// Probe whether a supervised daemon process still exists without spawning a
+/// helper process from the tray.
 pub fn pid_is_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
@@ -179,11 +181,19 @@ pub fn pid_is_alive(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}")])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
-            .unwrap_or(false)
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE,
+        };
+        let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }) else {
+            return false;
+        };
+        let mut code = 0;
+        let alive = unsafe { GetExitCodeProcess(handle, &mut code).is_ok() && code == STILL_ACTIVE.0 };
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        alive
     }
 }
 

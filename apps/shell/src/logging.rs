@@ -1,3 +1,8 @@
+//! Capped persistent diagnostics for Finder-launched tray sessions.
+//!
+//! The shell still mirrors every line to stderr for terminal launches, while
+//! retaining enough local context to diagnose a background app with no console.
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -31,6 +36,7 @@ pub fn init() {
 }
 
 pub fn line(message: String) {
+    let message = redact(&message);
     eprintln!("{message}");
     if let Some(file) = FILE.get() {
         if let Ok(mut file) = file.lock() {
@@ -42,4 +48,34 @@ pub fn line(message: String) {
             let _ = file.flush();
         }
     }
+}
+
+fn redact(message: &str) -> String {
+    let mut safe = message.to_string();
+    if let Ok(token) = std::env::var("HYPERGATE_TOKEN")
+        && !token.is_empty()
+    {
+        safe = safe.replace(&token, "[redacted]");
+    }
+    for key in ["token", "password", "secret", "authorization", "api_key"] {
+        let mut search_from = 0;
+        while let Some(relative) = safe[search_from..].to_ascii_lowercase().find(key) {
+            let start = search_from + relative;
+            let value_start = safe[start + key.len()..]
+                .find(|c: char| c == '=' || c == ':' || c.is_ascii_whitespace())
+                .map(|i| start + key.len() + i + 1);
+            let Some(value_start) = value_start else {
+                break;
+            };
+            let value_end = safe[value_start..]
+                .find(|c: char| c.is_ascii_whitespace() || c == ',' || c == '"' || c == '\'')
+                .map(|i| value_start + i)
+                .unwrap_or(safe.len());
+            if value_end > value_start {
+                safe.replace_range(value_start..value_end, "[redacted]");
+            }
+            search_from = value_start + "[redacted]".len();
+        }
+    }
+    safe
 }
