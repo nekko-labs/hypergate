@@ -17,13 +17,16 @@ const RUST = readFileSync(join(ROOT, 'apps/shell/src/icon.rs'), 'utf8');
 for (const literal of [
   '[109.0, 94.0, 252.0]',
   '[34.0, 211.0, 238.0]',
+  '[165.0, 243.0, 252.0]',
+  '[124.0, 107.0, 255.0]',
   '8.8',
   '14.2',
   '15.0',
   'angle + 0.55',
   'powf(18.0)',
+  'powf(3.2)',
   'hot_arc * 0.32',
-  '* 0.10',
+  '* 0.40',
 ]) {
   if (!RUST.includes(literal)) {
     throw new Error(`ICNS renderer drift guard failed: icon.rs no longer contains ${literal}`);
@@ -32,6 +35,8 @@ for (const literal of [
 
 const VIOLET = [109, 94, 252];
 const CYAN = [34, 211, 238];
+const ICE = [165, 243, 252];
+const HALO = [124, 107, 255];
 const SIZE = 32;
 const smooth = (a, b, x) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
@@ -46,17 +51,20 @@ const sample = (x, y, size) => {
   const feather = 1.2 / Math.max(k, 1);
   const ring = smooth(8.8, 8.8 + feather, r) * (1 - smooth(14.2 - feather, 14.2, r));
   const angle = Math.atan2(dy, dx);
-  const band = 0.34 + 0.26 * (0.5 + 0.5 * Math.sin(angle * 3 + 0.28 * Math.sin(angle * 5)));
-  const rgb = VIOLET.map((v, i) => v + (CYAN[i] - v) * band);
+  const phase = 0.5 + 0.5 * Math.sin(angle * 3 + 0.28 * Math.sin(angle * 5));
+  const crest = phase ** 3.2;
+  const rgb = crest < 0.68
+    ? VIOLET.map((v, i) => v + (CYAN[i] - v) * (crest / 0.68))
+    : CYAN.map((v, i) => v + (ICE[i] - v) * ((crest - 0.68) / 0.32) * 0.67);
   const hotArc = Math.max(Math.cos(angle + 0.55), 0) ** 18 * ring;
   const hot = rgb.map((v) => v + (255 - v) * hotArc * 0.32);
   if (ring <= 0) {
-    const halo = r > 14.2 ? (1 - smooth(14.2, 15.0, r)) * 0.1 : 0;
-    return [hot.map((v) => v * halo), halo];
+    const halo = r > 14.2 ? (1 - smooth(14.2, 15.0, r)) * 0.4 : 0;
+    return [HALO.map((v) => v * halo), halo];
   }
-  const halo = (1 - smooth(14.2, 15.0, r)) * 0.1;
+  const halo = (1 - smooth(14.2, 15.0, r)) * 0.4;
   const coverage = Math.min(1, ring + halo);
-  return [[...hot].map((v) => v * (ring + halo)), coverage];
+  return [[hot[0] * ring + HALO[0] * halo, hot[1] * ring + HALO[1] * halo, hot[2] * ring + HALO[2] * halo], coverage];
 };
 
 const crcTable = (() => {

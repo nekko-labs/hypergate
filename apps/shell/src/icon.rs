@@ -16,6 +16,10 @@ const SAMPLES: u32 = 3;
 const VIOLET: [f32; 3] = [109.0, 94.0, 252.0];
 /// `#22d3ee` — the cyan end.
 const CYAN: [f32; 3] = [34.0, 211.0, 238.0];
+/// `#a5f3fc` — the bright ice crest from the hero shader.
+const ICE: [f32; 3] = [165.0, 243.0, 252.0];
+/// `#7c6bff` — the halo tint used by the site.
+const HALO: [f32; 3] = [124.0, 107.0, 255.0];
 
 /// Smooth 0→1 ramp across `[edge0, edge1]`, for antialiased edges.
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
@@ -46,12 +50,23 @@ fn sample(x: f32, y: f32, size: u32, coloured: bool) -> ([f32; 3], f32) {
     // Several violet-dominant bands sweep around the ring, echoing the site's
     // animated shader without making the static mark look noisy.
     let angle = dy.atan2(dx); // -PI..PI
-    let band = 0.34 + 0.26 * (0.5 + 0.5 * (angle * 3.0 + 0.28 * (angle * 5.0).sin()).sin());
-    let mut ring_rgb = [
-        VIOLET[0] + (CYAN[0] - VIOLET[0]) * band,
-        VIOLET[1] + (CYAN[1] - VIOLET[1]) * band,
-        VIOLET[2] + (CYAN[2] - VIOLET[2]) * band,
-    ];
+    let phase = 0.5 + 0.5 * (angle * 3.0 + 0.28 * (angle * 5.0).sin()).sin();
+    let crest = phase.powf(3.2);
+    let mut ring_rgb = if crest < 0.68 {
+        let mix = crest / 0.68;
+        [
+            VIOLET[0] + (CYAN[0] - VIOLET[0]) * mix,
+            VIOLET[1] + (CYAN[1] - VIOLET[1]) * mix,
+            VIOLET[2] + (CYAN[2] - VIOLET[2]) * mix,
+        ]
+    } else {
+        let mix = ((crest - 0.68) / 0.32) * 0.67;
+        [
+            CYAN[0] + (ICE[0] - CYAN[0]) * mix,
+            CYAN[1] + (ICE[1] - CYAN[1]) * mix,
+            CYAN[2] + (ICE[2] - CYAN[2]) * mix,
+        ]
+    };
     // A short ice-white hot arc adds the premium highlight without painting
     // anything into the portal opening.
     let hot_arc = ((angle + 0.55).cos().max(0.0)).powf(18.0) * ring;
@@ -60,24 +75,24 @@ fn sample(x: f32, y: f32, size: u32, coloured: bool) -> ([f32; 3], f32) {
     ring_rgb[2] += (255.0 - ring_rgb[2]) * hot_arc * 0.32;
     if ring <= 0.0 {
         if coloured && r > 14.2 {
-            let halo = (1.0 - smoothstep(14.2, 15.0, r)) * 0.10;
+            let halo = (1.0 - smoothstep(14.2, 15.0, r)) * 0.40;
             if halo > 0.0 {
-                return ([ring_rgb[0] * halo, ring_rgb[1] * halo, ring_rgb[2] * halo], halo);
+                return ([HALO[0] * halo, HALO[1] * halo, HALO[2] * halo], halo);
             }
         }
         return ([0.0; 3], 0.0);
     }
     let halo = if coloured {
-        (1.0 - smoothstep(14.2, 15.0, r)) * 0.10
+        (1.0 - smoothstep(14.2, 15.0, r)) * 0.40
     } else {
         0.0
     };
     let coverage = (ring + halo).min(1.0);
     (
         [
-            ring_rgb[0] * ring + ring_rgb[0] * halo,
-            ring_rgb[1] * ring + ring_rgb[1] * halo,
-            ring_rgb[2] * ring + ring_rgb[2] * halo,
+            ring_rgb[0] * ring + HALO[0] * halo,
+            ring_rgb[1] * ring + HALO[1] * halo,
+            ring_rgb[2] * ring + HALO[2] * halo,
         ],
         coverage,
     )
@@ -233,10 +248,10 @@ pub fn svg() -> String {
     <linearGradient id="gate" gradientUnits="userSpaceOnUse" x1="2" y1="16" x2="30" y2="16">
       <stop offset="0" stop-color="{violet}"/>
       <stop offset=".18" stop-color="{violet}"/>
-      <stop offset=".32" stop-color="{cyan}" stop-opacity=".62"/>
+      <stop offset=".32" stop-color="{cyan}" stop-opacity=".78"/>
       <stop offset=".46" stop-color="{violet}"/>
       <stop offset=".62" stop-color="{violet}"/>
-      <stop offset=".76" stop-color="{cyan}" stop-opacity=".62"/>
+      <stop offset=".76" stop-color="{ice}" stop-opacity=".6"/>
       <stop offset=".9" stop-color="{violet}"/>
       <stop offset="1" stop-color="{violet}"/>
     </linearGradient>
@@ -244,13 +259,15 @@ pub fn svg() -> String {
       <feGaussianBlur stdDeviation=".7"/>
     </filter>
   </defs>
-  <circle cx="16" cy="16" r="11.5" fill="none" stroke="url(#gate)" stroke-width="5.4" opacity=".1" filter="url(#glow)"/>
+  <circle cx="16" cy="16" r="11.5" fill="none" stroke="{halo}" stroke-width="2.2" opacity=".4" filter="url(#glow)"/>
   <circle cx="16" cy="16" r="11.5" fill="none" stroke="url(#gate)" stroke-width="5.4"/>
   <path d="M 8.1 9.3 A 11.5 11.5 0 0 1 22.2 7.8" fill="none" stroke="#d8fbff" stroke-width="1.9" stroke-linecap="round" opacity=".7"/>
 </svg>
 "##,
         violet = hex(VIOLET),
         cyan = hex(CYAN),
+        ice = hex(ICE),
+        halo = hex(HALO),
     )
 }
 
