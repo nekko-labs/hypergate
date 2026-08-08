@@ -10,7 +10,7 @@
 
 **Windows:** [x64 installer](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-windows-x64-setup.exe) · [Arm64 installer](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-windows-arm64-setup.exe)
 
-**macOS:** [Apple silicon installer](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-macos-arm64.pkg) · [Intel standalone binary](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-darwin-x64)
+**macOS:** [Apple silicon disk image](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-macos-arm64.dmg) · [Intel standalone binary](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-darwin-x64)
 
 **Linux:** [DEB x64](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-linux-x64.deb) · [DEB Arm64](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-linux-arm64.deb) · [RPM and tarball options](https://hypergate.app/release-notes.html)
 
@@ -18,7 +18,7 @@
 
 ## Install
 
-**An installer, if you'd rather not think about it.** Use the direct download for your machine above. Every [latest release](https://github.com/nekko-labs/hypergate/releases/latest) includes a `-setup.exe` for Windows, a `.pkg` for macOS, and `.deb`/`.rpm`/tarball packages for Linux, each for x64 and arm64. **Nothing else is required, not even Node**: the daemon ships as a single compiled executable. You get a Start Menu / Launchpad / app-menu entry to click, the `hypergate` command on your PATH, and an entry in Add/Remove Programs. Everything installs per-user, so no admin prompt.
+**An installer, if you'd rather not think about it.** Use the direct download for your machine above. Every [latest release](https://github.com/nekko-labs/hypergate/releases/latest) includes a `-setup.exe` for Windows, a `.dmg` for macOS, and `.deb`/`.rpm`/tarball packages for Linux, each for x64 and arm64. On macOS, open the disk image and drag `Hypergate.app` to Applications; launching it can create the CLI links without an admin prompt. **Nothing else is required, not even Node**: the daemon ships as a single compiled executable.
 
 **Or npm, if you already have Node:**
 
@@ -44,7 +44,7 @@ hypergate update --apply   # install it and restart Hypergate
 
 Or from the manager, without the terminal. The version in the topbar **is** the control: hover it to get **Check for updates**, and when there is one it becomes **↑ Update available v‹x›** with three choices — **Download & install**, **Download only** (take it now, install it whenever), and **Skip**. You get a real progress bar for the download and a note when the new version comes up.
 
-`--apply` is for npm installs, which are the ones a per-user agent can safely replace: it writes an updater to the temp directory, stops Hypergate so nothing being replaced is still running, installs the new packages, starts the app again, and logs every step to `~/.hypergate/update.log`. Installed from a `.exe`/`.pkg`/`.deb` instead, or running from a checkout? Then `hypergate update` prints the exact command for that channel rather than half-doing it — the native installers aren't code-signed yet ([docs/signing.md](docs/signing.md)) and the Linux packages need root.
+`--apply` is for npm installs, which are the ones a per-user agent can safely replace: it writes an updater to the temp directory, stops Hypergate so nothing being replaced is still running, installs the new packages, starts the app again, and logs every step to `~/.hypergate/update.log`. Installed from a `.exe`/`.dmg`/`.deb` instead, or running from a checkout? Then `hypergate update` prints the exact command for that channel rather than half-doing it — the native installers aren't code-signed yet ([docs/signing.md](docs/signing.md)) and the Linux packages need root.
 
 The packages come from npm when they're published there, and **from the release's own attached tarballs when they aren't** — every release carries `hypergated-<version>.tgz` plus one `hypergate-shell-<os>-<arch>-<version>.tgz`. Whatever is downloaded from either feed is checked against that feed's published checksum before anything is installed.
 
@@ -122,11 +122,11 @@ npm run build:installers   # dist-installers/: this platform's installer
 
 `build:standalone` compiles the daemon into a single executable with **Node's SEA** support: the esbuild bundle is injected into a copy of the Node binary, and the web UI is placed beside it (the daemon resolves its UI relative to `process.execPath` in that layout). `bun build --compile` would be less work and would cross-compile, but Bun has no `node:sqlite`, so a Bun build silently loses durable usage history and server logs. That is worth the extra machinery.
 
-`build:installers` then wraps that tree for the host platform: NSIS on Windows, `pkgbuild`/`productbuild` on macOS, `dpkg-deb` plus `rpmbuild` on Linux. Each is built on its own OS, never cross-built, so every artifact is made by the toolchain that will run it. The definitions live in [`packaging/installers/`](packaging/installers/).
+`build:installers` then wraps that tree for the host platform: NSIS on Windows, `hdiutil` on macOS, `dpkg-deb` plus `rpmbuild` on Linux. Each is built on its own OS, never cross-built, so every artifact is made by the toolchain that will run it. The definitions live in [`packaging/installers/`](packaging/installers/).
 
 The installers deliberately reuse Hypergate's own code for the parts that need judgement: `hypergate shortcut install` creates the launcher (so a redirected OneDrive desktop is handled), `hypergate autostart on` sets the login item, and `hypergate icon` emits the mark. Uninstalling leaves `~/.hypergate` alone, since an uninstall should not throw away server configs, usage history and OAuth grants.
 
-On macOS, uninstall with `/Applications/Hypergate.app/Contents/Resources/uninstall.sh`; it removes the app, launchers and package receipt while leaving `~/.hypergate` untouched.
+On macOS, run `/Applications/Hypergate.app/Contents/Resources/uninstall.sh` before dragging the app to the Trash. It disables the login item, removes Hypergate's CLI links, and leaves `~/.hypergate` untouched.
 
 [`.github/workflows/build-artifacts.yml`](.github/workflows/build-artifacts.yml) builds all six platforms and can be run on demand, without cutting a release, when you want an installer to test.
 

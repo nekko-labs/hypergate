@@ -107,7 +107,7 @@ export function findInstaller(
     const name = asset.name.toLowerCase();
     if (!terms.some((term) => name.includes(term))) return false;
     if (device.platform === 'windows') return name.endsWith('-setup.exe');
-    if (device.platform === 'macos') return name.endsWith('.pkg') || name === `hypergate-darwin-${device.architecture}`;
+    if (device.platform === 'macos') return name.endsWith('.dmg') || name === `hypergate-darwin-${device.architecture}`;
     if (device.platform === 'linux') return linuxFormat === 'tar.gz' ? name.endsWith('.tar.gz') : name.endsWith(`.${linuxFormat}`);
     return false;
   });
@@ -123,7 +123,7 @@ function platformName(platform: Platform): string {
 export function installerUrlFor(device: Device): string | null {
   const arch = device.architecture;
   if (device.platform === 'windows') return `${LATEST_ASSET}/hypergate-windows-${arch}-setup.exe`;
-  if (device.platform === 'macos') return `${LATEST_ASSET}/hypergate-macos-${arch}.pkg`;
+  if (device.platform === 'macos') return `${LATEST_ASSET}/hypergate-macos-${arch}.dmg`;
   if (device.platform === 'linux') return `${LATEST_ASSET}/hypergate-linux-${arch}.deb`;
   return null;
 }
@@ -138,10 +138,10 @@ export function installCommandFor(device: Device): InstallCommand | null {
     };
   }
   if (device.platform === 'macos') {
-    const asset = `${LATEST_ASSET}/hypergate-macos-${arch}.pkg`;
+    const asset = `${LATEST_ASSET}/hypergate-macos-${arch}.dmg`;
     return {
       shell: 'Terminal',
-      command: `curl -fsSL "${asset}" -o /tmp/hypergate.pkg && sudo installer -pkg /tmp/hypergate.pkg -target / && open -a Hypergate`,
+      command: `curl -fsSL "${asset}" -o /tmp/hypergate.dmg && open /tmp/hypergate.dmg`,
     };
   }
   if (device.platform === 'linux') {

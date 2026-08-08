@@ -831,7 +831,7 @@ export interface UpdateSettingsRequest {
  * How this install got here decides what an update can do to it, so the channel
  * is detected rather than assumed. `npm` is a global npm install (the published
  * `hypergated` package plus its platform shell binary); `installer` is one of the
- * native packages (.exe / .pkg / .deb / .rpm / tarball); `repo` is a checkout
+ * native packages (.exe / .dmg / .deb / .rpm / tarball); `repo` is a checkout
  * being run in place; `unknown` is anything we cannot place, where we tell the
  * user what we found instead of guessing at a command.
  */

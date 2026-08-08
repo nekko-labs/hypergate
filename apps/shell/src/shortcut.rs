@@ -21,7 +21,7 @@ pub struct Entry {
 
 impl Entry {
     pub fn exists(&self) -> bool {
-        self.path.exists()
+        self.path.exists() || self.path.symlink_metadata().is_ok()
     }
 }
 
@@ -72,6 +72,28 @@ pub fn uninstall() -> Result<Vec<PathBuf>, String> {
 
 pub fn status() -> Result<Vec<Entry>, String> {
     platform::entries(true)
+}
+
+#[cfg(target_os = "macos")]
+pub fn path_notice() -> Option<String> {
+    let local = dirs::home_dir()?.join(".local").join("bin");
+    if PathBuf::from("/usr/local/bin/hypergate").symlink_metadata().is_ok() {
+        return None;
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    if !std::env::split_paths(&path).any(|item| item == local) {
+        Some(format!(
+            "{} is not on PATH; add `export PATH=\"$HOME/.local/bin:$PATH\"` to your shell profile.",
+            local.display()
+        ))
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn path_notice() -> Option<String> {
+    None
 }
 
 // ── Windows: .lnk shortcuts in the Start Menu and on the desktop ─────────────
@@ -219,6 +241,7 @@ mod platform {
 #[cfg(target_os = "macos")]
 mod platform {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     const BUNDLE: &str = "Hypergate.app";
 
@@ -231,24 +254,39 @@ mod platform {
     }
 
     pub fn entries(_include_optional: bool) -> Result<Vec<Entry>, String> {
-        Ok(vec![Entry {
+        let mut entries = vec![Entry {
             label: "Applications",
             path: bundle_path(),
-        }])
+        }];
+        for dir in path_dirs() {
+            entries.push(Entry {
+                label: "CLI",
+                path: dir.join("hypergate"),
+            });
+            entries.push(Entry {
+                label: "Daemon CLI",
+                path: dir.join("hypergated"),
+            });
+        }
+        Ok(entries)
     }
 
     pub fn install(_desktop: bool) -> Result<Vec<PathBuf>, String> {
-        use std::os::unix::fs::PermissionsExt;
-
-        let exe = target_exe()?;
+        let original_exe = target_exe()?;
+        let exe = original_exe.canonicalize().unwrap_or(original_exe);
         let bundle = bundle_path();
-        let macos = bundle.join("Contents").join("MacOS");
-        std::fs::create_dir_all(&macos).map_err(|e| format!("could not create {}: {e}", macos.display()))?;
+        let in_app_bundle = exe
+            .ancestors()
+            .any(|path| path.extension().and_then(|ext| ext.to_str()) == Some("app"));
+        let mut made = Vec::new();
+        if !in_app_bundle {
+            let macos = bundle.join("Contents").join("MacOS");
+            std::fs::create_dir_all(&macos).map_err(|e| format!("could not create {}: {e}", macos.display()))?;
 
-        // LSUIElement: an agent with a menu bar item and no Dock icon, which is
-        // what the tray already behaves like.
-        let plist = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+            // LSUIElement: an agent with a menu bar item and no Dock icon, which is
+            // what the tray already behaves like.
+            let plist = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -263,24 +301,77 @@ mod platform {
 </dict>
 </plist>
 "#,
-            version = env!("CARGO_PKG_VERSION")
-        );
-        std::fs::write(bundle.join("Contents").join("Info.plist"), plist)
-            .map_err(|e| format!("could not write Info.plist: {e}"))?;
+                version = env!("CARGO_PKG_VERSION")
+            );
+            std::fs::write(bundle.join("Contents").join("Info.plist"), plist)
+                .map_err(|e| format!("could not write Info.plist: {e}"))?;
 
-        // A stub rather than a copy of the binary: an upgrade in place then
-        // needs no re-install, and the bundle can't go stale against it.
-        // `app`, not `tray`: opening it from Launchpad means "show me the app".
-        let stub = macos.join("Hypergate");
-        std::fs::write(
-            &stub,
-            format!("#!/bin/sh\nexec {} app\n", shell_quote(&exe.to_string_lossy())),
-        )
-        .map_err(|e| format!("could not write the launcher stub: {e}"))?;
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("could not make the launcher executable: {e}"))?;
+            // A stub rather than a copy of the binary: an upgrade in place then
+            // needs no re-install, and the bundle can't go stale against it.
+            // `app`, not `tray`: opening it from Launchpad means "show me the app".
+            let stub = macos.join("Hypergate");
+            std::fs::write(
+                &stub,
+                format!("#!/bin/sh\nexec {} app\n", shell_quote(&exe.to_string_lossy())),
+            )
+            .map_err(|e| format!("could not write the launcher stub: {e}"))?;
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| format!("could not make the launcher executable: {e}"))?;
 
-        Ok(vec![bundle])
+            made.push(bundle);
+        }
+
+        let cli_dir = writable_cli_dir();
+        std::fs::create_dir_all(&cli_dir).map_err(|e| format!("could not create {}: {e}", cli_dir.display()))?;
+        let cli = cli_dir.join("hypergate");
+        let daemon = cli_dir.join("hypergated");
+        let daemon_target = exe.with_file_name("hypergated");
+        for (link, target) in [(&cli, &exe), (&daemon, &daemon_target)] {
+            if link.exists() || link.symlink_metadata().is_ok() {
+                if std::fs::read_link(link).ok().as_ref() != Some(target) {
+                    eprintln!("[hypergate] skipped existing {} (it points elsewhere)", link.display());
+                    continue;
+                }
+                made.push(link.clone());
+                continue;
+            }
+            std::os::unix::fs::symlink(target, link).map_err(|e| format!("could not link {}: {e}", link.display()))?;
+            made.push(link.clone());
+        }
+
+        Ok(made)
+    }
+
+    fn path_dirs() -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        let system = PathBuf::from("/usr/local/bin");
+        if system.exists() {
+            dirs.push(system);
+        }
+        if let Some(home) = dirs::home_dir() {
+            dirs.push(home.join(".local").join("bin"));
+        }
+        dirs
+    }
+
+    fn writable_cli_dir() -> PathBuf {
+        let system = PathBuf::from("/usr/local/bin");
+        if system.is_dir() {
+            let probe = system.join(format!(".hypergate-write-test-{}", std::process::id()));
+            if std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&probe)
+                .is_ok()
+            {
+                let _ = std::fs::remove_file(probe);
+                return system;
+            }
+        }
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".local")
+            .join("bin")
     }
 
     /// Single-quote for `/bin/sh`, so a path with a space or a quote in it
@@ -290,6 +381,20 @@ mod platform {
     }
 
     pub fn remove(entry: &Entry) -> Result<(), String> {
+        if entry.label == "CLI" || entry.label == "Daemon CLI" {
+            let original_exe = target_exe()?;
+            let exe = original_exe.canonicalize().unwrap_or(original_exe);
+            let expected = if entry.label == "CLI" {
+                exe.clone()
+            } else {
+                exe.with_file_name("hypergated")
+            };
+            if std::fs::read_link(&entry.path).ok().as_ref() != Some(&expected) {
+                return Ok(());
+            }
+            return std::fs::remove_file(&entry.path)
+                .map_err(|e| format!("could not remove {}: {e}", entry.path.display()));
+        }
         std::fs::remove_dir_all(&entry.path).map_err(|e| format!("could not remove {}: {e}", entry.path.display()))
     }
 }
