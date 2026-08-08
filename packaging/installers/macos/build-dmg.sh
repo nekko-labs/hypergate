@@ -8,6 +8,8 @@ PAYLOAD="${1:?payload directory required}"
 VERSION="${2:?version required}"
 OUTPUT="${3:?output path required}"
 ICON="${4:?icns path required}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+DAEMON_ENTITLEMENTS="$SCRIPT_DIR/hypergate-daemon.entitlements.plist"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -129,9 +131,12 @@ assert_bundle_integrity
 # unsigned code objects. Move it out before signing the bundle, then restore it.
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   mv "$APP/Contents/MacOS/web" "$WORK/web"
+  # The Rust shell does not JIT, so keep its hardened-runtime signature tight.
   codesign --force --options runtime --timestamp \
     --sign "$MACOS_SIGN_IDENTITY" "$APP/Contents/MacOS/hypergate"
+  # Node/V8 needs these entitlements to reserve and populate its JIT code range.
   codesign --force --options runtime --timestamp \
+    --entitlements "$DAEMON_ENTITLEMENTS" \
     --sign "$MACOS_SIGN_IDENTITY" "$APP/Contents/MacOS/hypergated"
   codesign --force --options runtime --timestamp \
     --sign "$MACOS_SIGN_IDENTITY" "$APP"

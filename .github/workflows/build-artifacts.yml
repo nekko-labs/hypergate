@@ -195,7 +195,9 @@ jobs:
         env:
           IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
         run: |
+          # Node/V8 needs these entitlements to reserve and populate its JIT code range.
           codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+            --entitlements packaging/installers/macos/hypergate-daemon.entitlements.plist \
             dist-standalone/hypergated
 
       - name: Sign the shell binary in the payload (macOS)
@@ -255,7 +257,12 @@ jobs:
       # Runs after signing on purpose: a signature that breaks the binary
       # (hardened runtime, SEA quirks) should fail here, not on a user machine.
       - name: Check the standalone daemon runs
-        run: npm run smoke:standalone
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ] && [ -n "${MACOS_SIGNING_CERTS_P12:-}" ]; then
+            export HYPERGATE_MACOS_DMG="$(ls dist-installers/*.dmg)"
+          fi
+          npm run smoke:standalone
 
       - uses: actions/upload-artifact@v4
         with:

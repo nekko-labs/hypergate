@@ -81,8 +81,16 @@ publisher" warning; reputation accrues to the certificate once signing starts.
 
 The workflow signs both binaries with hardened runtime + timestamp, seals the
 `Hypergate.app` bundle, signs the `.dmg`, notarizes it with `notarytool`, and
-staples the ticket. It then validates the ticket and asks `codesign` and
-Gatekeeper to assess the finished disk image. It needs these
+staples the ticket. The Node/V8 `hypergated` SEA receives
+`com.apple.security.cs.allow-jit` and
+`com.apple.security.cs.allow-unsigned-executable-memory`; without them,
+hardened-runtime startup can fail while V8 reserves its code region. The Rust
+`hypergate` shell is signed with the tighter default entitlements because it
+does not JIT. The source plist is
+`packaging/installers/macos/hypergate-daemon.entitlements.plist`; the
+post-signing smoke test runs the daemon from the mounted DMG and checks both
+entitlements before probing `/health`. It then validates the ticket and asks
+`codesign` and Gatekeeper to assess the finished disk image. It needs these
 secrets:
 
 | Secret | What it is |
