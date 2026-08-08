@@ -751,7 +751,8 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
                 Ok(ExitCode::SUCCESS)
             }
             AgentAction::Token { id } => {
-                print!("{}", commands::agent_token(&id)?);
+                let token = commands::agent_token(&id)?;
+                print!("{}", token.as_str().ok_or("agent token response was not a string")?);
                 Ok(ExitCode::SUCCESS)
             }
             AgentAction::Rotate { id } => {

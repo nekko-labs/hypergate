@@ -227,8 +227,21 @@ pub fn usage_human() -> Result<ExitCode, String> {
 }
 
 pub fn doctor_human(report: &Value) -> Result<ExitCode, String> {
+    const LABELS: [&str; 10] = [
+        "Daemon",
+        "Token",
+        "Keychain",
+        "Authentication",
+        "Allowed hosts",
+        "Agents",
+        "Servers",
+        "Data",
+        "VERDICT",
+        "Action",
+    ];
+    let label_width = LABELS.iter().map(|label| label.len()).max().unwrap_or(0) + 1;
     println!(
-        "{:<12}{}",
+        "{:<label_width$}{}",
         "Daemon",
         if report["daemon"]["running"].as_bool().unwrap_or(false) {
             format!(
@@ -241,12 +254,12 @@ pub fn doctor_human(report: &Value) -> Result<ExitCode, String> {
         }
     );
     println!(
-        "{:<12}{}",
+        "{:<label_width$}{}",
         "Token",
         report["auth"]["tokenSource"].as_str().unwrap_or("none")
     );
     println!(
-        "{:<12}{}",
+        "{:<label_width$}{}",
         "Keychain",
         if report["auth"]["keychainAvailable"].as_bool().unwrap_or(false) {
             "available"
@@ -255,7 +268,7 @@ pub fn doctor_human(report: &Value) -> Result<ExitCode, String> {
         }
     );
     println!(
-        "{:<12}{}",
+        "{:<label_width$}{}",
         "Authentication",
         if report["auth"]["disabled"].as_bool().unwrap_or(false) {
             "DISABLED"
@@ -264,34 +277,42 @@ pub fn doctor_human(report: &Value) -> Result<ExitCode, String> {
         }
     );
     println!(
-        "{:<12}{}",
+        "{:<label_width$}{}",
         "Allowed hosts",
         report["auth"]["allowedHosts"]
             .as_str()
             .filter(|s| !s.is_empty())
             .unwrap_or("none")
     );
-    println!("{:<12}{}", "Agents", report["agents"]["count"].as_u64().unwrap_or(0));
     println!(
-        "{:<12}{}",
+        "{:<label_width$}{}",
+        "Agents",
+        report["agents"]["count"].as_u64().unwrap_or(0)
+    );
+    println!(
+        "{:<label_width$}{}",
         "Servers",
         report["servers"].as_array().map(Vec::len).unwrap_or(0)
     );
-    println!("{:<12}{}", "Data", report["dataDirectory"].as_str().unwrap_or(""));
+    println!(
+        "{:<label_width$}{}",
+        "Data",
+        report["dataDirectory"].as_str().unwrap_or("")
+    );
     if report["problems"].as_bool().unwrap_or(false) {
-        println!("{:<12}NOT READY", "VERDICT");
+        println!("{:<label_width$}NOT READY", "VERDICT");
         if !report["daemon"]["running"].as_bool().unwrap_or(false) {
-            println!("{:<12}run `hypergate start`.", "Action");
+            println!("{:<label_width$}run `hypergate start`.", "Action");
         }
         if report["auth"]["disabled"].as_bool().unwrap_or(false) {
-            println!("{:<12}unset HYPERGATE_NO_AUTH.", "Action");
+            println!("{:<label_width$}unset HYPERGATE_NO_AUTH.", "Action");
         }
         if report["auth"]["tokenSource"] == "file" && report["auth"]["keychainAvailable"].as_bool().unwrap_or(false) {
-            println!("{:<12}move the master token into the OS keychain.", "Action");
+            println!("{:<label_width$}move the master token into the OS keychain.", "Action");
         }
         Ok(ExitCode::from(1))
     } else {
-        println!("{:<12}READY (warnings may apply)", "VERDICT");
+        println!("{:<label_width$}READY (warnings may apply)", "VERDICT");
         Ok(ExitCode::SUCCESS)
     }
 }
