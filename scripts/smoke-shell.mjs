@@ -175,6 +175,40 @@ const cliLogs = hg(['logs', 'echo']);
 if (!cliLogs.includes('sandbox-exec')) fail(`hypergate logs did not return the server log:\n${cliLogs}`);
 ok('hypergate logs streams the durable server log');
 
+const doctor = JSON.parse(hg(['doctor', '--json']));
+if (!doctor.ok || !doctor.data?.daemon?.running) fail(`doctor --json did not report the daemon: ${JSON.stringify(doctor)}`);
+ok('hypergate doctor --json reports daemon posture');
+
+const addedAgent = JSON.parse(hg(['--json', 'agent', 'add', 'smoke-agent']));
+const agentId = addedAgent.data?.id;
+if (!addedAgent.ok || !agentId) fail(`agent add failed: ${JSON.stringify(addedAgent)}`);
+ok('hypergate agent add creates a scoped agent');
+
+const allowed = JSON.parse(hg(['--json', 'agent', 'allow', agentId, 'echo']));
+if (!allowed.ok) fail(`agent allow failed: ${JSON.stringify(allowed)}`);
+ok('hypergate agent allow updates one server scope');
+
+const tokenRaw = execFileSync(BIN, ['agent', 'token', agentId], {
+  encoding: 'utf8',
+  timeout: 30_000,
+  windowsHide: true,
+  env: { ...process.env, HYPERGATE_DIR: DIR, HYPERGATE_PORT: String(PORT), HYPERGATE_KEYCHAIN_NAMESPACE: NAMESPACE },
+});
+if (!tokenRaw || tokenRaw.endsWith('\n') || tokenRaw.endsWith('\r')) fail('agent token printed a trailing newline');
+ok('hypergate agent token prints an exact token');
+
+const rotated = JSON.parse(hg(['--json', 'agent', 'rotate', agentId]));
+if (!rotated.ok || rotated.data?.token === tokenRaw) fail(`agent rotate failed to mint a new token: ${JSON.stringify(rotated)}`);
+ok('hypergate agent rotate preserves the agent while changing its token');
+
+const removedAgent = JSON.parse(hg(['--json', 'agent', 'rm', agentId]));
+if (!removedAgent.ok) fail(`agent rm failed: ${JSON.stringify(removedAgent)}`);
+ok('hypergate agent rm removes the agent');
+
+const clis = JSON.parse(hg(['cli', 'ls', '--json']));
+if (!clis.ok || !Array.isArray(clis.data)) fail(`cli ls --json returned an unexpected shape: ${JSON.stringify(clis)}`);
+ok('hypergate cli ls --json returns catalog status');
+
 // ── durable state survives, and the token is not re-minted ─────────────────
 await new Promise((r) => setTimeout(r, 2300)); // let the debounced writer flush
 daemon.kill();

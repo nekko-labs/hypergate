@@ -11,6 +11,7 @@
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
+AllowSkipFiles off
 
 !ifndef VERSION
   !error "VERSION must be defined"
@@ -58,14 +59,10 @@ VIAddVersionKey "CompanyName" "Nekko Labs"
 ; Stop anything we are about to overwrite. An upgrade over a running tray would
 ; otherwise fail to replace the binary that is currently executing.
 !macro StopHypergate PREFIX
-  ${If} ${FileExists} "${PREFIX}\hypergate.exe"
-    nsExec::Exec '"${PREFIX}\hypergate.exe" stop'
-    Pop $0
-  ${EndIf}
-  nsExec::Exec 'taskkill /IM hypergate.exe /F'
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\stop.ps1" "${STOPSCRIPT}"
+  nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\stop.ps1" -Dir "${PREFIX}"'
   Pop $0
-  ; Give the OS a moment to release the file handles.
-  Sleep 500
 !macroend
 
 Section "Hypergate (required)" SecCore

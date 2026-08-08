@@ -96,6 +96,7 @@ const tarballs = {
   [`${shellPkg}-${NEWER}.tgz`]: randomBytes(96 * 1024),
 };
 const integrity = (buf) => `sha512-${createHash('sha512').update(buf).digest('base64')}`;
+const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 /** Flip this on to serve a tarball that doesn't match its advertised hash. */
 let corrupt = false;
 /** Whether the GitHub feed has a release; off while the npm feed is the story. */
@@ -128,6 +129,7 @@ const release = () => ({
   html_url: `https://github.com/nekko-labs/hypergate/releases/tag/v${NEWER}`,
   assets: [
     { name: 'Hypergate-Setup.exe', browser_download_url: `http://localhost:${FEED_PORT}/tarball/nope`, size: 10 },
+    { name: 'SHA256SUMS', browser_download_url: `http://localhost:${FEED_PORT}/SHA256SUMS`, size: 0 },
     ...Object.entries(tarballs).map(([name, body]) => ({
       name,
       browser_download_url: `http://localhost:${FEED_PORT}/tarball/${name}`,
@@ -161,6 +163,14 @@ feed = createServer((req, res) => {
     const served = corrupt ? Buffer.concat([body.subarray(0, body.length - 1), Buffer.from([body[body.length - 1] ^ 0xff])]) : body;
     res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(served.length) });
     res.end(served);
+    return;
+  }
+  if (path === '/SHA256SUMS') {
+    const text = Object.entries(tarballs)
+      .map(([name, body]) => `${sha256(body)}  ${name}`)
+      .join('\n');
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end(text);
     return;
   }
   packumentHits += 1;

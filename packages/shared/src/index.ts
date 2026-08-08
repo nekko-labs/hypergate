@@ -652,6 +652,9 @@ export interface SetAgentServerRequest {
   allowed: boolean;
 }
 
+/** Rotate an existing agent's bearer token without changing its scope. */
+export interface RotateAgentTokenResponse extends AgentClientInfo {}
+
 /** An agent plus a ready-to-paste connect snippet (returned by the clients API). */
 export interface AgentClientInfo extends AgentClient {
   /** The gateway URL this agent connects to. */
@@ -903,6 +906,10 @@ export interface UpdateAsset {
   integrity?: string;
   /** npm's `dist.shasum` (sha1 hex), the older integrity field. */
   shasum?: string;
+  /** GitHub release SHA256SUMS entry, required for GitHub-sourced assets. */
+  sha256?: string;
+  /** Feed that supplied this asset; GitHub assets require sha256. */
+  source?: 'npm' | 'github';
 }
 
 /**

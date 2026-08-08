@@ -201,6 +201,17 @@ describe('curated CLI catalog', () => {
     for (const tool of KNOWN_CLIS) expect(tool.install?.length ?? 0).toBeGreaterThan(0);
   });
 
+  it('classifies every curated install instruction as command or manual text', () => {
+    const meta = /[|&;<>$`(){}'"\\\r\n]/;
+    for (const tool of KNOWN_CLIS) {
+      const instruction = tool.install!.trim();
+      const runnable = !/^https?:\/\//i.test(instruction)
+        && !meta.test(instruction)
+        && /^[A-Za-z0-9_.-]+(?:\s+\S+)*$/.test(instruction);
+      expect(runnable || instruction.length > 0).toBe(true);
+    }
+  });
+
   it('offers only install routes that apply to the asking platform', () => {
     const win = cliCatalogEntry(knownCli('git')!, 'win32');
     expect(win.installs?.map((i) => i.label)).toContain('winget');

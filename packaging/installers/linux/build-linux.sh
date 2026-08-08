@@ -89,6 +89,24 @@ Description: Local-first runtime and gateway for MCP servers
  outbound calls the user did not ask for.
 CONTROL
 
+cat > "$DEBROOT/DEBIAN/postinst" <<'POSTINST'
+#!/bin/sh
+command -v update-desktop-database >/dev/null 2>&1 &&
+  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+command -v gtk-update-icon-cache >/dev/null 2>&1 &&
+  gtk-update-icon-cache -q -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
+exit 0
+POSTINST
+cat > "$DEBROOT/DEBIAN/postrm" <<'POSTRM'
+#!/bin/sh
+command -v update-desktop-database >/dev/null 2>&1 &&
+  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+command -v gtk-update-icon-cache >/dev/null 2>&1 &&
+  gtk-update-icon-cache -q -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
+exit 0
+POSTRM
+chmod 755 "$DEBROOT/DEBIAN/postinst" "$DEBROOT/DEBIAN/postrm"
+
 DEB="$OUTDIR/hypergate_${VERSION}_${DEB_ARCH}.deb"
 # -Zxz, not the modern default of zstd: a zstd-compressed .deb needs dpkg 1.21+,
 # so it fails to install on Ubuntu 20.04 and Debian 11. xz is understood
@@ -133,6 +151,14 @@ cp -a ${ROOT}/. %{buildroot}/
 /usr/share/icons/hicolor/scalable/apps/hypergate.svg
 %doc /usr/share/doc/hypergate/README.md
 %license /usr/share/doc/hypergate/LICENSE
+
+%post
+if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database /usr/share/applications >/dev/null 2>&1 || :; fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -f /usr/share/icons/hicolor >/dev/null 2>&1 || :; fi
+
+%postun
+if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database /usr/share/applications >/dev/null 2>&1 || :; fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -f /usr/share/icons/hicolor >/dev/null 2>&1 || :; fi
 SPEC
 
 rpmbuild --define "_topdir $RPMTOP" -bb "$RPMTOP/SPECS/hypergate.spec" >/dev/null

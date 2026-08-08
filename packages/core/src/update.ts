@@ -19,6 +19,19 @@ export const GITHUB_FEED_URL = `https://api.github.com/repos/${UPDATE_REPO}/rele
 /** Release notes page for a version tag. */
 export const releaseUrlFor = (version: string): string => `https://github.com/${UPDATE_REPO}/releases/tag/v${version}`;
 
+/** Parse the plain GNU coreutils format used by a release's SHA256SUMS file. */
+export function parseSha256Sums(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^([a-fA-F0-9]{64})\s+\*?(.+?)\s*$/.exec(line);
+    if (match) {
+      const name = match[2].split(/[\\/]/).pop();
+      if (name) out[name] = match[1].toLowerCase();
+    }
+  }
+  return out;
+}
+
 interface Parsed {
   nums: number[];
   /** Prerelease identifiers (`1.2.0-rc.1` → `['rc', 1]`), empty for a release. */
@@ -199,7 +212,7 @@ function distAsset(doc: unknown, version: string, name: string): UpdateAsset | u
   const v = (doc as { versions?: Record<string, { dist?: { tarball?: string; integrity?: string; shasum?: string; unpackedSize?: number } }> } | null)
     ?.versions?.[version]?.dist;
   if (!downloadableUrl(v?.tarball)) return undefined;
-  return { name, url: v.tarball as string, integrity: v?.integrity, shasum: v?.shasum };
+  return { name, url: v.tarball as string, integrity: v?.integrity, shasum: v?.shasum, source: 'npm' };
 }
 
 /**
@@ -209,13 +222,26 @@ function distAsset(doc: unknown, version: string, name: string): UpdateAsset | u
  * installers, bare binaries and checksums, and picking "something .tgz-ish"
  * out of that list is how you end up installing the wrong architecture.
  */
-export function assetsFromGithub(doc: unknown, version: string, platform: string, arch: string): UpdateAsset[] {
+export function assetsFromGithub(
+  doc: unknown,
+  version: string,
+  platform: string,
+  arch: string,
+  checksumsText?: string,
+): UpdateAsset[] {
   const assets = (doc as { assets?: { name?: string; browser_download_url?: string; size?: number }[] } | null)?.assets;
   if (!Array.isArray(assets)) return [];
+  const checksums = parseSha256Sums(checksumsText ?? '');
   const pick = (name: string): UpdateAsset | undefined => {
     const a = assets.find((x) => x.name === name);
     if (!downloadableUrl(a?.browser_download_url)) return undefined;
-    return { name, url: a?.browser_download_url as string, size: typeof a?.size === 'number' ? a.size : undefined };
+    return {
+      name,
+      url: a?.browser_download_url as string,
+      size: typeof a?.size === 'number' ? a.size : undefined,
+      sha256: checksums[name],
+      source: 'github',
+    };
   };
   const out: UpdateAsset[] = [];
   const shell = pick(`${shellPackageFor(platform, arch)}-${version}.tgz`);

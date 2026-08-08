@@ -4,7 +4,7 @@
 //! implementation of it. Everything here is a call the web UI already makes, so
 //! there is exactly one place where server lifecycle logic lives.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::paths;
@@ -18,7 +18,7 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 /// calls, which run whatever the managed server does.
 const SLOW_TIMEOUT: Duration = Duration::from_secs(180);
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Health {
     pub ok: bool,
     #[serde(default)]
@@ -27,7 +27,7 @@ pub struct Health {
     pub servers: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerStatus {
     pub id: String,
@@ -42,7 +42,7 @@ pub struct ServerStatus {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayInfo {
     pub url: String,
@@ -53,7 +53,7 @@ pub struct GatewayInfo {
     pub ui_url: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Logs {
     #[serde(default)]
     pub logs: Vec<String>,
@@ -61,7 +61,7 @@ pub struct Logs {
 
 /// One connected agent: a scoped gateway token with a name. Only the fields the
 /// CLI needs; the daemon owns the rest.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct AgentClient {
     pub id: String,
     #[serde(default)]
@@ -74,7 +74,7 @@ pub struct AgentClient {
 
 /// A catalog entry, curated or from a registry search. Only the fields the CLI
 /// prints or copies into an add payload; the daemon owns the full shape.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegistryEntry {
     pub id: String,
@@ -114,7 +114,7 @@ pub struct RegistryEntry {
     pub connections: Vec<RegistryConnection>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegistryConnection {
     pub id: String,
@@ -142,7 +142,7 @@ pub struct RegistryConnection {
 }
 
 /// `/api/update`: the daemon's view of versions, and what updating takes here.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     pub current: String,
@@ -300,6 +300,18 @@ fn delete(path: &str) -> Result<(), String> {
     check(status, text, path).map(|_| ())
 }
 
+fn patch(path: &str, body: &serde_json::Value) -> Result<String, String> {
+    let url = format!("{}{}", paths::base_url(), path);
+    let mut req = agent(TIMEOUT).patch(&url);
+    if let Some(token) = crate::secrets::gateway_token() {
+        req = req.header("Authorization", &format!("Bearer {token}"));
+    }
+    let mut res = req.send_json(body).map_err(|e| format!("{e}"))?;
+    let status = res.status().as_u16();
+    let text = res.body_mut().read_to_string().map_err(|e| format!("{e}"))?;
+    check(status, text, path)
+}
+
 pub fn health() -> Result<Health, String> {
     get("/health")
 }
@@ -319,6 +331,100 @@ pub fn gateway() -> Result<GatewayInfo, String> {
 
 pub fn analytics() -> Result<Analytics, String> {
     get("/api/analytics")
+}
+
+pub fn analytics_value() -> Result<serde_json::Value, String> {
+    get("/api/analytics")
+}
+
+pub fn servers_value() -> Result<serde_json::Value, String> {
+    get("/api/servers")
+}
+
+pub fn logs_value(id: &str) -> Result<serde_json::Value, String> {
+    get(&format!("/api/servers/{id}/logs"))
+}
+
+pub fn agents() -> Result<serde_json::Value, String> {
+    get("/api/clients")
+}
+
+pub fn add_agent(name: &str, servers: &[String], target: Option<&str>) -> Result<serde_json::Value, String> {
+    let scope = if servers.is_empty() {
+        serde_json::Value::String("*".into())
+    } else {
+        serde_json::Value::Array(servers.iter().cloned().map(serde_json::Value::String).collect())
+    };
+    let body = send(
+        "/api/clients",
+        Some(&serde_json::json!({ "name": name, "servers": scope, "target": target })),
+        TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from /api/clients: {e}"))
+}
+
+pub fn remove_agent(id: &str) -> Result<(), String> {
+    delete(&format!("/api/clients/{id}"))
+}
+
+pub fn set_agent_server(id: &str, server: &str, allowed: bool) -> Result<serde_json::Value, String> {
+    let body = send(
+        &format!("/api/clients/{id}/servers/{server}"),
+        Some(&serde_json::json!({ "allowed": allowed })),
+        TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from agent permission update: {e}"))
+}
+
+pub fn rename_agent(id: &str, name: &str) -> Result<serde_json::Value, String> {
+    let body = patch(&format!("/api/clients/{id}"), &serde_json::json!({ "name": name }))?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from agent rename: {e}"))
+}
+
+pub fn rotate_agent(id: &str) -> Result<serde_json::Value, String> {
+    let body = send(&format!("/api/clients/{id}/token"), None, TIMEOUT)?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from agent rotation: {e}"))
+}
+
+pub fn connect_targets() -> Result<serde_json::Value, String> {
+    get("/api/connect/targets")
+}
+
+pub fn connect_agent(id: &str, target: &str) -> Result<serde_json::Value, String> {
+    let body = send(
+        &format!("/api/clients/{id}/connect"),
+        Some(&serde_json::json!({ "target": target })),
+        SLOW_TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from connect: {e}"))
+}
+
+pub fn agent_connect_info(id: &str) -> Result<serde_json::Value, String> {
+    get(&format!("/api/clients/{id}/connect"))
+}
+
+pub fn cli_status() -> Result<serde_json::Value, String> {
+    get("/api/clis")
+}
+
+pub fn cli_catalog() -> Result<serde_json::Value, String> {
+    get("/api/clis/catalog")
+}
+
+pub fn cli_search(query: &str) -> Result<serde_json::Value, String> {
+    let encoded: String = query
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            b' ' => "+".to_string(),
+            other => format!("%{other:02X}"),
+        })
+        .collect();
+    get(&format!("/api/clis/search?q={encoded}"))
+}
+
+pub fn cli_check(command: &str) -> Result<serde_json::Value, String> {
+    get(&format!("/api/clis/check?name={command}"))
 }
 
 /// Find the connected agent a key names, optionally creating it.

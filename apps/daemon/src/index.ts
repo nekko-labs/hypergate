@@ -61,6 +61,7 @@ import { openStore } from './store.ts';
 import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
 import { Updater } from './updater.ts';
+import { isAllowedHost, isAllowedMutationRequest } from './security.ts';
 import type {
   ManagedServerConfig,
   GatewayInfo,
@@ -133,7 +134,8 @@ const TOKEN_KEY = 'bearerToken';
 // sets only `PORT` still works, but one who sets only `HYPERGATE_PORT` would
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
-const VERSION = '1.0.1';
+const LISTEN_HOST = '127.0.0.1';
+const VERSION = '1.0.2';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -379,6 +381,11 @@ const fetchJson = async (url: string, signal: AbortSignal): Promise<unknown | un
   if (!res.ok) return undefined;
   return (await res.json()) as unknown;
 };
+const fetchText = async (url: string, signal: AbortSignal): Promise<string | undefined> => {
+  const res = await fetch(url, { signal, headers: { 'User-Agent': 'hypergate', Accept: 'text/plain' } });
+  if (!res.ok) return undefined;
+  return res.text();
+};
 
 /** The platform shell package for this machine, on whichever registry we use. */
 const SHELL_PKG = shellPackageFor(process.platform, process.arch);
@@ -414,7 +421,15 @@ const fetchLatest = async (): Promise<UpdateCache> => {
     if (fromGithub) {
       // The release carries the same npm tarballs as attachments, which is what
       // lets an update install before anything is published to npm at all.
-      const assets = isNewerVersion(fromGithub, VERSION) ? assetsFromGithub(ghDoc, fromGithub, process.platform, process.arch) : [];
+      const sumsAsset = (ghDoc as { assets?: { name?: string; browser_download_url?: string }[] } | undefined)?.assets?.find(
+        (a) => a.name === 'SHA256SUMS',
+      );
+      const sums = sumsAsset?.browser_download_url
+        ? await fetchText(sumsAsset.browser_download_url, ctrl.signal).catch(() => undefined)
+        : undefined;
+      const assets = isNewerVersion(fromGithub, VERSION)
+        ? assetsFromGithub(ghDoc, fromGithub, process.platform, process.arch, sums)
+        : [];
       return { checkedAt, latest: fromGithub, source: 'github', releaseUrl: releaseUrlFor(fromGithub), assets };
     }
     // Neither feed has a release. Today that is simply the truth (nothing is
@@ -1266,7 +1281,7 @@ if (STDIO_MODE) {
     });
   const TOKEN = process.env.HYPERGATE_TOKEN ?? loadToken();
   const json = (res: ServerResponse, status: number, body: unknown): void => {
-    res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
   };
   // A minimal self-contained result page shown in the OAuth popup after sign-in.
@@ -1313,24 +1328,6 @@ if (STDIO_MODE) {
     const agent = clients.find((c) => tokenEq(got, c.token));
     return agent ? { kind: 'agent', agent } : null;
   };
-  /**
-   * Is this request safe to treat as coming from *our own* UI (or from something
-   * that isn't a browser at all)?
-   *
-   * The management API answers on localhost with `Access-Control-Allow-Origin: *`,
-   * so any web page the user visits can fire a cross-origin POST at it. It can't
-   * read the reply, but the side effect still happens, which is exactly why the
-   * CLI's `stop` used a pid file instead of a shutdown route. Browsers always
-   * send `Origin` on a cross-origin request, so requiring it to be our own origin
-   * (or absent, i.e. curl / the CLI / a native client) closes that door. A `null`
-   * origin (a sandboxed iframe or a `file://` page) is not our UI, so it is refused.
-   */
-  const selfOrigin = (req: IncomingMessage): boolean => {
-    const origin = req.headers.origin;
-    if (origin === undefined) return true;
-    return origin === `http://localhost:${PORT}` || origin === `http://127.0.0.1:${PORT}`;
-  };
-
   // Best-effort caller identity for analytics. The gateway is stateless (a fresh
   // instance per request), so we can't correlate by session; instead we capture
   // the MCP handshake's clientInfo on `initialize` and attribute the tool calls
@@ -1488,19 +1485,33 @@ if (STDIO_MODE) {
   };
 
   const server = createServer(async (req, res) => {
+    if (!isAllowedHost(req.headers.host)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'invalid_host' }));
+    }
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
     const { pathname } = url;
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-session-id, mcp-protocol-version',
-      });
+      if (pathname === '/mcp') {
+        res.writeHead(204, {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-session-id, mcp-protocol-version',
+        });
+      } else {
+        res.writeHead(204);
+      }
       return res.end();
+    }
+    if (pathname.startsWith('/api/') && !['GET', 'HEAD'].includes(req.method ?? '') && !isAllowedMutationRequest(req.headers)) {
+      return json(res, 403, { error: 'cross_origin' });
     }
 
     // ── the aggregated MCP endpoint (streamable HTTP, stateless) ──────────
     if (pathname === '/mcp') {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, mcp-session-id, mcp-protocol-version');
       const scope = authScope(req);
       if (!scope) return json(res, 401, { error: 'unauthorized' });
       if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
@@ -1730,7 +1741,6 @@ if (STDIO_MODE) {
     // nothing it is running from is touched until the install, which is why
     // "download only" is a real option and not just a delayed apply.
     if (pathname === '/api/update/download' && req.method === 'POST') {
-      if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
       if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
       const info = updateInfo();
       if (!info.updateAvailable || !info.latest) return json(res, 409, { ok: false, error: 'no update available' });
@@ -1751,7 +1761,6 @@ if (STDIO_MODE) {
     // can report it); the install belongs to the shell, which outlives both the
     // daemon and the tray and puts them back afterwards.
     if (pathname === '/api/update/apply' && req.method === 'POST') {
-      if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
       if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
       const info = updateInfo();
       if (!info.updateAvailable || !info.latest) return json(res, 409, { ok: false, error: 'no update available' } as ApplyUpdateResponse);
@@ -1796,7 +1805,6 @@ if (STDIO_MODE) {
     // Everything is stopped in `shutdown()` after the response is flushed, so the
     // UI learns it worked instead of seeing a dropped connection.
     if (pathname === '/api/shutdown' && req.method === 'POST') {
-      if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
       if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
       const body: ShutdownResponse = { ok: true, servers: supervisor.ids().length };
       res.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' });
@@ -1960,6 +1968,15 @@ if (STDIO_MODE) {
       } catch {
         return json(res, 400, { error: 'invalid_json' });
       }
+    }
+
+    const agentTokenM = /^\/api\/clients\/([^/]+)\/token$/.exec(pathname);
+    if (agentTokenM && req.method === 'POST') {
+      const agent = clients.find((c) => c.id === agentTokenM[1]);
+      if (!agent) return json(res, 404, { error: 'not_found' });
+      agent.token = randomBytes(24).toString('hex');
+      saveClients(clients);
+      return json(res, 200, agentInfo(agent));
     }
 
     const clientM = /^\/api\/clients\/([^/]+)$/.exec(pathname);
@@ -2134,15 +2151,10 @@ if (STDIO_MODE) {
         return json(res, 200, info);
       }
       // Writing one is guarded exactly like /api/shutdown, and for the same
-      // reason: `/api/*` is unauthenticated on localhost and every reply carries
-      // `Access-Control-Allow-Origin: *`, so without this any page the user
-      // visits could plant its own client id and send the next sign-in to an app
-      // it controls, or delete the app they registered. The token alone would be
-      // theatre (`/api/gateway` hands it to any local caller), so the same-origin
-      // check on the Origin header is the actual barrier: absent means not a
-      // browser, and foreign or `null` is refused.
+      // reason: management mutations are intentionally local, so the centralized
+      // request guard above is the CSRF barrier. A bearer token alone is not a
+      // browser CSRF defense because `/api/gateway` is readable by local callers.
       if (req.method === 'POST' || req.method === 'DELETE') {
-        if (!selfOrigin(req)) return json(res, 403, { error: 'cross_origin' });
         if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
       }
       if (req.method === 'POST') {
@@ -2249,7 +2261,12 @@ if (STDIO_MODE) {
       });
   };
 
-  server.listen(PORT, '127.0.0.1', () =>
-    process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`),
-  );
+  server.listen(PORT, LISTEN_HOST, () => {
+    if (process.env.HYPERGATE_NO_AUTH === '1') {
+      process.stderr.write(
+        '!!! WARNING: HYPERGATE_NO_AUTH=1 disables authentication; this is intended for local tests only. !!!\n',
+      );
+    }
+    process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`);
+  });
 }

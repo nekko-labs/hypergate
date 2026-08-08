@@ -46,7 +46,7 @@ Or from the manager, without the terminal. The version in the topbar **is** the 
 
 `--apply` is for npm installs, which are the ones a per-user agent can safely replace: it writes an updater to the temp directory, stops Hypergate so nothing being replaced is still running, installs the new packages, starts the app again, and logs every step to `~/.hypergate/update.log`. Installed from a `.exe`/`.pkg`/`.deb` instead, or running from a checkout? Then `hypergate update` prints the exact command for that channel rather than half-doing it — the native installers aren't code-signed yet ([docs/signing.md](docs/signing.md)) and the Linux packages need root.
 
-The packages come from npm when they're published there, and **from the release's own attached tarballs when they aren't** — every release carries `hypergated-<version>.tgz` plus one `hypergate-shell-<os>-<arch>-<version>.tgz`. Whatever is downloaded is checked against the hash the feed published before anything is installed.
+The packages come from npm when they're published there, and **from the release's own attached tarballs when they aren't** — every release carries `hypergated-<version>.tgz` plus one `hypergate-shell-<os>-<arch>-<version>.tgz`. Whatever is downloaded from either feed is checked against that feed's published checksum before anything is installed.
 
 ## Why
 Kotrain and Claude Code are MCP *clients*. Hypergate is the piece they need: a secure local *server runtime/manager*, a supervisor plus an aggregating gateway. Add servers from a catalog (or custom), pick how they're isolated, start them, and paste one URL/command into your agent.
@@ -126,6 +126,8 @@ npm run build:installers   # dist-installers/: this platform's installer
 
 The installers deliberately reuse Hypergate's own code for the parts that need judgement: `hypergate shortcut install` creates the launcher (so a redirected OneDrive desktop is handled), `hypergate autostart on` sets the login item, and `hypergate icon` emits the mark. Uninstalling leaves `~/.hypergate` alone, since an uninstall should not throw away server configs, usage history and OAuth grants.
 
+On macOS, uninstall with `/Applications/Hypergate.app/Contents/Resources/uninstall.sh`; it removes the app, launchers and package receipt while leaving `~/.hypergate` untouched.
+
 [`.github/workflows/build-artifacts.yml`](.github/workflows/build-artifacts.yml) builds all six platforms and can be run on demand, without cutting a release, when you want an installer to test.
 
 Releases are cut by tag: `git tag v0.9.0 && git push --tags` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which cross-builds all six shells, publishes the platform packages and then the main package to npm with provenance, and attaches standalone binaries to the GitHub release.
@@ -161,6 +163,15 @@ hypergate status         # daemon, servers, usage, keychain, autostart and updat
 hypergate stop           # stop a daemon this shell started
 hypergate open           # the manager UI in your browser
 hypergate update         # check for a newer version (--apply installs it)
+
+# agent-friendly management
+hypergate doctor         # the one command that says whether this install is healthy
+hypergate --json status  # machine-readable output from any command; no column scraping
+hypergate agent ls|add|allow|deny|rename|token|rotate|rm
+hypergate targets        # harnesses detected on this machine
+hypergate connect claude-code [--agent ID]
+hypergate cli ls|search|check|install
+hypergate usage          # analytics totals and call history
 
 # finding and adding servers
 hypergate catalog                    # the curated catalog (★ recommended, ✓ official)
@@ -199,6 +210,8 @@ hypergate secret check               # is an OS keychain available here?
 
 `tools` and `call` go over `/mcp` with the bearer token, the same path a connected agent takes, so they verify the real gateway rather than an internal shortcut. A tool that reports an error exits non-zero.
 
+`doctor` is the first command to run when an agent needs to understand the install. The global `--json` flag makes every command machine-readable, so an agent can manage Hypergate without scraping aligned columns. `agent` manages scoped credentials, including rotating a leaked token in place. `targets` and `connect` wire a detected harness from the terminal instead of the manager. `cli ls`, `cli search`, `cli check` and `cli install` inspect the tool catalog; `cli install` only runs a curated plain command when explicitly given `--run` (or `--yes`). `usage` exposes the analytics numbers. See the [full CLI reference](docs/cli.md).
+
 `add` merges a catalog entry with your overrides: `--connection <id>` for grouped entries, `--runtime docker`, `--image`, `--url`, `--env K=V`, `--secret K=V` (injected at launch, never logged), `--cwd`, `--no-start`. A key the entry declares in `requires` is taken from your environment when you don't pass it, and adding a one-click OAuth server opens the provider's browser login.
 
 The manager's **Settings** tab exposes the same service options:
@@ -216,6 +229,8 @@ Everything is local, under `~/.hypergate/` (override with `HYPERGATE_DIR`):
 | Usage history + server logs | `hypergate.db` (SQLite, WAL). Retention: 90 days of usage, 14 days of logs (`HYPERGATE_RETAIN_USAGE_DAYS` / `_LOG_DAYS`, `0` = forever) |
 | Desktop launch and daemon diagnostics | `hypergate.log` (capped at approximately 1 MB) |
 | Gateway token, OAuth grants | The **OS keychain** (Credential Manager / Keychain / Secret Service), falling back to files here where no keychain exists |
+
+`HYPERGATE_ALLOWED_HOSTS` is a comma-separated escape hatch for a reverse proxy or forwarded port; it extends the loopback Host allow-list without replacing it. Hypergate binds to loopback by default, rejects non-loopback Host headers, sends no CORS headers for the management API, and checks browser origins on every management mutation.
 
 `npm run dev` runs the daemon + web UI together and opens the site in your browser once Vite is ready (set `HYPERGATE_OPEN=0` to skip).
 
@@ -246,6 +261,8 @@ It works because the entry names a *command* rather than a credential — `hyper
 > A note on **claude.ai custom connectors**: that dialog cannot reach Hypergate, and no setting will change it. Anthropic's cloud opens the connection to the URL you give it, so the server must be public and `https://` — which is the one thing a local-first gateway is not. Use the plugin, the extension, or `mcp add`.
 
 **Scoped agents.** Every connected agent has its own token and its own allow-list: pick which servers it may use (or all of them), and it will only see and call those. Its calls show up under its name in Analytics, and you can revoke it without touching anything else. The master token in the gateway bar always reaches every server — prefer an agent token for a real client. Same thing over the API: `POST /api/clients`, then `POST /api/clients/:id/connect`.
+
+If an agent token leaks, rotate it in place with `hypergate agent rotate <id>`; the agent keeps its name and scope.
 
 **Kotrain** auto-detects a running daemon: Settings → MCP servers → **Connect gateway** (one click), plus an **Open manager** button that opens this UI in a workbench pane.
 
