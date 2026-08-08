@@ -81,8 +81,13 @@ fn redact(message: &str) -> String {
             if value_end > value_start {
                 safe.replace_range(value_start..value_end, "[redacted]");
                 lower.replace_range(value_start..value_end, "[redacted]");
+                search_from = value_start.saturating_add("[redacted]".len());
+            } else {
+                // Keep the next search on a UTF-8 boundary when the separator
+                // is followed by an empty value.
+                search_from = start.saturating_add(key.len());
             }
-            search_from = value_start.saturating_add("[redacted]".len());
+            search_from = search_from.min(safe.len());
         }
     }
     safe
@@ -103,6 +108,7 @@ mod tests {
             "ésecret:",
             "é secret:",
             "étoken=",
+            "token= éééééééééé",
         ] {
             let _ = redact(input);
         }
@@ -114,5 +120,6 @@ mod tests {
         assert_eq!(redact("password:hunter2"), "password:[redacted]");
         assert_eq!(redact("secret abc"), "secret [redacted]");
         assert_eq!(redact("TOKEN=éabc"), "TOKEN=[redacted]");
+        assert_eq!(redact("token=abc secret=éééé"), "token=[redacted] secret=[redacted]");
     }
 }
