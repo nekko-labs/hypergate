@@ -449,6 +449,16 @@ Philip: *"remove the hypergate in top bar and just use the larger one and move i
 - [x] **The same bundle still serves a browser tab**: `apps/web/src/lib/shell.ts` reads `window.__hypergateShell`, injected by the shell before the page loads, and its *absence* is the signal — no object, no window buttons, no full-bleed bar, because a tab already has chrome. That is also why `buttons` is a flag rather than inferred from the platform string: macOS is in the shell and still must not draw them. · [spec](SPEC.md#38-desktop-shell--cli-shipped) · Added: 2026-08-06 · Done: 2026-08-06
 - [x] **The footer is a rail, not a line under the column**: moved out of `.wrap`, so the rule reaches both window edges and the credit and the GitHub mark sit in opposite corners instead of a hand's width apart in the middle. Its contents go edge-to-edge only in the shell, where the top bar already does; in a browser they keep to the same 1360px column as the rest of the page, or the two rails would disagree on a wide window. · [spec](SPEC.md#34-ui-shipped) · Added: 2026-08-06 · Done: 2026-08-06
 
+## Epic 39: production hardening and agent-ready management (v1.0.2)
+
+This is a deliberate patch release rather than the default minor bump: the requested 1.0.2 release packages security fixes, installer corrections and the completed agent-facing CLI.
+
+- [x] **Local browser and DNS-rebinding attacks are blocked**: loopback Host validation, browser-origin checks on every management mutation, restricted management CORS and loud test-only auth bypass handling protect the local daemon without breaking Vite, MCP or native clients. · [spec](SPEC.md#32-gateway-shipped) · Added: 2026-08-06 · Done: 2026-08-06
+- [x] **Every update payload is integrity-checked**: npm payloads retain their existing verification and GitHub release tarballs now require matching SHA-256 manifest entries before staging. · [spec](SPEC.md#39-distribution-shipped) · Added: 2026-08-06 · Done: 2026-08-06
+- [x] **Agents can manage Hypergate without the UI**: `doctor`, global `--json`, scoped credentials and rotation, harness connection, CLI catalog installation and analytics are available through the shell. · [spec](SPEC.md#38-desktop-shell--cli-shipped) · Added: 2026-08-06 · Done: 2026-08-06
+- [x] **Native installers finish cleanly**: Windows process and PATH handling, Linux desktop refreshes and macOS uninstall behavior are safe and explicit. · [spec](SPEC.md#39-distribution-shipped) · Added: 2026-08-06 · Done: 2026-08-06
+- [x] **The release records the deliberate patch bump**: `1.0.2` is used instead of the default minor version because this release is the requested production-readiness patch. · Added: 2026-08-06 · Done: 2026-08-06
+
 ## Epic 37: finding the right tool, and knowing it is the right one (v0.22.0)
 
 Philip: install the Playwright CLI as the use case; add CLI lookup like the MCP servers have, and work out the best official online source for what counts as an official/recommended CLI; put a note directly under every MCP or CLI search result confirming it is the recommended approach, or pointing at the official provider's instead; and the GitHub OAuth connection still does not show up correctly.

@@ -43,22 +43,7 @@ pub fn parse_curated_install(command: &str) -> Option<Vec<String>> {
     }
     let program = argv.first()?;
     let known_launcher = [
-        "npm",
-        "npx",
-        "pnpm",
-        "yarn",
-        "bun",
-        "brew",
-        "pipx",
-        "pip",
-        "winget",
-        "scoop",
-        "choco",
-        "apt",
-        "cargo",
-        "go",
-        "curl",
-        "powershell",
+        "npm", "npx", "pnpm", "yarn", "bun", "brew", "pipx", "pip", "winget", "scoop", "choco", "cargo",
     ];
     if !known_launcher.contains(&program.as_str())
         || !program
@@ -243,7 +228,8 @@ pub fn usage_human() -> Result<ExitCode, String> {
 
 pub fn doctor_human(report: &Value) -> Result<ExitCode, String> {
     println!(
-        "Daemon       {}",
+        "{:<12}{}",
+        "Daemon",
         if report["daemon"]["running"].as_bool().unwrap_or(false) {
             format!(
                 "running v{} on port {}",
@@ -255,11 +241,13 @@ pub fn doctor_human(report: &Value) -> Result<ExitCode, String> {
         }
     );
     println!(
-        "Token        {}",
+        "{:<12}{}",
+        "Token",
         report["auth"]["tokenSource"].as_str().unwrap_or("none")
     );
     println!(
-        "Keychain     {}",
+        "{:<12}{}",
+        "Keychain",
         if report["auth"]["keychainAvailable"].as_bool().unwrap_or(false) {
             "available"
         } else {
@@ -267,7 +255,8 @@ pub fn doctor_human(report: &Value) -> Result<ExitCode, String> {
         }
     );
     println!(
-        "Authentication {}",
+        "{:<12}{}",
+        "Authentication",
         if report["auth"]["disabled"].as_bool().unwrap_or(false) {
             "DISABLED"
         } else {
@@ -275,32 +264,34 @@ pub fn doctor_human(report: &Value) -> Result<ExitCode, String> {
         }
     );
     println!(
-        "Allowed hosts {}",
+        "{:<12}{}",
+        "Allowed hosts",
         report["auth"]["allowedHosts"]
             .as_str()
             .filter(|s| !s.is_empty())
             .unwrap_or("none")
     );
-    println!("Agents       {}", report["agents"]["count"].as_u64().unwrap_or(0));
+    println!("{:<12}{}", "Agents", report["agents"]["count"].as_u64().unwrap_or(0));
     println!(
-        "Servers      {}",
+        "{:<12}{}",
+        "Servers",
         report["servers"].as_array().map(Vec::len).unwrap_or(0)
     );
-    println!("Data         {}", report["dataDirectory"].as_str().unwrap_or(""));
+    println!("{:<12}{}", "Data", report["dataDirectory"].as_str().unwrap_or(""));
     if report["problems"].as_bool().unwrap_or(false) {
-        println!("VERDICT      NOT READY");
+        println!("{:<12}NOT READY", "VERDICT");
         if !report["daemon"]["running"].as_bool().unwrap_or(false) {
-            println!("Action       run `hypergate start`.");
+            println!("{:<12}run `hypergate start`.", "Action");
         }
         if report["auth"]["disabled"].as_bool().unwrap_or(false) {
-            println!("Action       unset HYPERGATE_NO_AUTH.");
+            println!("{:<12}unset HYPERGATE_NO_AUTH.", "Action");
         }
         if report["auth"]["tokenSource"] == "file" && report["auth"]["keychainAvailable"].as_bool().unwrap_or(false) {
-            println!("Action       move the master token into the OS keychain.");
+            println!("{:<12}move the master token into the OS keychain.", "Action");
         }
         Ok(ExitCode::from(1))
     } else {
-        println!("VERDICT      READY (warnings may apply)");
+        println!("{:<12}READY (warnings may apply)", "VERDICT");
         Ok(ExitCode::SUCCESS)
     }
 }
