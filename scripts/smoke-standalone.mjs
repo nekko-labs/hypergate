@@ -44,45 +44,55 @@ function detachDmg() {
   dmgMount = undefined;
 }
 
-function prepareDaemon() {
+async function prepareDaemon() {
   if (process.platform === 'darwin' && process.env.HYPERGATE_MACOS_DMG) {
     const dmg = process.env.HYPERGATE_MACOS_DMG;
-    if (!existsSync(dmg)) fail(`HYPERGATE_MACOS_DMG does not exist: ${dmg}`);
+    if (!existsSync(dmg)) {
+      await fail(`HYPERGATE_MACOS_DMG does not exist: ${dmg}`);
+      return;
+    }
     dmgMount = mkdtempSync(join(tmpdir(), 'hypergate-standalone-dmg-'));
     const mount = spawnSync('hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', dmgMount, dmg], {
       stdio: 'pipe',
       encoding: 'utf8',
     });
     if (mount.status !== 0) {
-      fail(`could not mount macOS dmg: ${mount.stderr ?? mount.stdout ?? 'unknown error'}`);
+      await fail(`could not mount macOS dmg: ${mount.stderr ?? mount.stdout ?? 'unknown error'}`);
+      return;
     }
     daemonPath = join(dmgMount, 'Hypergate.app', 'Contents', 'MacOS', 'hypergated');
   }
   if (!existsSync(daemonPath)) {
-    console.error(`✗ ${daemonPath} is missing, so run \`npm run build:standalone\` first`);
-    detachDmg();
-    removeDir(DIR);
-    process.exit(1);
+    await fail(`${daemonPath} is missing, so run \`npm run build:standalone\` first`);
+    return;
   }
-  if (process.platform === 'darwin') {
+  if (process.platform !== 'darwin') {
+    ok('macOS daemon signature check skipped (not running on macOS)');
+  } else if (!process.env.HYPERGATE_MACOS_DMG) {
+    ok('macOS daemon signature check skipped (no DMG configured; local build may be unsigned)');
+  } else {
     const signature = spawnSync('codesign', ['-d', '--entitlements', ':-', daemonPath], {
       encoding: 'utf8',
     });
     const details = `${signature.stdout ?? ''}${signature.stderr ?? ''}`;
-    if (signature.status !== 0) fail(`codesign could not inspect ${daemonPath}: ${details}`);
+    if (signature.status !== 0) {
+      await fail(`codesign could not inspect ${daemonPath}: ${details}`);
+      return;
+    }
     for (const entitlement of [
       'com.apple.security.cs.allow-jit',
       'com.apple.security.cs.allow-unsigned-executable-memory',
     ]) {
       if (!details.includes(`<key>${entitlement}</key>`)) {
-        fail(`macOS daemon is missing entitlement ${entitlement}: ${details}`);
+        await fail(`macOS daemon is missing entitlement ${entitlement}: ${details}`);
+        return;
       }
     }
     ok('macOS daemon signature contains the V8 entitlements');
   }
 }
 
-prepareDaemon();
+await prepareDaemon();
 
 // No `node` anywhere in this command: that is the whole point of the artifact.
 daemon = spawn(daemonPath, [], {
