@@ -30,6 +30,8 @@ const MANIFEST = 'manifest.json';
  * `apply`, so this is generous by an order of magnitude.
  */
 const INSTALL_DEADLINE = 60_000;
+const isPlainFilename = (name: string): boolean =>
+  !name.includes('/') && !name.includes('\\') && !name.includes('..') && name === name.split(/[\\/]/).pop();
 
 /** What a HEAD says this URL weighs, when it answers at all. */
 async function headSize(url: string): Promise<number | undefined> {
@@ -135,7 +137,7 @@ export class Updater {
       if (!existsSync(path)) return undefined;
       const m = JSON.parse(readFileSync(path, 'utf8')) as StagedManifest;
       // A manifest whose files went missing is not a staged update.
-      if (!m.files?.every((f) => existsSync(join(this.versionDir(version), f)))) return undefined;
+      if (!m.files?.every((f) => isPlainFilename(f) && existsSync(join(this.versionDir(version), f)))) return undefined;
       return m;
     } catch {
       return undefined;
@@ -263,6 +265,9 @@ export class Updater {
 
   /** Stream one asset to disk, verifying it if the feed told us what to expect. */
   private async fetchAsset(a: UpdateAsset, dir: string, alreadyDone: number): Promise<void> {
+    if (!isPlainFilename(a.name)) {
+      throw new Error(`${a.name}: update asset name is not a plain filename`);
+    }
     const ctrl = new AbortController();
     // Generous but finite: a stalled connection must not leave the UI showing
     // a spinner for the rest of the session.
@@ -278,11 +283,13 @@ export class Updater {
 
       const sha512 = createHash('sha512');
       const sha1 = createHash('sha1');
+      const sha256 = createHash('sha256');
       let received = 0;
       const body = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
       body.on('data', (chunk: Buffer) => {
         sha512.update(chunk);
         sha1.update(chunk);
+        sha256.update(chunk);
         received += chunk.length;
         this.state = {
           ...this.state,
@@ -295,6 +302,12 @@ export class Updater {
       // An update is the one download where a corrupted byte gets installed and
       // then run, so whatever the feed committed to is checked before the file
       // is allowed to lose its `.part` suffix.
+      if (a.source === 'github' && !a.sha256) {
+        throw new Error(`${a.name}: GitHub release has no usable SHA256SUMS entry`);
+      }
+      if (a.sha256 && sha256.digest('hex') !== a.sha256.toLowerCase()) {
+        throw new Error(`${a.name}: SHA-256 integrity check failed`);
+      }
       if (a.integrity?.startsWith('sha512-')) {
         const got = `sha512-${sha512.digest('base64')}`;
         if (got !== a.integrity) throw new Error(`${a.name}: integrity check failed`);

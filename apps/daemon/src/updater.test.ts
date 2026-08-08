@@ -21,6 +21,7 @@ import { Updater } from './updater.ts';
  */
 
 const sha512 = (b: Buffer): string => `sha512-${createHash('sha512').update(b).digest('base64')}`;
+const sha256 = (b: Buffer): string => createHash('sha256').update(b).digest('hex');
 
 let dir: string;
 let server: Server;
@@ -80,12 +81,14 @@ const assets = (opts: { integrity?: boolean; size?: boolean } = {}) => [
     url: `${base}/shell.tgz`,
     size: opts.size === false ? undefined : bodies['shell.tgz'].length,
     integrity: opts.integrity === false ? undefined : sha512(bodies['shell.tgz']),
+    sha256: opts.integrity === false ? undefined : sha256(bodies['shell.tgz']),
   },
   {
     name: 'pkg.tgz',
     url: `${base}/pkg.tgz`,
     size: opts.size === false ? undefined : bodies['pkg.tgz'].length,
     integrity: opts.integrity === false ? undefined : sha512(bodies['pkg.tgz']),
+    sha256: opts.integrity === false ? undefined : sha256(bodies['pkg.tgz']),
   },
 ];
 
@@ -141,6 +144,18 @@ describe('Updater', () => {
     truncate = true;
     const u = new Updater(dir);
     await expect(u.download('1.2.3', assets({ integrity: false }))).rejects.toThrow(/expected .* bytes/);
+    expect(u.staged()).toBeUndefined();
+  });
+
+  it('refuses a GitHub asset without a SHA256SUMS entry', async () => {
+    const u = new Updater(dir);
+    await expect(u.download('1.2.3', [{ ...assets()[0], source: 'github', sha256: undefined }])).rejects.toThrow(/SHA256SUMS/i);
+    expect(u.staged()).toBeUndefined();
+  });
+
+  it('refuses asset names that could escape the staging directory', async () => {
+    const u = new Updater(dir);
+    await expect(u.download('1.2.3', [{ ...assets()[0], name: '../escape.tgz' }])).rejects.toThrow(/plain filename/i);
     expect(u.staged()).toBeUndefined();
   });
 

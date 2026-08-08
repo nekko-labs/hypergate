@@ -3,6 +3,7 @@
 // then speaks MCP over plain fetch: initialize → tools/list → tools/call.
 // Also asserts the bearer token is enforced (401 without it).
 import { spawn } from 'node:child_process';
+import { request } from 'node:http';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -27,6 +28,15 @@ const fail = (msg) => {
   process.exit(1);
 };
 const ok = (msg) => console.log(`✓ ${msg}`);
+const requestWithHost = (host) =>
+  new Promise((resolve) => {
+    const req = request({ hostname: '127.0.0.1', port: PORT, path: '/health', headers: { host } }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res));
+    });
+    req.on('error', () => resolve({ statusCode: 0, headers: {} }));
+    req.end();
+  });
 
 // Wait for the daemon.
 let up = false;
@@ -40,6 +50,22 @@ ok('daemon up');
 const gw = await (await fetch(`${BASE}/api/gateway`)).json();
 if (!gw.token || !gw.url.endsWith('/mcp')) fail(`bad gateway info: ${JSON.stringify(gw)}`);
 ok(`gateway info has token + url (${gw.url})`);
+
+const management = await fetch(`${BASE}/api/gateway`);
+if (management.headers.has('access-control-allow-origin')) fail('management API still advertises wildcard CORS');
+ok('management API does not advertise CORS');
+
+const hostileMutation = await fetch(`${BASE}/api/servers`, {
+  method: 'POST',
+  headers: { origin: 'http://evil.example', 'content-type': 'application/json' },
+  body: '{}',
+});
+if (hostileMutation.status !== 403) fail(`cross-origin mutation was not refused: ${hostileMutation.status}`);
+ok('cross-origin management mutation refused');
+
+const hostileHost = await requestWithHost('evil.example');
+if (hostileHost.statusCode !== 403) fail(`rebinding Host was not refused: ${hostileHost.statusCode}`);
+ok('rebinding Host refused');
 
 // Add the echo server through the management API.
 const add = await fetch(`${BASE}/api/servers`, {
@@ -79,6 +105,10 @@ const mcp = async (method, params, { auth = true, notify = false } = {}) => {
 // 401 without the token.
 const noAuth = await mcp('initialize', {}, { auth: false });
 if (noAuth.status !== 401) fail(`expected 401 without token, got ${noAuth.status}`);
+const noAuthResponse = await fetch(gw.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+if (!noAuthResponse.headers.get('access-control-allow-origin')) fail('MCP response lost CORS');
+const mcpCors = await fetch(gw.url, { method: 'OPTIONS' });
+if (!mcpCors.headers.get('access-control-allow-origin')) fail('MCP preflight lost CORS');
 ok('401 without bearer token');
 
 const init = await mcp('initialize', {

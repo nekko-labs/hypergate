@@ -903,6 +903,10 @@ export interface UpdateAsset {
   integrity?: string;
   /** npm's `dist.shasum` (sha1 hex), the older integrity field. */
   shasum?: string;
+  /** GitHub release SHA256SUMS entry, required for GitHub-sourced assets. */
+  sha256?: string;
+  /** Feed that supplied this asset; GitHub assets require sha256. */
+  source?: 'npm' | 'github';
 }
 
 /**
