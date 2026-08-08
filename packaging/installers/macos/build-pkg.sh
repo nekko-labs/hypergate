@@ -30,6 +30,37 @@ cp "$PAYLOAD/hypergated" "$APP/Contents/MacOS/hypergated"
 cp -R "$PAYLOAD/web" "$APP/Contents/MacOS/web"
 cp "$ICON" "$APP/Contents/Resources/hypergate.icns"
 cp "$PAYLOAD/LICENSE" "$APP/Contents/Resources/LICENSE"
+cat > "$APP/Contents/Resources/uninstall.sh" <<'UNINSTALL'
+#!/bin/sh
+set -eu
+
+# User-scoped first: the shell owns the real LaunchAgent implementation and
+# must run as the logged-in user, not root's sudo home.
+if [ -x /Applications/Hypergate.app/Contents/MacOS/hypergate ]; then
+  /Applications/Hypergate.app/Contents/MacOS/hypergate autostart off >/dev/null 2>&1 || true
+fi
+osascript -e 'tell application "Hypergate" to quit' >/dev/null 2>&1 || true
+pkill -TERM -f '/Applications/Hypergate.app/Contents/MacOS/hypergated' >/dev/null 2>&1 || true
+sleep 1
+pkill -KILL -f '/Applications/Hypergate.app/Contents/MacOS/hypergated' >/dev/null 2>&1 || true
+
+if [ "$(id -u)" -eq 0 ]; then
+  rm -f /usr/local/bin/hypergate /usr/local/bin/hypergated
+  rm -rf /Applications/Hypergate.app
+  pkgutil --forget app.hypergate.tray >/dev/null 2>&1 || true
+else
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "Run this script as an administrator (sudo is required for /Applications and /usr/local/bin)." >&2
+    exit 1
+  fi
+  sudo rm -f /usr/local/bin/hypergate /usr/local/bin/hypergated
+  sudo rm -rf /Applications/Hypergate.app
+  sudo pkgutil --forget app.hypergate.tray >/dev/null 2>&1 || true
+fi
+
+echo "Hypergate removed. ~/.hypergate was left intact."
+UNINSTALL
+chmod 755 "$APP/Contents/Resources/uninstall.sh"
 chmod 755 "$APP/Contents/MacOS/hypergate" "$APP/Contents/MacOS/hypergated"
 
 # `web` sits beside hypergated because that is where the daemon looks: it
