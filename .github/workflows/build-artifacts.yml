@@ -208,6 +208,18 @@ jobs:
           codesign --force --options runtime --timestamp --sign "$IDENTITY" \
             dist-standalone/hypergate
 
+      - name: Free native build intermediates before packaging (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="apps/shell/target/${{ matrix.target }}"
+          echo "Native target size before cleanup:"
+          du -sh "$target"
+          rm -rf "$target"
+          echo "Disk space after native target cleanup:"
+          df -h .
+
       # The macOS application identity flows into build-dmg.sh, which signs the
       # app bundle and disk image when it is set.
       - name: Build the installer
@@ -251,7 +263,8 @@ jobs:
           xcrun stapler staple "$dmg"
           xcrun stapler validate "$dmg"
           codesign --verify --verbose=4 "$dmg"
-          spctl --assess --type open --verbose=4 "$dmg"
+          spctl --assess --type open --verbose=4 \
+            --context context:primary-signature "$dmg"
 
       # The installer is only worth shipping if the daemon inside it runs.
       # Runs after signing on purpose: a signature that breaks the binary
