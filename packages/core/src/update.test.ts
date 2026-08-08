@@ -108,12 +108,14 @@ describe('feed parsing', () => {
     expect(
       parseSha256Sums(
         'A'.repeat(64) + '  hypergated-1.0.2.tgz\n' +
-          'b'.repeat(64) + '  hypergate-shell-linux-x64-1.0.2.tgz\r\n' +
+          'b'.repeat(64) + ' hypergate-shell-linux-x64-1.0.2.tgz\r\n' +
+          'c'.repeat(64) + ' *./release/hypergate-shell-darwin-arm64-1.0.2.tgz\n' +
           'not-a-checksum  nope.tgz\n',
       ),
     ).toEqual({
       'hypergated-1.0.2.tgz': 'a'.repeat(64),
       'hypergate-shell-linux-x64-1.0.2.tgz': 'b'.repeat(64),
+      'hypergate-shell-darwin-arm64-1.0.2.tgz': 'c'.repeat(64),
     });
   });
   it('reads dist-tags.latest from an npm document', () => {
@@ -199,6 +201,24 @@ describe('resolving what an update would download', () => {
     expect(assets[1].sha256).toBe('b'.repeat(64));
     // Another architecture's build is not "close enough".
     expect(assetsFromGithub(doc, '0.15.0', 'darwin', 'arm64').map((a) => a.name)).toEqual(['hypergated-0.15.0.tgz']);
+  });
+
+  it('matches checksum entries emitted from the release-assets directory', () => {
+    const doc = {
+      assets: [
+        { name: 'hypergated-0.15.0.tgz', browser_download_url: 'https://github.com/x/hypergated.tgz' },
+        { name: 'hypergate-shell-win32-x64-0.15.0.tgz', browser_download_url: 'https://github.com/x/shell.tgz' },
+      ],
+    };
+    const assets = assetsFromGithub(
+      doc,
+      '0.15.0',
+      'win32',
+      'x64',
+      `${'a'.repeat(64)}  ./hypergate-shell-win32-x64-0.15.0.tgz\n${'b'.repeat(64)}  hypergated-0.15.0.tgz\n`,
+    );
+    expect(assets[0].sha256).toBe('a'.repeat(64));
+    expect(assets[1].sha256).toBe('b'.repeat(64));
   });
 
   it('accepts https anywhere, and plaintext only on loopback', () => {

@@ -1280,17 +1280,8 @@ if (STDIO_MODE) {
       process.stderr.write(`[boot] managed server startup failed: ${error instanceof Error ? error.message : String(error)}\n`);
     });
   const TOKEN = process.env.HYPERGATE_TOKEN ?? loadToken();
-  const json = (res: ServerResponse, status: number, body: unknown, cors = false): void => {
-    res.writeHead(status, {
-      'Content-Type': 'application/json',
-      ...(cors
-        ? {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-session-id, mcp-protocol-version',
-          }
-        : {}),
-    });
+  const json = (res: ServerResponse, status: number, body: unknown): void => {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
   };
   // A minimal self-contained result page shown in the OAuth popup after sign-in.
@@ -1330,7 +1321,7 @@ if (STDIO_MODE) {
   // a named agent token = that agent's per-server allow-list.
   type Scope = { kind: 'master' } | { kind: 'agent'; agent: AgentClient };
   const authScope = (req: IncomingMessage): Scope | null => {
-    if (process.env.HYPERGATE_NO_AUTH === '1' && isAllowedHost(LISTEN_HOST)) return { kind: 'master' };
+    if (process.env.HYPERGATE_NO_AUTH === '1') return { kind: 'master' };
     const got = bearer(req);
     if (!got) return null;
     if (tokenEq(got, TOKEN)) return { kind: 'master' };
@@ -1522,8 +1513,8 @@ if (STDIO_MODE) {
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, mcp-session-id, mcp-protocol-version');
       const scope = authScope(req);
-      if (!scope) return json(res, 401, { error: 'unauthorized' }, true);
-      if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' }, true);
+      if (!scope) return json(res, 401, { error: 'unauthorized' });
+      if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
       try {
         await booted;
         const body = JSON.parse(await readBody(req));
@@ -1547,7 +1538,7 @@ if (STDIO_MODE) {
         await gateway.connect(transport);
         await transport.handleRequest(req, res, body);
       } catch (e) {
-        if (!res.headersSent) json(res, 400, { error: e instanceof Error ? e.message : 'bad_request' }, true);
+        if (!res.headersSent) json(res, 400, { error: e instanceof Error ? e.message : 'bad_request' });
       }
       return;
     }
@@ -1977,6 +1968,15 @@ if (STDIO_MODE) {
       } catch {
         return json(res, 400, { error: 'invalid_json' });
       }
+    }
+
+    const agentTokenM = /^\/api\/clients\/([^/]+)\/token$/.exec(pathname);
+    if (agentTokenM && req.method === 'POST') {
+      const agent = clients.find((c) => c.id === agentTokenM[1]);
+      if (!agent) return json(res, 404, { error: 'not_found' });
+      agent.token = randomBytes(24).toString('hex');
+      saveClients(clients);
+      return json(res, 200, agentInfo(agent));
     }
 
     const clientM = /^\/api\/clients\/([^/]+)$/.exec(pathname);

@@ -31,7 +31,7 @@ const MANIFEST = 'manifest.json';
  */
 const INSTALL_DEADLINE = 60_000;
 const isPlainFilename = (name: string): boolean =>
-  !name.includes('/') && !name.includes('\\') && !name.includes('..') && name === name.split(/[\\/]/).pop();
+  name.length > 0 && name !== '..' && !name.includes('/') && !name.includes('\\') && !name.includes('..');
 
 /** What a HEAD says this URL weighs, when it answers at all. */
 async function headSize(url: string): Promise<number | undefined> {

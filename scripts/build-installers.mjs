@@ -70,6 +70,7 @@ function windows() {
     `/DPAYLOAD=${PAYLOAD}`,
     `/DICON=${icon}`,
     `/DPATHSCRIPT=${join(INSTALLERS, 'windows', 'path.ps1')}`,
+    `/DSTOPSCRIPT=${join(INSTALLERS, 'windows', 'stop.ps1')}`,
     `/DOUTFILE=${output}`,
     join(INSTALLERS, 'windows', 'hypergate.nsi'),
   ]);

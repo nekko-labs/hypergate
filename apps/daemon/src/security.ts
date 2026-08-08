@@ -2,18 +2,31 @@
 export const isLoopbackHostname = (hostname: string): boolean =>
   ['localhost', '127.0.0.1', '::1'].includes(hostname.toLowerCase().replace(/^\[|\]$/g, ''));
 
+const hostnameFrom = (value: string): string | undefined => {
+  try {
+    const parsed = new URL(`http://${value}`);
+    if (parsed.username || parsed.password) return undefined;
+    if (parsed.pathname !== '/' || parsed.search || parsed.hash) return undefined;
+    return parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  } catch {
+    return undefined;
+  }
+};
+
 /**
  * A Host header is browser-controlled and therefore must not be allowed to
  * turn DNS rebinding into access to a loopback management service.
  */
 export const isAllowedHost = (host: string | undefined): boolean => {
   if (host === undefined) return true;
-  try {
-    const parsed = new URL(`http://${host}`);
-    return !parsed.username && !parsed.password && isLoopbackHostname(parsed.hostname);
-  } catch {
-    return false;
-  }
+  const hostname = hostnameFrom(host);
+  if (!hostname) return false;
+  if (isLoopbackHostname(hostname)) return true;
+  const allowed = (process.env.HYPERGATE_ALLOWED_HOSTS ?? '')
+    .split(',')
+    .map((entry) => hostnameFrom(entry.trim()))
+    .filter((entry): entry is string => Boolean(entry));
+  return allowed.includes(hostname);
 };
 
 /** Accept same-machine browser origins, regardless of the UI dev port. */

@@ -652,6 +652,9 @@ export interface SetAgentServerRequest {
   allowed: boolean;
 }
 
+/** Rotate an existing agent's bearer token without changing its scope. */
+export interface RotateAgentTokenResponse extends AgentClientInfo {}
+
 /** An agent plus a ready-to-paste connect snippet (returned by the clients API). */
 export interface AgentClientInfo extends AgentClient {
   /** The gateway URL this agent connects to. */

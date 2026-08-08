@@ -23,8 +23,11 @@ export const releaseUrlFor = (version: string): string => `https://github.com/${
 export function parseSha256Sums(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of text.split(/\r?\n/)) {
-    const match = /^([a-fA-F0-9]{64})\s{2}(.+?)\s*$/.exec(line);
-    if (match) out[match[2]] = match[1].toLowerCase();
+    const match = /^([a-fA-F0-9]{64})\s+\*?(.+?)\s*$/.exec(line);
+    if (match) {
+      const name = match[2].split(/[\\/]/).pop();
+      if (name) out[name] = match[1].toLowerCase();
+    }
   }
   return out;
 }

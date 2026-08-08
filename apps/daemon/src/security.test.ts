@@ -11,6 +11,20 @@ describe('daemon request security predicates', () => {
     expect(isAllowedHost(undefined)).toBe(true);
   });
 
+  it('extends loopback Hosts with case-insensitive configured names, ignoring ports', () => {
+    const previous = process.env.HYPERGATE_ALLOWED_HOSTS;
+    process.env.HYPERGATE_ALLOWED_HOSTS = ' example.test, ,Proxy.TEST:8443 ';
+    try {
+      expect(isAllowedHost('example.test:7777')).toBe(true);
+      expect(isAllowedHost('PROXY.test:1234')).toBe(true);
+      expect(isAllowedHost('localhost:9999')).toBe(true);
+      expect(isAllowedHost('unlisted.example')).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.HYPERGATE_ALLOWED_HOSTS;
+      else process.env.HYPERGATE_ALLOWED_HOSTS = previous;
+    }
+  });
+
   it('allows loopback origins on any port only', () => {
     expect(isLoopbackOrigin('http://localhost:5173')).toBe(true);
     expect(isLoopbackOrigin('http://127.0.0.1:3000')).toBe(true);
