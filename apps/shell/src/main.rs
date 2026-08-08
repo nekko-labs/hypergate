@@ -33,6 +33,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use serde_json::{Value, json};
 
 #[derive(Parser)]
 #[command(
@@ -42,11 +43,14 @@ use clap::{Parser, Subcommand};
     long_about = None
 )]
 struct Cli {
+    /// Emit one machine-readable JSON envelope instead of human output.
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     command: Command,
 }
 
-#[derive(Subcommand)]
+#[derive(Clone, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum Command {
     /// Open the desktop app: the manager window plus the tray agent.
@@ -170,6 +174,27 @@ enum Command {
         #[arg(long)]
         token_only: bool,
     },
+    /// Manage scoped credentials for connected agents.
+    Agent {
+        #[command(subcommand)]
+        action: AgentAction,
+    },
+    /// Connect an agent to an installed harness.
+    Connect {
+        /// Harness target, or `targets` to inspect available harnesses.
+        target: String,
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// Inspect and install curated command-line tools.
+    Cli {
+        #[command(subcommand)]
+        action: CliAction,
+    },
+    /// Show local gateway usage analytics.
+    Usage,
+    /// Report production readiness and local configuration.
+    Doctor,
     /// Print one agent's auth headers as JSON, for a client's headers helper.
     #[command(name = "mcp-headers")]
     McpHeaders {
@@ -220,7 +245,58 @@ enum Command {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Clone, Subcommand)]
+enum AgentAction {
+    Ls,
+    Add {
+        name: String,
+        #[arg(long = "server")]
+        servers: Vec<String>,
+        #[arg(long)]
+        target: Option<String>,
+    },
+    Rm {
+        id: String,
+    },
+    Allow {
+        id: String,
+        server: String,
+    },
+    Deny {
+        id: String,
+        server: String,
+    },
+    Rename {
+        id: String,
+        name: String,
+    },
+    Token {
+        id: String,
+    },
+    Rotate {
+        id: String,
+    },
+}
+
+#[derive(Clone, Subcommand)]
+enum CliAction {
+    Ls,
+    Search {
+        query: String,
+    },
+    Check {
+        command: String,
+    },
+    Install {
+        id: String,
+        #[arg(long)]
+        run: bool,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Clone, Subcommand)]
 enum ServerAction {
     /// Start a managed server.
     Start { id: String },
@@ -230,7 +306,7 @@ enum ServerAction {
     Restart { id: String },
 }
 
-#[derive(Subcommand)]
+#[derive(Clone, Subcommand)]
 enum ShortcutAction {
     /// Add the launchers (Start Menu, .app bundle, or XDG desktop entry).
     Install {
@@ -244,7 +320,7 @@ enum ShortcutAction {
     Status,
 }
 
-#[derive(Subcommand)]
+#[derive(Clone, Subcommand)]
 enum AutostartAction {
     /// Enable the login item.
     On,
@@ -254,7 +330,7 @@ enum AutostartAction {
     Status,
 }
 
-#[derive(Subcommand)]
+#[derive(Clone, Subcommand)]
 enum SecretAction {
     /// Print a secret's value to stdout.
     Get { key: String },
@@ -269,16 +345,210 @@ enum SecretAction {
 fn main() -> ExitCode {
     logging::init();
     let cli = Cli::parse();
-    match dispatch(cli.command) {
+    match dispatch(cli.command, cli.json) {
         Ok(code) => code,
         Err(e) => {
-            crate::diagnostic!("hypergate: {e}");
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({ "ok": false, "error": e })).unwrap()
+                );
+            } else {
+                crate::diagnostic!("hypergate: {e}");
+            }
             ExitCode::FAILURE
         }
     }
 }
 
-fn dispatch(command: Command) -> Result<ExitCode, String> {
+fn envelope(data: Value) -> Value {
+    json!({ "ok": true, "data": data })
+}
+
+fn dispatch_json(command: &Command) -> Result<ExitCode, String> {
+    let data = match command {
+        Command::Status => match api::health() {
+            Ok(h) => {
+                json!({ "running": true, "version": h.version, "servers": h.servers, "port": crate::paths::port() })
+            }
+            Err(e) => json!({ "running": false, "error": e }),
+        },
+        Command::List => serde_json::to_value(api::servers()?).map_err(|e| e.to_string())?,
+        Command::Logs { id } => api::logs_value(id)?,
+        Command::Catalog { filter } => {
+            let needle = filter.as_deref().map(str::to_lowercase);
+            let entries: Vec<_> = api::registry()?
+                .into_iter()
+                .filter(|e| match &needle {
+                    Some(n) => {
+                        e.id.to_lowercase().contains(n)
+                            || e.name.to_lowercase().contains(n)
+                            || e.description.to_lowercase().contains(n)
+                    }
+                    None => true,
+                })
+                .collect();
+            serde_json::to_value(entries).map_err(|e| e.to_string())?
+        }
+        Command::Search { query } => serde_json::to_value(api::search_registry(query)?).map_err(|e| e.to_string())?,
+        Command::Tools { server } => {
+            let result = api::mcp("tools/list", json!({}))?;
+            if let Some(s) = server {
+                let prefix = format!("{s}__");
+                json!(
+                    result
+                        .get("tools")
+                        .and_then(Value::as_array)
+                        .map(|all| all
+                            .iter()
+                            .filter(|t| t
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .is_some_and(|n| n.starts_with(&prefix)))
+                            .cloned()
+                            .collect::<Vec<_>>())
+                        .unwrap_or_default()
+                )
+            } else {
+                result
+            }
+        }
+        Command::Call { tool, args, pairs } => {
+            let arguments = commands::parse_tool_args(args.as_deref(), pairs)?;
+            api::mcp("tools/call", json!({ "name": tool, "arguments": arguments }))?
+        }
+        Command::Gateway { .. } => serde_json::to_value(api::gateway()?).map_err(|e| e.to_string())?,
+        Command::Usage => api::analytics_value()?,
+        Command::Doctor => doctor_json()?,
+        Command::Agent { action } => match action {
+            AgentAction::Ls => api::agents()?,
+            AgentAction::Add { name, servers, target } => api::add_agent(name, servers, target.as_deref())?,
+            AgentAction::Rm { id } => {
+                api::remove_agent(id)?;
+                json!({ "id": id, "removed": true })
+            }
+            AgentAction::Allow { id, server } => api::set_agent_server(id, server, true)?,
+            AgentAction::Deny { id, server } => api::set_agent_server(id, server, false)?,
+            AgentAction::Rename { id, name } => api::rename_agent(id, name).map_err(|e| {
+                if e.contains("official agent") {
+                    "cannot rename official agent".to_string()
+                } else {
+                    e
+                }
+            })?,
+            AgentAction::Token { id } => agent_token(id)?,
+            AgentAction::Rotate { id } => api::rotate_agent(id)?,
+        },
+        Command::Connect { target, agent } => {
+            if target == "targets" {
+                api::connect_targets()?
+            } else {
+                let id = match agent {
+                    Some(id) => id.clone(),
+                    None => api::resolve_client(target, true)?.id,
+                };
+                api::connect_agent(&id, target)?
+            }
+        }
+        Command::Cli { action } => cli_json(action)?,
+        _ => return Err("this command does not support --json".into()),
+    };
+    let failed_call =
+        matches!(command, Command::Call { .. }) && data.get("isError").and_then(Value::as_bool).unwrap_or(false);
+    println!("{}", serde_json::to_string(&envelope(data)).map_err(|e| e.to_string())?);
+    Ok(if failed_call {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn agent_token(id: &str) -> Result<Value, String> {
+    let agents = api::agents()?;
+    agents
+        .as_array()
+        .and_then(|a| a.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(id)))
+        .and_then(|v| v.get("token"))
+        .cloned()
+        .ok_or_else(|| format!("agent `{id}` not found"))
+}
+
+fn cli_json(action: &CliAction) -> Result<Value, String> {
+    match action {
+        CliAction::Ls => api::cli_status(),
+        CliAction::Search { query } => api::cli_search(query),
+        CliAction::Check { command } => api::cli_check(command),
+        CliAction::Install { id, run, yes } => install_cli(id, *run || *yes),
+    }
+}
+
+fn install_cli(id: &str, run: bool) -> Result<Value, String> {
+    let catalog = api::cli_catalog()?;
+    let entry = catalog
+        .as_array()
+        .and_then(|a| a.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(id)))
+        .ok_or_else(|| format!("`{id}` is not in the curated CLI catalog"))?;
+    let option = entry
+        .get("installs")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first())
+        .and_then(|v| v.get("command"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("no curated install command is available for `{id}`"))?;
+    if !run {
+        return Ok(json!({ "id": id, "command": option, "executed": false }));
+    }
+    let argv: Vec<&str> = option.split_whitespace().collect();
+    let (program, args) = argv.split_first().ok_or("curated install command is empty")?;
+    let status = std::process::Command::new(program)
+        .args(args)
+        .status()
+        .map_err(|e| format!("could not run curated installer: {e}"))?;
+    Ok(json!({ "id": id, "command": option, "executed": true, "exitCode": status.code().unwrap_or(1) }))
+}
+
+fn doctor_json() -> Result<Value, String> {
+    let health = api::health();
+    let keychain = secrets::available();
+    let token_source = if secrets::get("gateway-token").ok().flatten().is_some() {
+        "keychain"
+    } else if paths::token_file().is_file() {
+        "file"
+    } else {
+        "none"
+    };
+    let agents = api::agents().unwrap_or_else(|_| json!([]));
+    let (mut wildcard, mut scoped) = (0_u64, 0_u64);
+    if let Some(items) = agents.as_array() {
+        for item in items {
+            if item.get("servers").and_then(Value::as_str) == Some("*") {
+                wildcard += 1
+            } else {
+                scoped += 1
+            }
+        }
+    }
+    let h = health.as_ref().ok();
+    let problems = h.is_none()
+        || std::env::var("HYPERGATE_NO_AUTH").ok().as_deref() == Some("1")
+        || (keychain && token_source == "file");
+    Ok(json!({
+        "daemon": { "running": h.is_some(), "version": h.map(|v| v.version.clone()), "port": paths::port() },
+        "auth": { "tokenSource": token_source, "keychainAvailable": keychain, "disabled": std::env::var("HYPERGATE_NO_AUTH").ok().as_deref() == Some("1"), "allowedHosts": std::env::var("HYPERGATE_ALLOWED_HOSTS").unwrap_or_default() },
+        "agents": { "count": agents.as_array().map(Vec::len).unwrap_or(0), "wildcard": wildcard, "scoped": scoped },
+        "servers": api::servers_value().unwrap_or_else(|_| json!([])),
+        "update": api::update().ok(),
+        "autostart": { "enabled": autostart::is_enabled() },
+        "shortcut": shortcut::status().ok().map(|items| items.into_iter().map(|item| json!({ "label": item.label, "exists": item.exists(), "path": item.path })).collect::<Vec<_>>()).unwrap_or_default(),
+        "dataDirectory": paths::data_dir(),
+        "problems": problems
+    }))
+}
+
+fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
+    if json_mode {
+        return dispatch_json(&command);
+    }
     match command {
         // The same resident agent either way; `app` also opens the manager
         // window up front, while `tray` stays headless (it's what the login
@@ -502,6 +772,139 @@ fn dispatch(command: Command) -> Result<ExitCode, String> {
             let ok = commands::call(&tool, args.as_deref(), &pairs)?;
             // A tool that reported an error must not exit 0, or a script can't tell.
             Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(1) })
+        }
+
+        Command::Agent { action } => match action {
+            AgentAction::Ls => {
+                println!("{}", serde_json::to_string_pretty(&api::agents()?).unwrap());
+                Ok(ExitCode::SUCCESS)
+            }
+            AgentAction::Add { name, servers, target } => {
+                let v = api::add_agent(&name, &servers, target.as_deref())?;
+                println!("Added agent {}", v.get("id").and_then(Value::as_str).unwrap_or(&name));
+                Ok(ExitCode::SUCCESS)
+            }
+            AgentAction::Rm { id } => {
+                api::remove_agent(&id)?;
+                println!("Removed agent {id}");
+                Ok(ExitCode::SUCCESS)
+            }
+            AgentAction::Allow { id, server } => {
+                api::set_agent_server(&id, &server, true)?;
+                println!("Allowed {server} for {id}");
+                Ok(ExitCode::SUCCESS)
+            }
+            AgentAction::Deny { id, server } => {
+                api::set_agent_server(&id, &server, false)?;
+                println!("Denied {server} for {id}");
+                Ok(ExitCode::SUCCESS)
+            }
+            AgentAction::Rename { id, name } => {
+                api::rename_agent(&id, &name).map_err(|e| {
+                    if e.contains("official agent") {
+                        "cannot rename an official catalog agent".to_string()
+                    } else {
+                        e
+                    }
+                })?;
+                println!("Renamed agent {id}");
+                Ok(ExitCode::SUCCESS)
+            }
+            AgentAction::Token { id } => {
+                print!("{}", agent_token(&id)?);
+                Ok(ExitCode::SUCCESS)
+            }
+            AgentAction::Rotate { id } => {
+                let v = api::rotate_agent(&id)?;
+                println!("Rotated agent {}", v.get("id").and_then(Value::as_str).unwrap_or(&id));
+                Ok(ExitCode::SUCCESS)
+            }
+        },
+
+        Command::Connect { target, agent } => {
+            if target == "targets" {
+                let v = api::connect_targets()?;
+                if let Some(items) = v.get("targets").and_then(Value::as_array) {
+                    for item in items {
+                        println!(
+                            "{}  {}",
+                            item.get("id").and_then(Value::as_str).unwrap_or("?"),
+                            if item.get("found").and_then(Value::as_bool).unwrap_or(false) {
+                                "available"
+                            } else {
+                                "not found"
+                            }
+                        );
+                    }
+                }
+                Ok(ExitCode::SUCCESS)
+            } else {
+                let id = match agent {
+                    Some(id) => id,
+                    None => api::resolve_client(&target, true)?.id,
+                };
+                match api::connect_agent(&id, &target) {
+                    Ok(v) => {
+                        println!("{}", v.get("output").and_then(Value::as_str).unwrap_or(""));
+                        println!("Command: {}", v.get("command").and_then(Value::as_str).unwrap_or(""));
+                        Ok(ExitCode::SUCCESS)
+                    }
+                    Err(_) => {
+                        let info = api::agent_connect_info(&id)?;
+                        let snippet = info
+                            .get("targets")
+                            .and_then(Value::as_array)
+                            .and_then(|a| {
+                                a.iter()
+                                    .find(|v| v.get("id").and_then(Value::as_str) == Some(target.as_str()))
+                            })
+                            .and_then(|v| v.get("snippet"))
+                            .and_then(Value::as_str);
+                        if let Some(s) = snippet {
+                            println!("{s}");
+                            Ok(ExitCode::SUCCESS)
+                        } else {
+                            Err(format!("target `{target}` is not runnable"))
+                        }
+                    }
+                }
+            }
+        }
+
+        Command::Cli { action } => match action {
+            CliAction::Ls => {
+                println!("{}", serde_json::to_string_pretty(&api::cli_status()?).unwrap());
+                Ok(ExitCode::SUCCESS)
+            }
+            CliAction::Search { query } => {
+                println!("{}", serde_json::to_string_pretty(&api::cli_search(&query)?).unwrap());
+                Ok(ExitCode::SUCCESS)
+            }
+            CliAction::Check { command } => {
+                println!("{}", serde_json::to_string_pretty(&api::cli_check(&command)?).unwrap());
+                Ok(ExitCode::SUCCESS)
+            }
+            CliAction::Install { id, run, yes } => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&install_cli(&id, run || yes)?).unwrap()
+                );
+                Ok(ExitCode::SUCCESS)
+            }
+        },
+
+        Command::Usage => {
+            println!("{}", serde_json::to_string_pretty(&api::analytics_value()?).unwrap());
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Doctor => {
+            let report = doctor_json()?;
+            println!("{}", serde_json::to_string_pretty(&report).unwrap());
+            Ok(if report["problems"].as_bool().unwrap_or(false) {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            })
         }
 
         Command::Open => {
