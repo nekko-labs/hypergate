@@ -145,6 +145,18 @@ analytics = await (await fetch(`${BASE}/api/analytics`)).json();
 if (!analytics.clients.some((c) => c.client === 'echo-agent')) fail(`analytics did not attribute the call to echo-agent: ${JSON.stringify(analytics.clients.map((c) => c.client))}`);
 ok('analytics attributes calls to the named agent');
 
+const rotated = await fetch(`${BASE}/api/clients/${allowed.id}/token`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+});
+const rotatedAgent = await rotated.json();
+if (rotated.status !== 200 || !rotatedAgent.token || rotatedAgent.token === allowed.token)
+  fail(`agent token rotation failed: ${JSON.stringify(rotatedAgent)}`);
+if (rotatedAgent.name !== allowed.name || JSON.stringify(rotatedAgent.servers) !== JSON.stringify(allowed.servers))
+  fail(`agent token rotation changed scope or name: ${JSON.stringify(rotatedAgent)}`);
+allowed.token = rotatedAgent.token;
+ok('agent token rotation mints a new credential without changing scope');
+
 // ── enable/disable one server for one agent (the per-agent toggle) ──────────
 // The UI's switch is this endpoint, and what it changes must be visible through
 // the gateway immediately, which is the whole point of the permission.
