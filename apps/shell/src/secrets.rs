@@ -16,6 +16,8 @@
 //! the normal case on a headless Linux box with no Secret Service running.
 
 use std::fs;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::paths;
 
@@ -79,11 +81,50 @@ pub fn available() -> bool {
     }
 }
 
+/// How long "there is no token yet" is trusted before the keychain is asked
+/// again. The token itself never expires while the process lives, so the only
+/// repeated reads are the ones that found nothing — during the seconds between
+/// launching the daemon and it minting its first token.
+const MISS_TTL: Duration = Duration::from_secs(2);
+
+/// The last answer the keychain gave, and when.
+fn cache() -> &'static Mutex<Option<(Option<String>, Instant)>> {
+    type TokenCache = Mutex<Option<(Option<String>, Instant)>>;
+    static CACHE: OnceLock<TokenCache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
 /// The master gateway token: keychain first, then the legacy plaintext file.
 ///
 /// Returns `None` when neither exists, which simply means the daemon has never
 /// run (it mints the token on first boot).
+///
+/// Memoised, because every call the shell makes attaches this and the startup
+/// poll makes several a second. A keychain read is not a cheap local lookup: on
+/// macOS it is a round trip to `securityd`, which is entitled to stop and ask
+/// the user whether this binary may have the item — so a per-request read turns
+/// a polling loop into an authorization storm and the app stops responding. The
+/// lock is held across the read on purpose: concurrent callers wait for one
+/// answer instead of racing to ask again.
 pub fn gateway_token() -> Option<String> {
+    let mut cached = cache().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((value, read_at)) = cached.as_ref()
+        && (value.is_some() || read_at.elapsed() < MISS_TTL)
+    {
+        return value.clone();
+    }
+    let fresh = read_gateway_token();
+    *cached = Some((fresh.clone(), Instant::now()));
+    fresh
+}
+
+/// Drop the memoised token, so the next call asks the keychain again. Called
+/// when the daemon rejects it: a rotation is precisely when a cache must lose.
+pub fn forget_gateway_token() {
+    *cache().lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+fn read_gateway_token() -> Option<String> {
     if let Ok(Some(t)) = get(TOKEN_KEY)
         && !t.trim().is_empty()
     {
@@ -120,6 +161,8 @@ pub fn adopt_gateway_token() -> Adopted {
     if !available() {
         return Adopted::NoKeychain;
     }
+    // Whatever this decides, the memoised answer from before it is stale.
+    forget_gateway_token();
     if let Ok(Some(t)) = get(TOKEN_KEY)
         && !t.trim().is_empty()
     {
