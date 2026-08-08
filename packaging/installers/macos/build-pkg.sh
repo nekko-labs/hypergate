@@ -34,15 +34,27 @@ cat > "$APP/Contents/Resources/uninstall.sh" <<'UNINSTALL'
 #!/bin/sh
 set -eu
 
+run_user() {
+  if [ "$(id -u)" -eq 0 ]; then
+    if [ -z "${SUDO_USER:-}" ]; then
+      echo "Run this script as the logged-in user (or via sudo from that user)." >&2
+      exit 1
+    fi
+    sudo -u "$SUDO_USER" -H "$@"
+  else
+    "$@"
+  fi
+}
+
 # User-scoped first: the shell owns the real LaunchAgent implementation and
 # must run as the logged-in user, not root's sudo home.
 if [ -x /Applications/Hypergate.app/Contents/MacOS/hypergate ]; then
-  /Applications/Hypergate.app/Contents/MacOS/hypergate autostart off >/dev/null 2>&1 || true
+  run_user /Applications/Hypergate.app/Contents/MacOS/hypergate autostart off >/dev/null 2>&1 || true
 fi
-osascript -e 'tell application "Hypergate" to quit' >/dev/null 2>&1 || true
-pkill -TERM -f '/Applications/Hypergate.app/Contents/MacOS/hypergated' >/dev/null 2>&1 || true
+run_user osascript -e 'tell application "Hypergate" to quit' >/dev/null 2>&1 || true
+run_user pkill -TERM -f '/Applications/Hypergate.app/Contents/MacOS/hypergated' >/dev/null 2>&1 || true
 sleep 1
-pkill -KILL -f '/Applications/Hypergate.app/Contents/MacOS/hypergated' >/dev/null 2>&1 || true
+run_user pkill -KILL -f '/Applications/Hypergate.app/Contents/MacOS/hypergated' >/dev/null 2>&1 || true
 
 if [ "$(id -u)" -eq 0 ]; then
   rm -f /usr/local/bin/hypergate /usr/local/bin/hypergated
