@@ -17,12 +17,12 @@ test('builds a PowerShell install and launch command for Windows', () => {
   assert.match(install?.command ?? '', /hypergate\.exe" app$/);
 });
 
-test('builds a macOS package install and launch command', () => {
+test('builds a macOS disk image download and open command', () => {
   const install = installCommandFor({ platform: 'macos', architecture: 'x64' });
   assert.equal(install?.shell, 'Terminal');
-  assert.match(install?.command ?? '', /hypergate-macos-x64\.pkg/);
-  assert.match(install?.command ?? '', /sudo installer/);
-  assert.match(install?.command ?? '', /open -a Hypergate$/);
+  assert.match(install?.command ?? '', /hypergate-macos-x64\.dmg/);
+  assert.doesNotMatch(install?.command ?? '', /sudo/);
+  assert.match(install?.command ?? '', /open .*hypergate\.dmg$/);
 });
 
 test('builds a Debian package install and launch command for Linux', () => {

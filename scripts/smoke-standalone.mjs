@@ -11,8 +11,8 @@
 //      rather than trusting that it does.
 //
 //   npm run build:standalone && npm run smoke:standalone
-import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import { shutdown, removeDir } from './smoke-lib.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const EXE = process.platform === 'win32' ? '.exe' : '';
-const DAEMON = join(ROOT, 'dist-standalone', `hypergated${EXE}`);
+const STANDALONE_DAEMON = join(ROOT, 'dist-standalone', `hypergated${EXE}`);
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 const PORT = 7897;
 const BASE = `http://localhost:${PORT}`;
@@ -28,20 +28,74 @@ const DIR = mkdtempSync(join(tmpdir(), 'hypergate-standalone-'));
 
 const ok = (m) => console.log(`✓ ${m}`);
 let daemon;
+let dmgMount;
+let daemonPath = STANDALONE_DAEMON;
 const fail = async (m) => {
   console.error(`✗ ${m}`);
   await shutdown(daemon, DIR);
+  detachDmg();
   process.exit(1);
 };
 
-if (!existsSync(DAEMON)) {
-  console.error(`✗ ${DAEMON} is missing, so run \`npm run build:standalone\` first`);
-  removeDir(DIR);
-  process.exit(1);
+function detachDmg() {
+  if (!dmgMount) return;
+  try { spawnSync('hdiutil', ['detach', dmgMount], { stdio: 'ignore' }); } catch {}
+  rmSync(dmgMount, { recursive: true, force: true });
+  dmgMount = undefined;
 }
 
+async function prepareDaemon() {
+  if (process.platform === 'darwin' && process.env.HYPERGATE_MACOS_DMG) {
+    const dmg = process.env.HYPERGATE_MACOS_DMG;
+    if (!existsSync(dmg)) {
+      await fail(`HYPERGATE_MACOS_DMG does not exist: ${dmg}`);
+      return;
+    }
+    dmgMount = mkdtempSync(join(tmpdir(), 'hypergate-standalone-dmg-'));
+    const mount = spawnSync('hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', dmgMount, dmg], {
+      stdio: 'pipe',
+      encoding: 'utf8',
+    });
+    if (mount.status !== 0) {
+      await fail(`could not mount macOS dmg: ${mount.stderr ?? mount.stdout ?? 'unknown error'}`);
+      return;
+    }
+    daemonPath = join(dmgMount, 'Hypergate.app', 'Contents', 'MacOS', 'hypergated');
+  }
+  if (!existsSync(daemonPath)) {
+    await fail(`${daemonPath} is missing, so run \`npm run build:standalone\` first`);
+    return;
+  }
+  if (process.platform !== 'darwin') {
+    ok('macOS daemon signature check skipped (not running on macOS)');
+  } else if (!process.env.HYPERGATE_MACOS_DMG) {
+    ok('macOS daemon signature check skipped (no DMG configured; local build may be unsigned)');
+  } else {
+    const signature = spawnSync('codesign', ['-d', '--entitlements', ':-', daemonPath], {
+      encoding: 'utf8',
+    });
+    const details = `${signature.stdout ?? ''}${signature.stderr ?? ''}`;
+    if (signature.status !== 0) {
+      await fail(`codesign could not inspect ${daemonPath}: ${details}`);
+      return;
+    }
+    for (const entitlement of [
+      'com.apple.security.cs.allow-jit',
+      'com.apple.security.cs.allow-unsigned-executable-memory',
+    ]) {
+      if (!details.includes(`<key>${entitlement}</key>`)) {
+        await fail(`macOS daemon is missing entitlement ${entitlement}: ${details}`);
+        return;
+      }
+    }
+    ok('macOS daemon signature contains the V8 entitlements');
+  }
+}
+
+await prepareDaemon();
+
 // No `node` anywhere in this command: that is the whole point of the artifact.
-daemon = spawn(DAEMON, [], {
+daemon = spawn(daemonPath, [], {
   env: { ...process.env, HYPERGATE_DIR: DIR, HYPERGATE_PORT: String(PORT) },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -113,5 +167,6 @@ if (call?.result?.content?.[0]?.text !== 'no runtime required') {
 ok('routed a tool call through the gateway');
 
 await shutdown(daemon, DIR);
+detachDmg();
 console.log('\nStandalone daemon smoke: all green');
 process.exit(0);

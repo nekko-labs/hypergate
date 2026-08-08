@@ -91,6 +91,7 @@ describe('updatePlan', () => {
     }
     // Linux additionally needs root, so the command is the package manager's.
     expect(updatePlan('installer', '0.12.0', 'linux').command).toContain('apt install');
+    expect(updatePlan('installer', '0.12.0', 'darwin').note).toContain('.dmg');
   });
 
   it('tells a checkout to pull, and an unplaceable install nothing but the truth', () => {

@@ -31,44 +31,45 @@ const fail = (m) => {
   process.exit(1);
 };
 
-function checkMacosPkg() {
+function checkMacosDmg() {
   if (process.platform !== 'darwin') return;
-  const pkg = process.env.HYPERGATE_MACOS_PKG;
-  if (!pkg) {
-    ok('macOS pkg inspection skipped (set HYPERGATE_MACOS_PKG to inspect a built .pkg)');
+  const dmg = process.env.HYPERGATE_MACOS_DMG;
+  if (!dmg) {
+    ok('macOS dmg inspection skipped (set HYPERGATE_MACOS_DMG to inspect a built .dmg)');
     return;
   }
-  if (!existsSync(pkg)) fail(`HYPERGATE_MACOS_PKG does not exist: ${pkg}`);
-  const expanded = mkdtempSync(join(tmpdir(), 'hypergate-pkg-'));
+  if (!existsSync(dmg)) fail(`HYPERGATE_MACOS_DMG does not exist: ${dmg}`);
+  const mount = mkdtempSync(join(tmpdir(), 'hypergate-dmg-'));
   try {
-    execFileSync('pkgutil', ['--expand-full', pkg, expanded], { stdio: 'pipe' });
-    const app = join(expanded, 'Applications', 'Hypergate.app');
+    execFileSync('hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', mount, dmg], { stdio: 'pipe' });
+    const app = join(mount, 'Hypergate.app');
     const plist = join(app, 'Contents', 'Info.plist');
-    if (!existsSync(plist)) fail(`macOS pkg has no bundle Info.plist: ${plist}`);
+    if (!existsSync(plist)) fail(`macOS dmg has no bundle Info.plist: ${plist}`);
     const executable = execFileSync('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', plist], {
       encoding: 'utf8',
     }).trim();
     const launcher = join(app, 'Contents', 'MacOS', executable);
     const realBinary = join(app, 'Contents', 'MacOS', 'hypergate');
     if (!existsSync(launcher) || !statSync(launcher).isFile() || launcher === realBinary) {
-      fail(`macOS pkg launcher does not resolve distinctly from hypergate: ${launcher}`);
+      fail(`macOS dmg launcher does not resolve distinctly from hypergate: ${launcher}`);
     }
     if (!existsSync(realBinary) || !statSync(realBinary).isFile()) {
-      fail(`macOS pkg has no real hypergate binary: ${realBinary}`);
+      fail(`macOS dmg has no real hypergate binary: ${realBinary}`);
     }
     const launcherStat = statSync(launcher);
     const realBinaryStat = statSync(realBinary);
     if (launcherStat.dev === realBinaryStat.dev && launcherStat.ino === realBinaryStat.ino) {
-      fail(`macOS pkg launcher and hypergate resolve to the same file: ${launcher}`);
+      fail(`macOS dmg launcher and hypergate resolve to the same file: ${launcher}`);
     }
     const fileType = execFileSync('file', [realBinary], { encoding: 'utf8' });
-    if (!/Mach-O/.test(fileType)) fail(`macOS pkg hypergate is not Mach-O: ${fileType.trim()}`);
-    ok(`macOS pkg bundle resolves ${executable} separately from the Mach-O hypergate`);
+    if (!/Mach-O/.test(fileType)) fail(`macOS dmg hypergate is not Mach-O: ${fileType.trim()}`);
+    ok(`macOS dmg bundle resolves ${executable} separately from the Mach-O hypergate`);
   } catch (e) {
-    if (e.status !== undefined) fail(`macOS pkg inspection failed: ${e.stderr || e.stdout || e.message}`);
+    if (e.status !== undefined) fail(`macOS dmg inspection failed: ${e.stderr || e.stdout || e.message}`);
     throw e;
   } finally {
-    rmSync(expanded, { recursive: true, force: true });
+    try { execFileSync('hdiutil', ['detach', mount], { stdio: 'ignore' }); } catch {}
+    rmSync(mount, { recursive: true, force: true });
   }
 }
 
@@ -97,7 +98,7 @@ const hg = (args, { allowFailure = false } = {}) => {
   }
 };
 
-checkMacosPkg();
+checkMacosDmg();
 
 function cleanup() {
   try {

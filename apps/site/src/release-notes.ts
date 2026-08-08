@@ -40,7 +40,7 @@ function formatDate(value: string): string {
 function installerAssets(release: GithubRelease) {
   const version = release.tag_name.replace(/^v/, '');
   return release.assets.filter((asset) =>
-    asset.name.includes(version) && /-setup\.exe$|\.pkg$|\.deb$|\.rpm$|\.tar\.gz$/i.test(asset.name),
+    asset.name.includes(version) && /-setup\.exe$|\.dmg$|\.deb$|\.rpm$|\.tar\.gz$/i.test(asset.name),
   );
 }
 

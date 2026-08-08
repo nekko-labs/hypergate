@@ -140,7 +140,9 @@ export function updatePlan(channel: InstallChannel, latest?: string, platform: s
         note:
           platform === 'linux'
             ? 'Installed from a system package, which needs root to replace. Download the release and install it with your package manager.'
-            : 'Installed from the native installer. Download the new one from the release page and run it: it stops the running app, replaces it, and starts it again.',
+            : platform === 'darwin'
+              ? 'Installed from the macOS disk image. Download the new .dmg from the release page, open it, and drag Hypergate.app over the existing app.'
+              : 'Installed from the native installer. Download the new one from the release page and run it: it stops the running app, replaces it, and starts it again.',
       };
     case 'repo':
       return {

@@ -1,27 +1,22 @@
 #!/bin/bash
-# Build the macOS installer package.
+# Build the macOS drag-to-Applications disk image.
 #
-# A .pkg rather than a .dmg: Hypergate is a tray agent *and* a CLI, so it needs
-# to put a binary on PATH as well as an app in /Applications. A drag-to-install
-# .dmg cannot do the former, and asking people to drag an app and then also run
-# a shell command is worse than one double-click.
-#
-# Usage: build-pkg.sh <payload-dir> <version> <arch> <output.pkg> <icon.icns>
+# Usage: build-dmg.sh <payload-dir> <version> <output.dmg> <icon.icns>
 set -euo pipefail
 
 PAYLOAD="${1:?payload directory required}"
 VERSION="${2:?version required}"
-ARCH="${3:?arch required}"
-OUTPUT="${4:?output path required}"
-ICON="${5:?icns path required}"
+OUTPUT="${3:?output path required}"
+ICON="${4:?icns path required}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+DAEMON_ENTITLEMENTS="$SCRIPT_DIR/hypergate-daemon.entitlements.plist"
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 ROOT="$WORK/root"
-APP="$ROOT/Applications/Hypergate.app"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$ROOT/usr/local/bin"
+APP="$ROOT/Hypergate.app"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # Both binaries and the UI live inside the bundle, so the whole product is one
 # self-contained thing the user can move or delete.
@@ -30,49 +25,6 @@ cp "$PAYLOAD/hypergated" "$APP/Contents/MacOS/hypergated"
 cp -R "$PAYLOAD/web" "$APP/Contents/MacOS/web"
 cp "$ICON" "$APP/Contents/Resources/hypergate.icns"
 cp "$PAYLOAD/LICENSE" "$APP/Contents/Resources/LICENSE"
-cat > "$APP/Contents/Resources/uninstall.sh" <<'UNINSTALL'
-#!/bin/sh
-set -eu
-
-run_user() {
-  if [ "$(id -u)" -eq 0 ]; then
-    if [ -z "${SUDO_USER:-}" ]; then
-      echo "Run this script as the logged-in user (or via sudo from that user)." >&2
-      exit 1
-    fi
-    sudo -u "$SUDO_USER" -H "$@"
-  else
-    "$@"
-  fi
-}
-
-# User-scoped first: the shell owns the real LaunchAgent implementation and
-# must run as the logged-in user, not root's sudo home.
-if [ -x /Applications/Hypergate.app/Contents/MacOS/hypergate ]; then
-  run_user /Applications/Hypergate.app/Contents/MacOS/hypergate autostart off >/dev/null 2>&1 || true
-fi
-run_user osascript -e 'tell application "Hypergate" to quit' >/dev/null 2>&1 || true
-run_user pkill -TERM -f '/Applications/Hypergate.app/Contents/MacOS/hypergated' >/dev/null 2>&1 || true
-sleep 1
-run_user pkill -KILL -f '/Applications/Hypergate.app/Contents/MacOS/hypergated' >/dev/null 2>&1 || true
-
-if [ "$(id -u)" -eq 0 ]; then
-  rm -f /usr/local/bin/hypergate /usr/local/bin/hypergated
-  rm -rf /Applications/Hypergate.app
-  pkgutil --forget app.hypergate.tray >/dev/null 2>&1 || true
-else
-  if ! command -v sudo >/dev/null 2>&1; then
-    echo "Run this script as an administrator (sudo is required for /Applications and /usr/local/bin)." >&2
-    exit 1
-  fi
-  sudo rm -f /usr/local/bin/hypergate /usr/local/bin/hypergated
-  sudo rm -rf /Applications/Hypergate.app
-  sudo pkgutil --forget app.hypergate.tray >/dev/null 2>&1 || true
-fi
-
-echo "Hypergate removed. ~/.hypergate was left intact."
-UNINSTALL
-chmod 755 "$APP/Contents/Resources/uninstall.sh"
 chmod 755 "$APP/Contents/MacOS/hypergate" "$APP/Contents/MacOS/hypergated"
 
 # `web` sits beside hypergated because that is where the daemon looks: it
@@ -88,6 +40,20 @@ cat > "$APP/Contents/MacOS/HypergateApp" <<'STUB'
 exec "$(dirname "$0")/hypergate" app
 STUB
 chmod 755 "$APP/Contents/MacOS/HypergateApp"
+
+cat > "$APP/Contents/Resources/uninstall.sh" <<'UNINSTALL'
+#!/bin/sh
+set -eu
+APP="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+BIN="$APP/Contents/MacOS/hypergate"
+if [ -x "$BIN" ]; then
+  "$BIN" stop || true
+  "$BIN" autostart off || true
+  "$BIN" shortcut uninstall || true
+fi
+rm -rf "$APP"
+UNINSTALL
+chmod 755 "$APP/Contents/Resources/uninstall.sh"
 
 # LSUIElement: a menu bar agent with no Dock icon, matching what the tray is.
 # CFBundleExecutable uses the case-distinct stub name so it cannot collide with
@@ -165,9 +131,12 @@ assert_bundle_integrity
 # unsigned code objects. Move it out before signing the bundle, then restore it.
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   mv "$APP/Contents/MacOS/web" "$WORK/web"
+  # The Rust shell does not JIT, so keep its hardened-runtime signature tight.
   codesign --force --options runtime --timestamp \
     --sign "$MACOS_SIGN_IDENTITY" "$APP/Contents/MacOS/hypergate"
+  # Node/V8 needs these entitlements to reserve and populate its JIT code range.
   codesign --force --options runtime --timestamp \
+    --entitlements "$DAEMON_ENTITLEMENTS" \
     --sign "$MACOS_SIGN_IDENTITY" "$APP/Contents/MacOS/hypergated"
   codesign --force --options runtime --timestamp \
     --sign "$MACOS_SIGN_IDENTITY" "$APP"
@@ -175,56 +144,17 @@ if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   assert_bundle_integrity
 fi
 
-# The CLI on PATH. A relative symlink, so it keeps working if the bundle is
-# reinstalled and does not encode the build machine's layout.
-ln -s "/Applications/Hypergate.app/Contents/MacOS/hypergate" "$ROOT/usr/local/bin/hypergate"
-ln -s "/Applications/Hypergate.app/Contents/MacOS/hypergated" "$ROOT/usr/local/bin/hypergated"
+STAGING="$WORK/staging"
+mkdir -p "$STAGING"
+mv "$ROOT/Hypergate.app" "$STAGING/Hypergate.app"
+ln -s /Applications "$STAGING/Applications"
 
-mkdir -p "$WORK/pkg" "$WORK/resources"
-cp "$PAYLOAD/LICENSE" "$WORK/resources/LICENSE.txt"
-
-# Component package. --install-location / because the payload carries its own
-# absolute layout (/Applications and /usr/local/bin).
-pkgbuild \
-  --root "$ROOT" \
-  --identifier app.hypergate.tray \
-  --version "$VERSION" \
-  --install-location / \
-  "$WORK/pkg/hypergate-component.pkg"
-
-cat > "$WORK/distribution.xml" <<DIST
-<?xml version="1.0" encoding="utf-8"?>
-<installer-gui-script minSpecVersion="2">
-  <title>Hypergate ${VERSION}</title>
-  <license file="LICENSE.txt"/>
-  <options customize="never" require-scripts="false" hostArchitectures="${ARCH}"/>
-  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
-  <choices-outline>
-    <line choice="default"/>
-  </choices-outline>
-  <choice id="default" title="Hypergate">
-    <pkg-ref id="app.hypergate.tray"/>
-  </choice>
-  <pkg-ref id="app.hypergate.tray" version="${VERSION}">hypergate-component.pkg</pkg-ref>
-</installer-gui-script>
-DIST
-
-# Build unsigned, then productsign into place when an installer identity is
-# set. Distribution signing is a separate certificate (Developer ID Installer)
-# from app signing (Developer ID Application), hence the second variable.
-if [ -n "${MACOS_INSTALLER_IDENTITY:-}" ]; then
-  productbuild \
-    --distribution "$WORK/distribution.xml" \
-    --package-path "$WORK/pkg" \
-    --resources "$WORK/resources" \
-    "$WORK/unsigned.pkg"
-  productsign --sign "$MACOS_INSTALLER_IDENTITY" "$WORK/unsigned.pkg" "$OUTPUT"
-else
-  productbuild \
-    --distribution "$WORK/distribution.xml" \
-    --package-path "$WORK/pkg" \
-    --resources "$WORK/resources" \
-    "$OUTPUT"
+# The image is read-only after creation. The app itself is signed above; a DMG
+# is not an installer package and therefore uses the application identity too.
+hdiutil create -volname Hypergate -srcfolder "$STAGING" -format UDZO -ov "$WORK/unsigned.dmg"
+if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+  codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$WORK/unsigned.dmg"
 fi
+mv "$WORK/unsigned.dmg" "$OUTPUT"
 
 echo "Built $OUTPUT"

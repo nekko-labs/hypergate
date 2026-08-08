@@ -80,17 +80,24 @@ publisher" warning; reputation accrues to the certificate once signing starts.
 ## macOS: wired, needs Apple Developer enrollment
 
 The workflow signs both binaries with hardened runtime + timestamp, seals the
-`Hypergate.app` bundle, `productsign`s the `.pkg`, notarizes it with
-`notarytool`, and staples the ticket. It then validates the ticket and asks both
-`pkgutil` and Gatekeeper to assess the finished installer. It needs these
+`Hypergate.app` bundle, signs the `.dmg`, notarizes it with `notarytool`, and
+staples the ticket. The Node/V8 `hypergated` SEA receives
+`com.apple.security.cs.allow-jit` and
+`com.apple.security.cs.allow-unsigned-executable-memory`; without them,
+hardened-runtime startup can fail while V8 reserves its code region. The Rust
+`hypergate` shell is signed with the tighter default entitlements because it
+does not JIT. The source plist is
+`packaging/installers/macos/hypergate-daemon.entitlements.plist`; the
+post-signing smoke test runs the daemon from the mounted DMG and checks both
+entitlements before probing `/health`. It then validates the ticket and asks
+`codesign` and Gatekeeper to assess the finished disk image. It needs these
 secrets:
 
 | Secret | What it is |
 | --- | --- |
-| `MACOS_SIGNING_CERTS_P12` | base64 of a .p12 containing **both** Developer ID certs |
+| `MACOS_SIGNING_CERTS_P12` | base64 of a .p12 containing the Developer ID Application cert |
 | `MACOS_CERT_PASSWORD` | the .p12 password |
 | `MACOS_SIGN_IDENTITY` | `Developer ID Application: <name> (<TEAMID>)` |
-| `MACOS_INSTALLER_IDENTITY` | `Developer ID Installer: <name> (<TEAMID>)` |
 | `APPLE_API_KEY_P8` | App Store Connect API key file contents |
 | `APPLE_API_KEY_ID` | its Key ID |
 | `APPLE_API_ISSUER` | its Issuer ID |
@@ -101,16 +108,16 @@ Steps for Philip (once, ~1 hour + Apple's review time):
    ($99/yr). Enrolling as **Nekko Labs** (organization) needs a D-U-N-S number;
    enrolling as an individual is faster and fine for signing (the publisher
    string becomes your name rather than the company's).
-2. In Xcode or developer.apple.com, create two certificates:
-   **Developer ID Application** and **Developer ID Installer**.
-3. Export both into one `certs.p12` (Keychain Access → select both → Export),
+2. In Xcode or developer.apple.com, create a **Developer ID Application**
+   certificate.
+3. Export it into a `certs.p12` (Keychain Access → select it → Export),
    pick a password, then:
    `base64 -i certs.p12 | gh secret set MACOS_SIGNING_CERTS_P12 -R nekko-labs/hypergate`
    and set `MACOS_CERT_PASSWORD` and the two identity strings the same way.
 4. In [App Store Connect → Users and Access → Integrations](https://appstoreconnect.apple.com/access/integrations/api),
    create an API key with the **Developer** role; set `APPLE_API_KEY_P8`
    (file contents), `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`.
-5. Cut a release. The pkg comes out signed, notarized and stapled.
+5. Cut a release. The dmg comes out signed, notarized and stapled.
 
 The workspace `provision-keys` skill automates most of step 3–4's secret
 plumbing if you'd rather run it than click.

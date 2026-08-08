@@ -505,6 +505,7 @@ pub fn doctor_json() -> Result<Value, String> {
         }
     }
     let h = health.as_ref().ok();
+    let path_notice = crate::shortcut::path_notice();
     let problems = h.is_none()
         || std::env::var("HYPERGATE_NO_AUTH").ok().as_deref() == Some("1")
         || (keychain && token_source == "file");
@@ -516,6 +517,7 @@ pub fn doctor_json() -> Result<Value, String> {
         "update": api::update().ok(),
         "autostart": { "enabled": crate::autostart::is_enabled() },
         "shortcut": crate::shortcut::status().ok().map(|items| items.into_iter().map(|item| json!({ "label": item.label, "exists": item.exists(), "path": item.path })).collect::<Vec<_>>()).unwrap_or_default(),
+        "pathNotice": path_notice,
         "dataDirectory": crate::paths::data_dir(),
         "problems": problems
     }))
@@ -1126,6 +1128,9 @@ pub fn start(opts: &StartOptions) -> Result<(), String> {
             Ok(paths) => {
                 for path in &paths {
                     println!("Launcher  {}", path.display());
+                }
+                if let Some(note) = shortcut::path_notice() {
+                    println!("PATH      {note}");
                 }
             }
             // Never fatal: the daemon is up, which is what was asked for.

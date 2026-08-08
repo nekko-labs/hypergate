@@ -867,6 +867,9 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
                     "
 Click it to turn Hypergate on. `hypergate autostart on` starts it at login instead."
                 );
+                if let Some(note) = shortcut::path_notice() {
+                    println!("PATH      {note}");
+                }
                 Ok(ExitCode::SUCCESS)
             }
             ShortcutAction::Uninstall => {
