@@ -8,7 +8,7 @@
 //
 //   npm run build:npm && npm run smoke:install
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +30,47 @@ const fail = (m) => {
   cleanup();
   process.exit(1);
 };
+
+function checkMacosPkg() {
+  if (process.platform !== 'darwin') return;
+  const pkg = process.env.HYPERGATE_MACOS_PKG;
+  if (!pkg) {
+    ok('macOS pkg inspection skipped (set HYPERGATE_MACOS_PKG to inspect a built .pkg)');
+    return;
+  }
+  if (!existsSync(pkg)) fail(`HYPERGATE_MACOS_PKG does not exist: ${pkg}`);
+  const expanded = mkdtempSync(join(tmpdir(), 'hypergate-pkg-'));
+  try {
+    execFileSync('pkgutil', ['--expand-full', pkg, expanded], { stdio: 'pipe' });
+    const app = join(expanded, 'Applications', 'Hypergate.app');
+    const plist = join(app, 'Contents', 'Info.plist');
+    if (!existsSync(plist)) fail(`macOS pkg has no bundle Info.plist: ${plist}`);
+    const executable = execFileSync('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', plist], {
+      encoding: 'utf8',
+    }).trim();
+    const launcher = join(app, 'Contents', 'MacOS', executable);
+    const realBinary = join(app, 'Contents', 'MacOS', 'hypergate');
+    if (!existsSync(launcher) || !statSync(launcher).isFile() || launcher === realBinary) {
+      fail(`macOS pkg launcher does not resolve distinctly from hypergate: ${launcher}`);
+    }
+    if (!existsSync(realBinary) || !statSync(realBinary).isFile()) {
+      fail(`macOS pkg has no real hypergate binary: ${realBinary}`);
+    }
+    const launcherStat = statSync(launcher);
+    const realBinaryStat = statSync(realBinary);
+    if (launcherStat.dev === realBinaryStat.dev && launcherStat.ino === realBinaryStat.ino) {
+      fail(`macOS pkg launcher and hypergate resolve to the same file: ${launcher}`);
+    }
+    const fileType = execFileSync('file', [realBinary], { encoding: 'utf8' });
+    if (!/Mach-O/.test(fileType)) fail(`macOS pkg hypergate is not Mach-O: ${fileType.trim()}`);
+    ok(`macOS pkg bundle resolves ${executable} separately from the Mach-O hypergate`);
+  } catch (e) {
+    if (e.status !== undefined) fail(`macOS pkg inspection failed: ${e.stderr || e.stdout || e.message}`);
+    throw e;
+  } finally {
+    rmSync(expanded, { recursive: true, force: true });
+  }
+}
 
 const shellPkg = `hypergate-shell-${process.platform}-${process.arch}`;
 const env = {
@@ -55,6 +96,8 @@ const hg = (args, { allowFailure = false } = {}) => {
     return '';
   }
 };
+
+checkMacosPkg();
 
 function cleanup() {
   try {

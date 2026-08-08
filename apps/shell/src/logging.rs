@@ -57,9 +57,13 @@ fn redact(message: &str) -> String {
     {
         safe = safe.replace(&token, "[redacted]");
     }
+    let mut lower = safe.to_ascii_lowercase();
     for key in ["token", "password", "secret", "authorization", "api_key"] {
         let mut search_from = 0;
-        while let Some(relative) = safe[search_from..].to_ascii_lowercase().find(key) {
+        while search_from < safe.len() {
+            let Some(relative) = lower[search_from..].find(key) else {
+                break;
+            };
             let start = search_from + relative;
             let value_start = safe[start + key.len()..]
                 .find(|c: char| c == '=' || c == ':' || c.is_ascii_whitespace())
@@ -67,15 +71,48 @@ fn redact(message: &str) -> String {
             let Some(value_start) = value_start else {
                 break;
             };
+            if value_start >= safe.len() {
+                break;
+            }
             let value_end = safe[value_start..]
                 .find(|c: char| c.is_ascii_whitespace() || c == ',' || c == '"' || c == '\'')
                 .map(|i| value_start + i)
                 .unwrap_or(safe.len());
             if value_end > value_start {
                 safe.replace_range(value_start..value_end, "[redacted]");
+                lower.replace_range(value_start..value_end, "[redacted]");
             }
-            search_from = value_start + "[redacted]".len();
+            search_from = value_start.saturating_add("[redacted]".len());
         }
     }
     safe
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact;
+
+    #[test]
+    fn redaction_does_not_panic_when_value_is_missing() {
+        for input in [
+            "secret:",
+            "secret: ",
+            "token=",
+            "token=,",
+            "authorization: Bearer x",
+            "ésecret:",
+            "é secret:",
+            "étoken=",
+        ] {
+            let _ = redact(input);
+        }
+    }
+
+    #[test]
+    fn redacts_common_secret_shapes() {
+        assert_eq!(redact("gateway token=abc"), "gateway token=[redacted]");
+        assert_eq!(redact("password:hunter2"), "password:[redacted]");
+        assert_eq!(redact("secret abc"), "secret [redacted]");
+        assert_eq!(redact("TOKEN=éabc"), "TOKEN=[redacted]");
+    }
 }
