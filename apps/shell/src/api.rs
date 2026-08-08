@@ -235,7 +235,13 @@ fn agent(timeout: Duration) -> ureq::Agent {
 
 /// Turn a daemon reply into either its body or the message it explains itself
 /// with, so the CLI can say "id_exists" rather than "HTTP status 409".
-fn check(status: u16, body: String, path: &str) -> Result<String, String> {
+fn check(status: u16, body: String, path: &str, authenticated: bool) -> Result<String, String> {
+    if authenticated && status == 401 {
+        // A daemon can rotate its master token while the shell is alive. Drop
+        // the cached answer before reporting the rejection so the next call
+        // gets a chance to recover from the keychain.
+        crate::secrets::forget_gateway_token();
+    }
     if (200..300).contains(&status) {
         return Ok(body);
     }
@@ -253,17 +259,21 @@ fn check(status: u16, body: String, path: &str) -> Result<String, String> {
 /// GET and deserialize. The bearer token is attached when we have one; the
 /// management API only requires it for `/mcp`, but sending it is harmless and
 /// keeps this uniform if that tightens later.
-fn get<T: for<'de> Deserialize<'de>>(path: &str) -> Result<T, String> {
+fn get_inner<T: for<'de> Deserialize<'de>>(path: &str, authenticate: bool) -> Result<T, String> {
     let url = format!("{}{}", paths::base_url(), path);
     let mut req = agent(TIMEOUT).get(&url);
-    if let Some(token) = crate::secrets::gateway_token() {
+    if authenticate && let Some(token) = crate::secrets::gateway_token() {
         req = req.header("Authorization", &format!("Bearer {token}"));
     }
     let mut res = req.call().map_err(|e| format!("{e}"))?;
     let status = res.status().as_u16();
     let body = res.body_mut().read_to_string().map_err(|e| format!("{e}"))?;
-    let body = check(status, body, path)?;
+    let body = check(status, body, path, authenticate)?;
     serde_json::from_str(&body).map_err(|e| format!("unexpected response from {path}: {e}"))
+}
+
+fn get<T: for<'de> Deserialize<'de>>(path: &str) -> Result<T, String> {
+    get_inner(path, true)
 }
 
 /// POST with no body, discarding the response. Used for the lifecycle actions.
@@ -285,7 +295,7 @@ fn send(path: &str, body: Option<&serde_json::Value>, timeout: Duration) -> Resu
     };
     let status = res.status().as_u16();
     let text = res.body_mut().read_to_string().map_err(|e| format!("{e}"))?;
-    check(status, text, path)
+    check(status, text, path, true)
 }
 
 fn delete(path: &str) -> Result<(), String> {
@@ -297,7 +307,7 @@ fn delete(path: &str) -> Result<(), String> {
     let mut res = req.call().map_err(|e| format!("{e}"))?;
     let status = res.status().as_u16();
     let text = res.body_mut().read_to_string().map_err(|e| format!("{e}"))?;
-    check(status, text, path).map(|_| ())
+    check(status, text, path, true).map(|_| ())
 }
 
 fn patch(path: &str, body: &serde_json::Value) -> Result<String, String> {
@@ -309,11 +319,14 @@ fn patch(path: &str, body: &serde_json::Value) -> Result<String, String> {
     let mut res = req.send_json(body).map_err(|e| format!("{e}"))?;
     let status = res.status().as_u16();
     let text = res.body_mut().read_to_string().map_err(|e| format!("{e}"))?;
-    check(status, text, path)
+    check(status, text, path, true)
 }
 
 pub fn health() -> Result<Health, String> {
-    get("/health")
+    // The daemon deliberately leaves this probe unauthenticated. Apart from
+    // being sufficient to answer "is it alive?", keeping it token-free means
+    // startup readiness never has to touch a potentially blocking keychain.
+    get_inner("/health", false)
 }
 
 /// Is a daemon already serving on our port?
@@ -525,7 +538,7 @@ pub fn mcp(method: &str, params: serde_json::Value) -> Result<serde_json::Value,
         .map_err(|e| format!("{e}"))?;
     let status = res.status().as_u16();
     let text = res.body_mut().read_to_string().map_err(|e| format!("{e}"))?;
-    let body = check(status, text, "/mcp")?;
+    let body = check(status, text, "/mcp", true)?;
     let value: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("the gateway returned a non-JSON reply: {e}"))?;
     if let Some(err) = value.get("error") {

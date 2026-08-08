@@ -146,6 +146,17 @@ impl ManagerWindow {
         }
     }
 
+    /// Update the small status message on the local startup page without
+    /// replacing the document and resetting the webview.
+    pub fn update_startup_status(&self, seconds: u64) {
+        let message = format!("Still waiting for the local daemon… {seconds}s elapsed.");
+        if let Ok(text) = serde_json::to_string(&message) {
+            let _ = self.webview.evaluate_script(&format!(
+                "const e=document.getElementById('startup-message');if(e)e.textContent={text};"
+            ));
+        }
+    }
+
     /// Take the OS title bar away so the page's own top bar can be it.
     ///
     /// macOS keeps its frame: the traffic lights are the only way to close a
