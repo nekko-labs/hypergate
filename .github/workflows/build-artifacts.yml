@@ -214,7 +214,8 @@ jobs:
         run: |
           set -euo pipefail
           target="apps/shell/target/${{ matrix.target }}"
-          echo "Native target size before cleanup:"
+          echo "Disk space and native target size before cleanup:"
+          df -h .
           du -sh "$target"
           rm -rf "$target"
           echo "Disk space after native target cleanup:"
