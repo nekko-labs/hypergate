@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::{api, paths};
+use crate::{api, paths, secrets};
 
 /// Records the pid of a daemon we launched, so a later `hypergate stop` can
 /// find it.
@@ -39,8 +39,8 @@ fn clear_pid() {
 }
 
 /// Build the daemon command, inheriting our environment so managed servers see
-/// the user's real `PATH`, home dir and credentials. This is precisely why
-/// Hypergate is a per-user logon agent and not a system service.
+/// the user's real `PATH` and home dir. The master token is passed explicitly
+/// below, so the daemon does not need to shell back into the keychain on boot.
 fn command() -> Result<Command, String> {
     let (program, args) = paths::daemon_command().ok_or_else(|| {
         "could not find the daemon: set HYPERGATE_DAEMON_CMD, put `hypergated` on PATH, \
@@ -57,6 +57,9 @@ fn command() -> Result<Command, String> {
     // daemon, the answer is simply our own path.
     if let Ok(exe) = std::env::current_exe() {
         cmd.env("HYPERGATE_SHELL_BIN", exe);
+    }
+    if let Some(token) = secrets::gateway_token() {
+        cmd.env("HYPERGATE_TOKEN", token);
     }
     Ok(cmd)
 }

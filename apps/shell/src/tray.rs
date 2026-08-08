@@ -94,6 +94,8 @@ pub(crate) enum Wake {
     Quit,
     /// The daemon became reachable after the starting page was shown.
     DaemonReady,
+    /// Refresh the starting page while the daemon is still booting.
+    DaemonWaiting(u64),
     /// The daemon could not become reachable before the startup budget expired.
     DaemonFailed,
     /// Retry a failed startup from the starting page.
@@ -381,7 +383,14 @@ pub fn run(with_window: bool) -> Result<(), String> {
             Event::UserEvent(Wake::DaemonReady) => {
                 startup_waiting = false;
                 if let Some(w) = &window {
+                    crate::diagnostic!("[hypergate] daemon is ready; navigating to the manager");
                     w.navigate(&api::ui_url());
+                }
+            }
+
+            Event::UserEvent(Wake::DaemonWaiting(seconds)) => {
+                if let Some(w) = &window {
+                    w.update_startup_status(seconds);
                 }
             }
 
@@ -682,17 +691,38 @@ fn open_manager(
 
 fn start_readiness(proxy: EventLoopProxy<Wake>, pid: u32) {
     std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + Duration::from_secs(90);
+        let started = std::time::Instant::now();
+        let deadline = started + Duration::from_secs(30);
+        let mut next_update = Duration::from_secs(5);
+        let mut failed = false;
         loop {
-            if api::is_up() {
-                let _ = proxy.send_event(Wake::DaemonReady);
-                return;
+            let health_error = match api::health() {
+                Ok(_) => {
+                    crate::diagnostic!("[hypergate] daemon became ready after {}s", started.elapsed().as_secs());
+                    let _ = proxy.send_event(Wake::DaemonReady);
+                    return;
+                }
+                Err(error) => error,
+            };
+            let elapsed = started.elapsed();
+            if !failed && elapsed >= next_update {
+                let _ = proxy.send_event(Wake::DaemonWaiting(elapsed.as_secs()));
+                next_update = Duration::from_secs(15);
             }
-            if !daemon::pid_is_alive(pid) || std::time::Instant::now() >= deadline {
+            if !failed && (!daemon::pid_is_alive(pid) || std::time::Instant::now() >= deadline) {
+                crate::diagnostic!(
+                    "[hypergate] daemon readiness failed after {}s; last /health error: {}",
+                    elapsed.as_secs(),
+                    health_error
+                );
                 let _ = proxy.send_event(Wake::DaemonFailed);
-                return;
+                failed = true;
             }
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(if failed {
+                Duration::from_secs(2)
+            } else {
+                Duration::from_millis(350)
+            });
         }
     });
 }
@@ -707,7 +737,10 @@ fn startup_html(error: Option<&str>) -> String {
     };
     let message = error
         .map(|e| format!("<p class=\"error\">{}</p>", esc(e)))
-        .unwrap_or_else(|| "<p>Starting the local daemon… this window will continue automatically.</p>".to_string());
+        .unwrap_or_else(|| {
+            "<p id=\"startup-message\">Starting the local daemon… this window will continue automatically.</p>"
+                .to_string()
+        });
     let failure_details = error
         .map(|_| {
             format!(
