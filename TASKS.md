@@ -459,6 +459,13 @@ This is a deliberate patch release rather than the default minor bump: the reque
 - [x] **Native installers finish cleanly**: Windows process and PATH handling, Linux desktop refreshes and macOS uninstall behavior are safe and explicit. · [spec](SPEC.md#39-distribution-shipped) · Added: 2026-08-06 · Done: 2026-08-06
 - [x] **The release records the deliberate patch bump**: `1.0.2` is used instead of the default minor version because this release is the requested production-readiness patch. · Added: 2026-08-06 · Done: 2026-08-06
 
+## Epic 40: the Mac daemon starts, and startup can recover (v1.0.3)
+
+This is another deliberate patch release: the requested 1.0.3 fixes the signed macOS daemon's hardened-runtime contract and makes the desktop shell's startup wait observable and recoverable instead of terminal.
+
+- [x] **The signed Mac daemon can reserve V8's code range**: Node's SEA daemon receives `com.apple.security.cs.allow-jit` and `com.apple.security.cs.allow-unsigned-executable-memory` when the bundled and standalone binaries are signed under the hardened runtime; the Rust shell keeps its tighter signature, and CI inspects the daemon inside the shipped DMG before declaring the artifact runnable. · [spec](SPEC.md#39-distribution-shipped) · Added: 2026-08-08 · Done: 2026-08-08
+- [x] **Starting Hypergate narrates itself and can recover**: the shell polls a token-free health endpoint with a 30-second initial budget, updates the existing splash text at milestones, records the last health error and elapsed time, and continues a slower background poll after the failure page so a daemon that becomes ready later still opens the manager. · [spec](SPEC.md#38-desktop-shell--cli-shipped) · Added: 2026-08-08 · Done: 2026-08-08
+
 ## Epic 37: finding the right tool, and knowing it is the right one (v0.22.0)
 
 Philip: install the Playwright CLI as the use case; add CLI lookup like the MCP servers have, and work out the best official online source for what counts as an official/recommended CLI; put a note directly under every MCP or CLI search result confirming it is the recommended approach, or pointing at the official provider's instead; and the GitHub OAuth connection still does not show up correctly.
