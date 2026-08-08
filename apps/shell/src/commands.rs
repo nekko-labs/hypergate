@@ -9,8 +9,505 @@
 //! running daemon.
 
 use serde_json::{Map, Value, json};
+use std::io::Read;
+use std::process::ExitCode;
 
 use crate::api::{self, RegistryEntry};
+use crate::{AutostartAction, Command, SecretAction, ServerAction, ShortcutAction};
+
+/// Parse only the small, safe subset of curated install instructions that can
+/// be executed without invoking a shell. URLs, prose, and shell syntax remain
+/// manual instructions.
+pub fn parse_curated_install(command: &str) -> Option<Vec<String>> {
+    let trimmed = command.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.split_whitespace().count() == 0
+    {
+        return None;
+    }
+    const META: [char; 13] = ['|', '&', ';', '<', '>', '$', '`', '(', ')', '{', '}', '\'', '"'];
+    if trimmed
+        .chars()
+        .any(|c| c == '\\' || c == '\n' || c == '\r' || META.contains(&c))
+    {
+        return None;
+    }
+    let mut argv = Vec::new();
+    for word in trimmed.split_whitespace() {
+        if word.starts_with("http://") || word.starts_with("https://") {
+            return None;
+        }
+        argv.push(word.to_string());
+    }
+    let program = argv.first()?;
+    let known_launcher = [
+        "npm",
+        "npx",
+        "pnpm",
+        "yarn",
+        "bun",
+        "brew",
+        "pipx",
+        "pip",
+        "winget",
+        "scoop",
+        "choco",
+        "apt",
+        "cargo",
+        "go",
+        "curl",
+        "powershell",
+    ];
+    if !known_launcher.contains(&program.as_str())
+        || !program
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':'))
+    {
+        return None;
+    }
+    Some(argv)
+}
+
+fn width(values: impl Iterator<Item = usize>, minimum: usize) -> usize {
+    values.max().unwrap_or(minimum).max(minimum)
+}
+
+pub fn agents_human() -> Result<ExitCode, String> {
+    let value = api::agents()?;
+    let rows = value.as_array().ok_or("unexpected agent response")?;
+    if rows.is_empty() {
+        println!("No connected agents.");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let id_w = width(rows.iter().filter_map(|v| v["id"].as_str()).map(str::len), 2);
+    let name_w = width(rows.iter().filter_map(|v| v["name"].as_str()).map(str::len), 4);
+    println!(
+        "{:<id_w$}  {:<name_w$}  {:<24}  CREATED",
+        "ID",
+        "NAME",
+        "SCOPE",
+        id_w = id_w,
+        name_w = name_w
+    );
+    for row in rows {
+        let scope = match &row["servers"] {
+            Value::String(s) => s.clone(),
+            Value::Array(a) => a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(","),
+            _ => "—".into(),
+        };
+        println!(
+            "{:<id_w$}  {:<name_w$}  {:<24}  {}",
+            row["id"].as_str().unwrap_or("?"),
+            row["name"].as_str().unwrap_or(""),
+            scope,
+            row["createdAt"]
+                .as_str()
+                .or_else(|| row["created"].as_str())
+                .unwrap_or("—"),
+            id_w = id_w,
+            name_w = name_w
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn targets_human() -> Result<ExitCode, String> {
+    let value = api::connect_targets()?;
+    let rows = value["targets"].as_array().ok_or("unexpected targets response")?;
+    println!("{:<20}  {:<10}  RUNNABLE", "TARGET", "DETECTED");
+    for row in rows {
+        println!(
+            "{:<20}  {:<10}  {}",
+            row["id"].as_str().unwrap_or("?"),
+            if row["found"].as_bool().unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            },
+            if row["runnable"].as_bool().unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            }
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn cli_ls_human() -> Result<ExitCode, String> {
+    let rows = api::cli_status()?;
+    let rows = rows.as_array().ok_or("unexpected CLI catalog response")?;
+    println!("{:<18}  {:<18}  NAME", "COMMAND", "VERSION");
+    for row in rows {
+        println!(
+            "{:<18}  {:<18}  {}",
+            row["command"].as_str().unwrap_or("?"),
+            row["version"]
+                .as_str()
+                .or_else(|| row["detectedVersion"].as_str())
+                .unwrap_or("not found"),
+            row["name"].as_str().unwrap_or("")
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn cli_search_human(query: &str) -> Result<ExitCode, String> {
+    let rows = api::cli_search(query)?;
+    println!("{:<24}  {:<18}  {:<10}  POPULARITY", "NAME", "COMMAND", "CHANNEL");
+    for row in rows.as_array().ok_or("unexpected CLI search response")? {
+        println!(
+            "{:<24}  {:<18}  {:<10}  {}",
+            row["name"].as_str().unwrap_or(""),
+            row["command"].as_str().unwrap_or(""),
+            row["channel"].as_str().unwrap_or(""),
+            row["downloads"]
+                .as_u64()
+                .or_else(|| row["popularity"].as_u64())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "—".into())
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn cli_check_human(command: &str) -> Result<ExitCode, String> {
+    let row = api::cli_check(command)?;
+    println!(
+        "{}: {}",
+        command,
+        if row["installed"]
+            .as_bool()
+            .or_else(|| row["found"].as_bool())
+            .unwrap_or(false)
+        {
+            row["version"].as_str().unwrap_or("detected")
+        } else {
+            "not found"
+        }
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn cli_install_human(id: &str, run: bool) -> Result<ExitCode, String> {
+    let catalog = api::cli_catalog()?;
+    let entry = catalog
+        .as_array()
+        .and_then(|a| a.iter().find(|v| v["id"].as_str() == Some(id)))
+        .ok_or_else(|| format!("`{id}` is not in the curated CLI catalog"))?;
+    let instruction = entry["install"]
+        .as_str()
+        .ok_or_else(|| format!("no curated install instruction is available for `{id}`"))?;
+    if !run {
+        println!("{instruction}");
+        println!("(run it with `--run` when it is a plain command; otherwise follow this manual instruction)");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let argv = parse_curated_install(instruction);
+    let Some(argv) = argv else {
+        println!("{instruction}");
+        println!("This is a manual install instruction and was not executed.");
+        return Ok(ExitCode::SUCCESS);
+    };
+    let status = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .status()
+        .map_err(|e| format!("could not run curated installer: {e}"))?;
+    println!("Installer exited with {}", status.code().unwrap_or(1));
+    Ok(if status.success() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
+}
+
+pub fn usage_human() -> Result<ExitCode, String> {
+    let value = api::analytics_value()?;
+    println!("Calls     {}", value["totalCalls"].as_u64().unwrap_or(0));
+    println!("Errors    {}", value["totalErrors"].as_u64().unwrap_or(0));
+    if let Some(rows) = value["servers"].as_array() {
+        println!("\nSERVER                 CALLS  ERRORS");
+        for row in rows {
+            println!(
+                "{:<22}  {:>5}  {:>6}",
+                row["server"].as_str().unwrap_or(""),
+                row["calls"].as_u64().unwrap_or(0),
+                row["errors"].as_u64().unwrap_or(0)
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn doctor_human(report: &Value) -> Result<ExitCode, String> {
+    println!(
+        "Daemon       {}",
+        if report["daemon"]["running"].as_bool().unwrap_or(false) {
+            format!(
+                "running v{} on port {}",
+                report["daemon"]["version"].as_str().unwrap_or("?"),
+                report["daemon"]["port"]
+            )
+        } else {
+            "not running".into()
+        }
+    );
+    println!(
+        "Token        {}",
+        report["auth"]["tokenSource"].as_str().unwrap_or("none")
+    );
+    println!(
+        "Keychain     {}",
+        if report["auth"]["keychainAvailable"].as_bool().unwrap_or(false) {
+            "available"
+        } else {
+            "unavailable"
+        }
+    );
+    println!(
+        "Authentication {}",
+        if report["auth"]["disabled"].as_bool().unwrap_or(false) {
+            "DISABLED"
+        } else {
+            "enabled"
+        }
+    );
+    println!(
+        "Allowed hosts {}",
+        report["auth"]["allowedHosts"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("none")
+    );
+    println!("Agents       {}", report["agents"]["count"].as_u64().unwrap_or(0));
+    println!(
+        "Servers      {}",
+        report["servers"].as_array().map(Vec::len).unwrap_or(0)
+    );
+    println!("Data         {}", report["dataDirectory"].as_str().unwrap_or(""));
+    if report["problems"].as_bool().unwrap_or(false) {
+        println!("VERDICT      NOT READY");
+        if !report["daemon"]["running"].as_bool().unwrap_or(false) {
+            println!("Action       run `hypergate start`.");
+        }
+        if report["auth"]["disabled"].as_bool().unwrap_or(false) {
+            println!("Action       unset HYPERGATE_NO_AUTH.");
+        }
+        if report["auth"]["tokenSource"] == "file" && report["auth"]["keychainAvailable"].as_bool().unwrap_or(false) {
+            println!("Action       move the master token into the OS keychain.");
+        }
+        Ok(ExitCode::from(1))
+    } else {
+        println!("VERDICT      READY (warnings may apply)");
+        Ok(ExitCode::SUCCESS)
+    }
+}
+
+pub fn start_json(open: bool, shortcut: bool, desktop: bool) -> Result<Value, String> {
+    let _ = (open, shortcut, desktop);
+    if !api::is_up() {
+        let _ = crate::secrets::adopt_gateway_token();
+        let pid = crate::daemon::spawn_detached()?;
+        if !crate::daemon::wait_until_up(std::time::Duration::from_secs(20)) {
+            return Err(format!("daemon (pid {pid}) did not answer /health within 20s"));
+        }
+    }
+    Ok(json!({ "running": api::is_up(), "url": api::ui_url() }))
+}
+
+pub fn restart_json() -> Result<Value, String> {
+    let _ = crate::daemon::stop();
+    let _ = crate::secrets::adopt_gateway_token();
+    let pid = crate::daemon::spawn_detached()?;
+    if crate::daemon::wait_until_up(std::time::Duration::from_secs(20)) {
+        Ok(json!({ "running": true, "pid": pid }))
+    } else {
+        Err(format!("daemon (pid {pid}) did not answer /health within 20s"))
+    }
+}
+
+pub fn management_json(command: &Command) -> Result<Value, String> {
+    match command {
+        Command::Add {
+            target,
+            id,
+            name,
+            connection,
+            command,
+            args,
+            env,
+            secrets,
+            runtime,
+            image,
+            url,
+            cwd,
+            no_start,
+        } => {
+            let custom = command.is_some() || url.is_some() || image.is_some();
+            let entry = if custom { None } else { find_entry(target)? };
+            if entry.is_none() && !custom {
+                return Err(format!("no catalog entry called `{target}`"));
+            }
+            let mut options = AddOptions {
+                id: id.clone(),
+                name: name.clone(),
+                connection: connection.clone(),
+                command: command.clone(),
+                args: args.clone(),
+                env: env.clone(),
+                secrets: secrets.clone(),
+                runtime: runtime.clone(),
+                image: image.clone(),
+                url: url.clone(),
+                cwd: cwd.clone(),
+                start: !no_start,
+            };
+            let entry = resolve_add_entry(entry, &mut options)?;
+            let config = build_add_config(entry.as_ref(), &options, &|k| std::env::var(k).ok())?;
+            api::add_server(&config)
+        }
+        Command::Rm { id } => {
+            api::remove_server(id)?;
+            Ok(json!({ "removed": id }))
+        }
+        Command::Server { action } => {
+            match action {
+                ServerAction::Start { id } => api::start_server(id)?,
+                ServerAction::Stop { id } => api::stop_server(id)?,
+                ServerAction::Restart { id } => api::restart_server(id)?,
+            }
+            Ok(
+                json!({ "server": match action { ServerAction::Start{id} | ServerAction::Stop{id} | ServerAction::Restart{id} => id } }),
+            )
+        }
+        Command::McpHeaders { agent, create } => {
+            serde_json::from_str(&mcp_headers(agent, *create)?).map_err(|e| e.to_string())
+        }
+        Command::Secret { action } => match action {
+            SecretAction::Check => Ok(json!({ "available": crate::secrets::available() })),
+            SecretAction::Get { key } => Ok(json!({ "key": key, "value": crate::secrets::get(key)? })),
+            SecretAction::Set { key } => {
+                let mut value = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut value)
+                    .map_err(|e| format!("could not read the value from stdin: {e}"))?;
+                crate::secrets::set(key, &value)?;
+                Ok(json!({ "key": key, "stored": true }))
+            }
+            SecretAction::Delete { key } => {
+                crate::secrets::delete(key)?;
+                Ok(json!({ "deleted": key }))
+            }
+        },
+        Command::Shortcut { action } => match action {
+            ShortcutAction::Status => Ok(json!(
+                crate::shortcut::status()?
+                    .into_iter()
+                    .map(|e| json!({"label": e.label, "exists": e.exists(), "path": e.path}))
+                    .collect::<Vec<_>>()
+            )),
+            ShortcutAction::Install { desktop } => Ok(
+                json!({"created": crate::shortcut::install(*desktop)?.into_iter().map(|p| p.display().to_string()).collect::<Vec<_>>() }),
+            ),
+            ShortcutAction::Uninstall => Ok(
+                json!({"removed": crate::shortcut::uninstall()?.into_iter().map(|p| p.display().to_string()).collect::<Vec<_>>() }),
+            ),
+        },
+        Command::Autostart { action } => match action {
+            AutostartAction::Status => Ok(json!({"enabled": crate::autostart::is_enabled()})),
+            AutostartAction::On => {
+                crate::autostart::enable()?;
+                Ok(json!({"enabled": true}))
+            }
+            AutostartAction::Off => {
+                crate::autostart::disable()?;
+                Ok(json!({"enabled": false}))
+            }
+        },
+        _ => Err("unsupported management command".into()),
+    }
+}
+
+pub fn agent_token(id: &str) -> Result<Value, String> {
+    let agents = api::agents()?;
+    agents
+        .as_array()
+        .and_then(|a| a.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(id)))
+        .and_then(|v| v.get("token"))
+        .cloned()
+        .ok_or_else(|| format!("agent `{id}` not found"))
+}
+
+pub fn cli_json(action: &crate::CliAction) -> Result<Value, String> {
+    match action {
+        crate::CliAction::Ls => api::cli_status(),
+        crate::CliAction::Search { query } => api::cli_search(query),
+        crate::CliAction::Check { command } => api::cli_check(command),
+        crate::CliAction::Install { id, run, yes } => install_cli_json(id, *run || *yes),
+    }
+}
+
+pub fn install_cli_json(id: &str, run: bool) -> Result<Value, String> {
+    let catalog = api::cli_catalog()?;
+    let entry = catalog
+        .as_array()
+        .and_then(|a| a.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(id)))
+        .ok_or_else(|| format!("`{id}` is not in the curated CLI catalog"))?;
+    let option = entry["install"]
+        .as_str()
+        .ok_or_else(|| format!("no curated install instruction is available for `{id}`"))?;
+    if !run {
+        return Ok(json!({ "id": id, "command": option, "executed": false }));
+    }
+    let Some(argv) = parse_curated_install(option) else {
+        return Ok(json!({ "id": id, "command": option, "executed": false, "manual": true }));
+    };
+    let status = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .status()
+        .map_err(|e| format!("could not run curated installer: {e}"))?;
+    Ok(json!({ "id": id, "command": option, "executed": true, "exitCode": status.code().unwrap_or(1) }))
+}
+
+pub fn doctor_json() -> Result<Value, String> {
+    let health = api::health();
+    let keychain = crate::secrets::available();
+    let token_source = if crate::secrets::get("gateway-token").ok().flatten().is_some() {
+        "keychain"
+    } else if crate::paths::token_file().is_file() {
+        "file"
+    } else {
+        "none"
+    };
+    let agents = api::agents().unwrap_or_else(|_| json!([]));
+    let (mut wildcard, mut scoped) = (0_u64, 0_u64);
+    if let Some(items) = agents.as_array() {
+        for item in items {
+            if item["servers"].as_str() == Some("*") {
+                wildcard += 1;
+            } else {
+                scoped += 1;
+            }
+        }
+    }
+    let h = health.as_ref().ok();
+    let problems = h.is_none()
+        || std::env::var("HYPERGATE_NO_AUTH").ok().as_deref() == Some("1")
+        || (keychain && token_source == "file");
+    Ok(json!({
+        "daemon": { "running": h.is_some(), "version": h.map(|v| v.version.clone()), "port": crate::paths::port() },
+        "auth": { "tokenSource": token_source, "keychainAvailable": keychain, "disabled": std::env::var("HYPERGATE_NO_AUTH").ok().as_deref() == Some("1"), "allowedHosts": std::env::var("HYPERGATE_ALLOWED_HOSTS").unwrap_or_default() },
+        "agents": { "count": agents.as_array().map(Vec::len).unwrap_or(0), "wildcard": wildcard, "scoped": scoped },
+        "servers": api::servers_value().unwrap_or_else(|_| json!([])),
+        "update": api::update().ok(),
+        "autostart": { "enabled": crate::autostart::is_enabled() },
+        "shortcut": crate::shortcut::status().ok().map(|items| items.into_iter().map(|item| json!({ "label": item.label, "exists": item.exists(), "path": item.path })).collect::<Vec<_>>()).unwrap_or_default(),
+        "dataDirectory": crate::paths::data_dir(),
+        "problems": problems
+    }))
+}
 
 /// Everything `hypergate add` can override on top of a catalog entry.
 #[derive(Debug, Default, Clone)]
@@ -1125,5 +1622,21 @@ mod tests {
         // Anything else is passed through rather than guessed at.
         let other = explain_resolve("claude-code", "connection refused");
         assert_eq!(other, "connection refused");
+    }
+
+    #[test]
+    fn curated_install_parser_only_accepts_known_plain_launchers() {
+        assert_eq!(
+            parse_curated_install("npm install -g wrangler").unwrap(),
+            vec!["npm", "install", "-g", "wrangler"]
+        );
+        for instruction in [
+            "https://bun.sh",
+            "Build from github.com/nekko-labs/kotrain",
+            "Comes with Node.js",
+            "curl https://example.test/install.sh | sh",
+        ] {
+            assert!(parse_curated_install(instruction).is_none(), "{instruction}");
+        }
     }
 }

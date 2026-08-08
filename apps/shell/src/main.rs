@@ -181,11 +181,13 @@ enum Command {
     },
     /// Connect an agent to an installed harness.
     Connect {
-        /// Harness target, or `targets` to inspect available harnesses.
+        /// Harness target to connect.
         target: String,
         #[arg(long)]
         agent: Option<String>,
     },
+    /// List harnesses detected on this machine.
+    Targets,
     /// Inspect and install curated command-line tools.
     Cli {
         #[command(subcommand)]
@@ -419,7 +421,8 @@ fn dispatch_json(command: &Command) -> Result<ExitCode, String> {
         }
         Command::Gateway { .. } => serde_json::to_value(api::gateway()?).map_err(|e| e.to_string())?,
         Command::Usage => api::analytics_value()?,
-        Command::Doctor => doctor_json()?,
+        Command::Doctor => commands::doctor_json()?,
+        Command::Targets => api::connect_targets()?,
         Command::Agent { action } => match action {
             AgentAction::Ls => api::agents()?,
             AgentAction::Add { name, servers, target } => api::add_agent(name, servers, target.as_deref())?,
@@ -436,113 +439,53 @@ fn dispatch_json(command: &Command) -> Result<ExitCode, String> {
                     e
                 }
             })?,
-            AgentAction::Token { id } => agent_token(id)?,
+            AgentAction::Token { id } => commands::agent_token(id)?,
             AgentAction::Rotate { id } => api::rotate_agent(id)?,
         },
         Command::Connect { target, agent } => {
-            if target == "targets" {
-                api::connect_targets()?
+            let id = match agent {
+                Some(id) => id.clone(),
+                None => api::resolve_client(target, true)?.id,
+            };
+            api::connect_agent(&id, target)?
+        }
+        Command::Cli { action } => commands::cli_json(action)?,
+        Command::Start {
+            no_open,
+            no_shortcut,
+            desktop,
+        } => commands::start_json(!no_open, !no_shortcut, *desktop)?,
+        Command::Stop => {
+            let stopped = daemon::stop()?;
+            json!({ "stopped": stopped, "running": api::is_up() })
+        }
+        Command::Restart => commands::restart_json()?,
+        Command::Update { apply } => {
+            if *apply {
+                update::apply()?;
+                json!({ "applied": true })
             } else {
-                let id = match agent {
-                    Some(id) => id.clone(),
-                    None => api::resolve_client(target, true)?.id,
-                };
-                api::connect_agent(&id, target)?
+                serde_json::to_value(api::update_check()?).map_err(|e| e.to_string())?
             }
         }
-        Command::Cli { action } => cli_json(action)?,
+        Command::Add { .. }
+        | Command::Rm { .. }
+        | Command::Server { .. }
+        | Command::McpHeaders { .. }
+        | Command::Secret { .. }
+        | Command::Shortcut { .. }
+        | Command::Autostart { .. } => commands::management_json(command)?,
         _ => return Err("this command does not support --json".into()),
     };
     let failed_call =
         matches!(command, Command::Call { .. }) && data.get("isError").and_then(Value::as_bool).unwrap_or(false);
+    let doctor_failed = matches!(command, Command::Doctor) && data["problems"].as_bool().unwrap_or(false);
     println!("{}", serde_json::to_string(&envelope(data)).map_err(|e| e.to_string())?);
-    Ok(if failed_call {
+    Ok(if failed_call || doctor_failed {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
     })
-}
-
-fn agent_token(id: &str) -> Result<Value, String> {
-    let agents = api::agents()?;
-    agents
-        .as_array()
-        .and_then(|a| a.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(id)))
-        .and_then(|v| v.get("token"))
-        .cloned()
-        .ok_or_else(|| format!("agent `{id}` not found"))
-}
-
-fn cli_json(action: &CliAction) -> Result<Value, String> {
-    match action {
-        CliAction::Ls => api::cli_status(),
-        CliAction::Search { query } => api::cli_search(query),
-        CliAction::Check { command } => api::cli_check(command),
-        CliAction::Install { id, run, yes } => install_cli(id, *run || *yes),
-    }
-}
-
-fn install_cli(id: &str, run: bool) -> Result<Value, String> {
-    let catalog = api::cli_catalog()?;
-    let entry = catalog
-        .as_array()
-        .and_then(|a| a.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(id)))
-        .ok_or_else(|| format!("`{id}` is not in the curated CLI catalog"))?;
-    let option = entry
-        .get("installs")
-        .and_then(Value::as_array)
-        .and_then(|a| a.first())
-        .and_then(|v| v.get("command"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("no curated install command is available for `{id}`"))?;
-    if !run {
-        return Ok(json!({ "id": id, "command": option, "executed": false }));
-    }
-    let argv: Vec<&str> = option.split_whitespace().collect();
-    let (program, args) = argv.split_first().ok_or("curated install command is empty")?;
-    let status = std::process::Command::new(program)
-        .args(args)
-        .status()
-        .map_err(|e| format!("could not run curated installer: {e}"))?;
-    Ok(json!({ "id": id, "command": option, "executed": true, "exitCode": status.code().unwrap_or(1) }))
-}
-
-fn doctor_json() -> Result<Value, String> {
-    let health = api::health();
-    let keychain = secrets::available();
-    let token_source = if secrets::get("gateway-token").ok().flatten().is_some() {
-        "keychain"
-    } else if paths::token_file().is_file() {
-        "file"
-    } else {
-        "none"
-    };
-    let agents = api::agents().unwrap_or_else(|_| json!([]));
-    let (mut wildcard, mut scoped) = (0_u64, 0_u64);
-    if let Some(items) = agents.as_array() {
-        for item in items {
-            if item.get("servers").and_then(Value::as_str) == Some("*") {
-                wildcard += 1
-            } else {
-                scoped += 1
-            }
-        }
-    }
-    let h = health.as_ref().ok();
-    let problems = h.is_none()
-        || std::env::var("HYPERGATE_NO_AUTH").ok().as_deref() == Some("1")
-        || (keychain && token_source == "file");
-    Ok(json!({
-        "daemon": { "running": h.is_some(), "version": h.map(|v| v.version.clone()), "port": paths::port() },
-        "auth": { "tokenSource": token_source, "keychainAvailable": keychain, "disabled": std::env::var("HYPERGATE_NO_AUTH").ok().as_deref() == Some("1"), "allowedHosts": std::env::var("HYPERGATE_ALLOWED_HOSTS").unwrap_or_default() },
-        "agents": { "count": agents.as_array().map(Vec::len).unwrap_or(0), "wildcard": wildcard, "scoped": scoped },
-        "servers": api::servers_value().unwrap_or_else(|_| json!([])),
-        "update": api::update().ok(),
-        "autostart": { "enabled": autostart::is_enabled() },
-        "shortcut": shortcut::status().ok().map(|items| items.into_iter().map(|item| json!({ "label": item.label, "exists": item.exists(), "path": item.path })).collect::<Vec<_>>()).unwrap_or_default(),
-        "dataDirectory": paths::data_dir(),
-        "problems": problems
-    }))
 }
 
 fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
@@ -775,10 +718,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
         }
 
         Command::Agent { action } => match action {
-            AgentAction::Ls => {
-                println!("{}", serde_json::to_string_pretty(&api::agents()?).unwrap());
-                Ok(ExitCode::SUCCESS)
-            }
+            AgentAction::Ls => commands::agents_human(),
             AgentAction::Add { name, servers, target } => {
                 let v = api::add_agent(&name, &servers, target.as_deref())?;
                 println!("Added agent {}", v.get("id").and_then(Value::as_str).unwrap_or(&name));
@@ -811,7 +751,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
                 Ok(ExitCode::SUCCESS)
             }
             AgentAction::Token { id } => {
-                print!("{}", agent_token(&id)?);
+                print!("{}", commands::agent_token(&id)?);
                 Ok(ExitCode::SUCCESS)
             }
             AgentAction::Rotate { id } => {
@@ -821,90 +761,51 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
             }
         },
 
+        Command::Targets => commands::targets_human(),
         Command::Connect { target, agent } => {
-            if target == "targets" {
-                let v = api::connect_targets()?;
-                if let Some(items) = v.get("targets").and_then(Value::as_array) {
-                    for item in items {
-                        println!(
-                            "{}  {}",
-                            item.get("id").and_then(Value::as_str).unwrap_or("?"),
-                            if item.get("found").and_then(Value::as_bool).unwrap_or(false) {
-                                "available"
-                            } else {
-                                "not found"
-                            }
-                        );
-                    }
+            let id = match agent {
+                Some(id) => id,
+                None => api::resolve_client(&target, true)?.id,
+            };
+            match api::connect_agent(&id, &target) {
+                Ok(v) => {
+                    println!("{}", v.get("output").and_then(Value::as_str).unwrap_or(""));
+                    println!("Command: {}", v.get("command").and_then(Value::as_str).unwrap_or(""));
+                    Ok(ExitCode::SUCCESS)
                 }
-                Ok(ExitCode::SUCCESS)
-            } else {
-                let id = match agent {
-                    Some(id) => id,
-                    None => api::resolve_client(&target, true)?.id,
-                };
-                match api::connect_agent(&id, &target) {
-                    Ok(v) => {
-                        println!("{}", v.get("output").and_then(Value::as_str).unwrap_or(""));
-                        println!("Command: {}", v.get("command").and_then(Value::as_str).unwrap_or(""));
+                Err(e) if e.contains(" failed (400)") => {
+                    let info = api::agent_connect_info(&id)?;
+                    let snippet = info
+                        .get("targets")
+                        .and_then(Value::as_array)
+                        .and_then(|a| {
+                            a.iter()
+                                .find(|v| v.get("id").and_then(Value::as_str) == Some(target.as_str()))
+                        })
+                        .and_then(|v| v.get("snippet"))
+                        .and_then(Value::as_str);
+                    if let Some(s) = snippet {
+                        println!("{s}");
                         Ok(ExitCode::SUCCESS)
-                    }
-                    Err(_) => {
-                        let info = api::agent_connect_info(&id)?;
-                        let snippet = info
-                            .get("targets")
-                            .and_then(Value::as_array)
-                            .and_then(|a| {
-                                a.iter()
-                                    .find(|v| v.get("id").and_then(Value::as_str) == Some(target.as_str()))
-                            })
-                            .and_then(|v| v.get("snippet"))
-                            .and_then(Value::as_str);
-                        if let Some(s) = snippet {
-                            println!("{s}");
-                            Ok(ExitCode::SUCCESS)
-                        } else {
-                            Err(format!("target `{target}` is not runnable"))
-                        }
+                    } else {
+                        Err(format!("target `{target}` is not runnable"))
                     }
                 }
+                Err(e) => Err(e),
             }
         }
 
         Command::Cli { action } => match action {
-            CliAction::Ls => {
-                println!("{}", serde_json::to_string_pretty(&api::cli_status()?).unwrap());
-                Ok(ExitCode::SUCCESS)
-            }
-            CliAction::Search { query } => {
-                println!("{}", serde_json::to_string_pretty(&api::cli_search(&query)?).unwrap());
-                Ok(ExitCode::SUCCESS)
-            }
-            CliAction::Check { command } => {
-                println!("{}", serde_json::to_string_pretty(&api::cli_check(&command)?).unwrap());
-                Ok(ExitCode::SUCCESS)
-            }
-            CliAction::Install { id, run, yes } => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&install_cli(&id, run || yes)?).unwrap()
-                );
-                Ok(ExitCode::SUCCESS)
-            }
+            CliAction::Ls => commands::cli_ls_human(),
+            CliAction::Search { query } => commands::cli_search_human(&query),
+            CliAction::Check { command } => commands::cli_check_human(&command),
+            CliAction::Install { id, run, yes } => commands::cli_install_human(&id, run || yes),
         },
 
-        Command::Usage => {
-            println!("{}", serde_json::to_string_pretty(&api::analytics_value()?).unwrap());
-            Ok(ExitCode::SUCCESS)
-        }
+        Command::Usage => commands::usage_human(),
         Command::Doctor => {
-            let report = doctor_json()?;
-            println!("{}", serde_json::to_string_pretty(&report).unwrap());
-            Ok(if report["problems"].as_bool().unwrap_or(false) {
-                ExitCode::from(1)
-            } else {
-                ExitCode::SUCCESS
-            })
+            let report = commands::doctor_json()?;
+            commands::doctor_human(&report)
         }
 
         Command::Open => {
