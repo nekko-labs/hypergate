@@ -466,6 +466,12 @@ This is another deliberate patch release: the requested 1.0.3 fixes the signed m
 - [x] **The signed Mac daemon can reserve V8's code range**: Node's SEA daemon receives `com.apple.security.cs.allow-jit` and `com.apple.security.cs.allow-unsigned-executable-memory` when the bundled and standalone binaries are signed under the hardened runtime; the Rust shell keeps its tighter signature, and CI inspects the daemon inside the shipped DMG before declaring the artifact runnable. · [spec](SPEC.md#39-distribution-shipped) · Added: 2026-08-08 · Done: 2026-08-08
 - [x] **Starting Hypergate narrates itself and can recover**: the shell polls a token-free health endpoint with a 30-second initial budget, updates the existing splash text at milestones, records the last health error and elapsed time, and continues a slower background poll after the failure page so a daemon that becomes ready later still opens the manager. · [spec](SPEC.md#38-desktop-shell--cli-shipped) · Added: 2026-08-08 · Done: 2026-08-08
 
+## Epic 41: Intel Mac artifacts actually launch (v1.0.4)
+
+This is a focused patch release: the Intel download previously paired an x86_64 shell with an arm64 SEA daemon, so an Intel Mac could never start the gateway.
+
+- [x] **Intel Mac releases contain an Intel daemon**: cross-architecture macOS builds inject the SEA blob into an official Node base for the target architecture, verify that archive against Node's `SHASUMS256.txt`, and assert the daemon's target Mach-O architecture alongside its V8 entitlements in the standalone and shipped-DMG smoke checks; native Apple Silicon builds keep their existing path. · [spec](SPEC.md#39-distribution-shipped) · Added: 2026-08-09 · Done: 2026-08-09
+
 ## Epic 37: finding the right tool, and knowing it is the right one (v0.22.0)
 
 Philip: install the Playwright CLI as the use case; add CLI lookup like the MCP servers have, and work out the best official online source for what counts as an official/recommended CLI; put a note directly under every MCP or CLI search result confirming it is the recommended approach, or pointing at the official provider's instead; and the GitHub OAuth connection still does not show up correctly.
