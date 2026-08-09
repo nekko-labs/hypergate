@@ -23,6 +23,7 @@
 //   node scripts/build-standalone.mjs              # build everything
 //   node scripts/build-standalone.mjs --skip-build # reuse existing output
 //   node scripts/build-standalone.mjs --shell <path-to-hypergate-binary>
+//   node scripts/build-standalone.mjs --node <path-to-node-binary>
 import { execFileSync } from 'node:child_process';
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -84,7 +85,10 @@ async function bundle() {
 
 // ── 2. inject it into a copy of the Node binary ──────────────────────────────
 
-function seaBinary(mainScript) {
+function seaBinary(mainScript, baseBinary = process.execPath) {
+  if (!existsSync(baseBinary)) {
+    throw new Error(`no Node binary at ${baseBinary}, so provide a valid \`--node\` path`);
+  }
   const config = join(WORK, 'sea-config.json');
   const blob = join(WORK, 'hypergated.blob');
   writeFileSync(
@@ -97,7 +101,9 @@ function seaBinary(mainScript) {
         disableExperimentalSEAWarning: true,
         // No snapshot and no code cache: both tie the artifact to the exact
         // Node build that produced it, and buy startup time we do not need for
-        // a process that runs for days.
+        // a process that runs for days. With both disabled, this blob carries
+        // no machine code and can be injected into a target-architecture Node
+        // base selected with --node.
         useSnapshot: false,
         useCodeCache: false,
       },
@@ -108,7 +114,7 @@ function seaBinary(mainScript) {
   run(process.execPath, ['--experimental-sea-config', config]);
 
   const target = join(OUT, `hypergated${EXE}`);
-  copyFileSync(process.execPath, target);
+  copyFileSync(baseBinary, target);
   chmodSync(target, 0o755);
 
   // A signature over the original Node binary cannot survive us appending to
@@ -190,7 +196,7 @@ console.log('› bundling the daemon');
 const main = await bundle();
 
 console.log('› building the standalone daemon');
-const daemon = seaBinary(main);
+const daemon = seaBinary(main, option('node'));
 
 console.log('› collecting the payload');
 payload(option('shell') ?? join(ROOT, 'apps/shell/target/release', `hypergate${EXE}`));

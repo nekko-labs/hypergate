@@ -159,6 +159,49 @@ jobs:
             apps/shell/target/${{ matrix.target }}/release/hypergate.exe
           if-no-files-found: error
 
+      - name: Prepare cross-architecture Node base (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner_arch="$(uname -m)"
+          case "$runner_arch" in
+            arm64) runner_node_arch=arm64 ;;
+            x86_64) runner_node_arch=x64 ;;
+            *) echo "unsupported macOS runner architecture: $runner_arch" >&2; exit 1 ;;
+          esac
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin) target_node_arch=arm64 ;;
+            x86_64-apple-darwin) target_node_arch=x64 ;;
+            *) exit 0 ;;
+          esac
+          if [ "$runner_node_arch" = "$target_node_arch" ]; then
+            echo "Native macOS Node base: $runner_node_arch"
+            exit 0
+          fi
+
+          node_version="$(node --version)"
+          node_version="${node_version#v}"
+          archive_name="node-v${node_version}-darwin-${target_node_arch}.tar.gz"
+          base_dir="$RUNNER_TEMP/node-sea-${target_node_arch}"
+          archive="$RUNNER_TEMP/$archive_name"
+          mkdir -p "$base_dir"
+          curl --fail --location --retry 3 \
+            -o "$archive" "https://nodejs.org/dist/v${node_version}/${archive_name}"
+          curl --fail --location --retry 3 \
+            -o "$RUNNER_TEMP/SHASUMS256.txt" \
+            "https://nodejs.org/dist/v${node_version}/SHASUMS256.txt"
+          expected="$(awk -v name="$archive_name" '$2 == name { print $1 }' "$RUNNER_TEMP/SHASUMS256.txt")"
+          if [ -z "$expected" ]; then
+            echo "Node checksum entry missing for $archive_name" >&2
+            exit 1
+          fi
+          printf '%s  %s\n' "$expected" "$archive" | shasum -a 256 -c -
+          tar -xzf "$archive" --strip-components=1 -C "$base_dir"
+          test -x "$base_dir/bin/node"
+          echo "HYPERGATE_SEA_NODE=$base_dir/bin/node" >> "$GITHUB_ENV"
+          echo "Using verified Node $node_version $target_node_arch base: $base_dir/bin/node"
+
       # `--skip-build` reuses the workspace and cargo output above. The shell
       # path is explicit because a target triple puts the binary somewhere other
       # than target/release.
@@ -168,8 +211,14 @@ jobs:
           set -euo pipefail
           exe=""
           [ "$RUNNER_OS" = "Windows" ] && exe=".exe"
-          node scripts/build-standalone.mjs --skip-build \
-            --shell "apps/shell/target/${{ matrix.target }}/release/hypergate$exe"
+          if [ "$RUNNER_OS" = "macOS" ] && [ -n "${HYPERGATE_SEA_NODE:-}" ]; then
+            node scripts/build-standalone.mjs --skip-build \
+              --node "$HYPERGATE_SEA_NODE" \
+              --shell "apps/shell/target/${{ matrix.target }}/release/hypergate$exe"
+          else
+            node scripts/build-standalone.mjs --skip-build \
+              --shell "apps/shell/target/${{ matrix.target }}/release/hypergate$exe"
+          fi
 
       # ── Signing, part 2: hypergated is minted by the SEA build above, so it
       # can only be signed now. (The shell copy in the payload is already
@@ -272,6 +321,8 @@ jobs:
       # (hardened runtime, SEA quirks) should fail here, not on a user machine.
       - name: Check the standalone daemon runs
         shell: bash
+        env:
+          HYPERGATE_TARGET_ARCH: ${{ matrix.target }}
         run: |
           if [ "$RUNNER_OS" = "macOS" ] && [ -n "${MACOS_SIGNING_CERTS_P12:-}" ]; then
             export HYPERGATE_MACOS_DMG="$(ls dist-installers/*.dmg)"

@@ -30,6 +30,8 @@ const ok = (m) => console.log(`✓ ${m}`);
 let daemon;
 let dmgMount;
 let daemonPath = STANDALONE_DAEMON;
+let shellPath = join(ROOT, 'dist-standalone', `hypergate${EXE}`);
+let macEntitlementsChecked = false;
 const fail = async (m) => {
   console.error(`✗ ${m}`);
   await shutdown(daemon, DIR);
@@ -42,6 +44,32 @@ function detachDmg() {
   try { spawnSync('hdiutil', ['detach', dmgMount], { stdio: 'ignore' }); } catch {}
   rmSync(dmgMount, { recursive: true, force: true });
   dmgMount = undefined;
+}
+
+function macArchitecture(value) {
+  if (!value) return undefined;
+  if (value === 'arm64' || value.includes('aarch64')) return 'arm64';
+  if (value === 'x64' || value.includes('x86_64')) return 'x86_64';
+  return undefined;
+}
+
+function runtimeMacArchitecture() {
+  if (process.arch === 'arm64') return 'arm64';
+  if (process.arch === 'x64') return 'x86_64';
+  return process.arch;
+}
+
+function assertMacArchitecture(path, label, expected) {
+  const result = spawnSync('lipo', ['-archs', path], { encoding: 'utf8' });
+  const details = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
+  if (result.status !== 0) {
+    return fail(`could not inspect ${label} architecture at ${path}: ${details}`);
+  }
+  const architectures = details.split(/\s+/).filter(Boolean);
+  if (!architectures.includes(expected)) {
+    return fail(`${label} architecture is ${architectures.join(', ') || 'unknown'}, expected ${expected}`);
+  }
+  ok(`${label} architecture ${architectures.join(' ')}, expected ${expected}`);
 }
 
 async function prepareDaemon() {
@@ -61,10 +89,27 @@ async function prepareDaemon() {
       return;
     }
     daemonPath = join(dmgMount, 'Hypergate.app', 'Contents', 'MacOS', 'hypergated');
+    shellPath = join(dmgMount, 'Hypergate.app', 'Contents', 'MacOS', 'hypergate');
   }
   if (!existsSync(daemonPath)) {
     await fail(`${daemonPath} is missing, so run \`npm run build:standalone\` first`);
     return;
+  }
+  const configuredTarget = process.env.HYPERGATE_TARGET_ARCH;
+  const expected = macArchitecture(configuredTarget);
+  if (configuredTarget && !expected) {
+    await fail(`unsupported HYPERGATE_TARGET_ARCH: ${configuredTarget}`);
+    return;
+  }
+  if (process.platform === 'darwin' && expected) {
+    await assertMacArchitecture(daemonPath, 'macOS daemon', expected);
+    if (!existsSync(shellPath)) {
+      await fail(`${shellPath} is missing, so the macOS shell architecture cannot be checked`);
+      return;
+    }
+    await assertMacArchitecture(shellPath, 'macOS shell', expected);
+  } else if (process.platform === 'darwin') {
+    ok('macOS architecture check skipped (set HYPERGATE_TARGET_ARCH to assert a target)');
   }
   if (process.platform !== 'darwin') {
     ok('macOS daemon signature check skipped (not running on macOS)');
@@ -88,11 +133,29 @@ async function prepareDaemon() {
         return;
       }
     }
+    macEntitlementsChecked = true;
     ok('macOS daemon signature contains the V8 entitlements');
   }
 }
 
 await prepareDaemon();
+
+const expectedMacArchitecture = macArchitecture(process.env.HYPERGATE_TARGET_ARCH);
+const runnerMacArchitecture = runtimeMacArchitecture();
+if (
+  process.platform === 'darwin'
+  && expectedMacArchitecture
+  && runnerMacArchitecture !== expectedMacArchitecture
+) {
+  await shutdown(undefined, DIR);
+  detachDmg();
+  ok(
+    `daemon execution skipped: ${expectedMacArchitecture} artifact on ${runnerMacArchitecture} runner; `
+      + `static architecture checks passed${macEntitlementsChecked ? ' and entitlement checks passed' : '; entitlement check skipped for unsigned artifact'}`,
+  );
+  console.log('\nStandalone daemon smoke: static checks green; execution skipped for cross-architecture artifact');
+  process.exit(0);
+}
 
 // No `node` anywhere in this command: that is the whole point of the artifact.
 daemon = spawn(daemonPath, [], {
