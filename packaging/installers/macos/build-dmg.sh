@@ -14,9 +14,10 @@ DAEMON_ENTITLEMENTS="$SCRIPT_DIR/hypergate-daemon.entitlements.plist"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-ROOT="$WORK/root"
+STAGING="$WORK/staging"
+ROOT="$STAGING"
 APP="$ROOT/Hypergate.app"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$STAGING" "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # Both binaries and the UI live inside the bundle, so the whole product is one
 # self-contained thing the user can move or delete.
@@ -144,9 +145,6 @@ if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   assert_bundle_integrity
 fi
 
-STAGING="$WORK/staging"
-mkdir -p "$STAGING"
-mv "$ROOT/Hypergate.app" "$STAGING/Hypergate.app"
 ln -s /Applications "$STAGING/Applications"
 
 # The image is read-only after creation. The app itself is signed above; a DMG
