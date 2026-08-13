@@ -64,10 +64,7 @@ fn open_external(url: &str) {
 /// would have let any page in the webview launch anything.
 fn client_deep_link(client: &str) -> Option<String> {
     match client {
-        "kotrain" => Some(format!(
-            "kotrain://hypergate/connect?port={}",
-            crate::paths::port()
-        )),
+        "kotrain" => Some(format!("kotrain://hypergate/connect?port={}", crate::paths::port())),
         _ => None,
     }
 }
