@@ -13,12 +13,27 @@ name: Release on version bump
 # from a hand-pushed tag.
 
 on:
+  # A human merge fires this immediately.
   push:
     branches: [main]
     paths:
       - 'package.json'
-  # Re-run by hand if the dispatch failed after the tag already landed.
+  # ...but a merge performed by a bot does not: a push made with GITHUB_TOKEN
+  # never starts a workflow run (the same recursion guard that stops a
+  # bot-pushed tag from triggering release.yml). Merges here are human today, so
+  # the push above is the fast path, but kotrain's are not and its release was
+  # silently skipped because of exactly this. So a schedule is the backstop: it
+  # notices an untagged version bump whoever merged it. Everything below is
+  # idempotent (it stops once the tag exists), so overlapping triggers are safe.
+  schedule:
+    - cron: '*/15 * * * *'
+  # Cut a pending release right now instead of waiting for the tick.
   workflow_dispatch:
+
+concurrency:
+  # Two ticks (or a tick and a push) must not race to create the same tag.
+  group: version-release
+  cancel-in-progress: false
 
 permissions:
   contents: write
