@@ -77,10 +77,61 @@ const toStatus = (i: Instance): ServerStatus => ({
   lastLog: i.logs[i.logs.length - 1],
 });
 
-/** Heuristic: does this connect error look like an auth challenge (401/unauthorized)? */
+/** Longest connect error we keep verbatim; past this it is a body dump, not a message. */
+const ERROR_CAP = 500;
+
+/**
+ * The HTTP status a transport error carries, when it carries one.
+ *
+ * The streamable-HTTP transport puts it on `StreamableHTTPError.code`, while the
+ * SSE transport throws a plain Error and only spells the status into the message.
+ * `code` is also the SDK's channel for failures that never had a status (`-1` for
+ * an unexpected content type), and Node's own errors put a string there, so only
+ * a number in the HTTP range counts.
+ */
+const httpStatusOf = (e: unknown): number | undefined => {
+  const code: unknown = (e as { code?: unknown } | null)?.code;
+  if (typeof code === 'number' && code >= 100 && code <= 599) return code;
+  const spelled = /\(HTTP (\d{3})\)/.exec(e instanceof Error ? e.message : String(e));
+  return spelled ? Number(spelled[1]) : undefined;
+};
+
+/** Does this connect error look like an auth challenge (401/unauthorized)? */
 const is401 = (e: unknown): boolean => {
+  // A status is the exact answer. Only guess from the text when there is none:
+  // an HTML error page can mention "401" anywhere in its markup while actually
+  // being a 500, and reading that as a challenge sends the user to a pointless
+  // sign-in instead of telling them the endpoint is down.
+  const status = httpStatusOf(e);
+  if (status !== undefined) return status === 401;
   const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
   return msg.includes('401') || msg.includes('unauthorized');
+};
+
+/** Is this response body a web page rather than anything MCP would send? */
+const looksLikeHtml = (text: string): boolean => /<(?:!doctype\s+html|html[\s>])/i.test(text);
+
+/**
+ * A connect failure, said in one line fit for a server row and a toast.
+ *
+ * A hosted MCP endpoint that breaks usually answers with its host's HTML error
+ * page, and the SDK pastes that entire body into the message. Left alone that is
+ * kilobytes of markup rendered as the server's error, with the status code (the
+ * one part that tells you what to do) buried in it. Keep the status, drop the page.
+ */
+const describeConnectError = (e: unknown): string => {
+  const raw = (e instanceof Error ? e.message : String(e)).trim();
+  const status = httpStatusOf(e);
+  if (status !== undefined && looksLikeHtml(raw)) {
+    const advice =
+      status === 401 || status === 403
+        ? 'Sign in again, or check the token.'
+        : status >= 500
+          ? 'The host is failing upstream, so there is nothing to fix in this config.'
+          : 'Check that the URL points at the MCP endpoint.';
+    return `HTTP ${status}: the endpoint answered with an HTML error page instead of MCP. ${advice}`;
+  }
+  return raw.length > ERROR_CAP ? `${raw.slice(0, ERROR_CAP)}…` : raw;
 };
 
 
@@ -351,8 +402,12 @@ export class Supervisor {
       // rather than a red `errored` the user has to decode.
       const needsAuth = e instanceof UnauthorizedError || (config.runtime === 'remote' && is401(e));
       inst.state = needsAuth ? 'authorizing' : 'errored';
-      const detail = e instanceof Error ? e.message : String(e);
+      const raw = e instanceof Error ? e.message : String(e);
+      const detail = describeConnectError(e);
       inst.error = needsAuth && config.auth === 'token' ? `Token rejected: ${detail}` : detail;
+      // The full response is what you actually debug with, so it still goes to the
+      // log panel (capped) — pushed first, so `lastLog` stays the readable line.
+      if (detail !== raw) this.pushLog(inst, `[supervisor] upstream response: ${raw.slice(0, ERROR_CAP)}`);
       this.pushLog(inst, `[supervisor] ${needsAuth ? 'needs authorization' : 'start failed'}: ${inst.error}`);
     }
     return toStatus(inst);
