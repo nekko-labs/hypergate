@@ -8,18 +8,26 @@ footer, and both the GitHub release and
 [hypergate.app/release-notes.html](https://hypergate.app/release-notes.html)
 render the result.
 
+**Merging a version bump now cuts the release.** `version-release.yml` watches
+pushes to main that touch `package.json`: when that version has no tag yet, it
+tags it and dispatches `release.yml`. So the notes file has to exist **in the
+same PR as the bump**, and the workflow refuses to tag without it, rather than
+leaving a tag pointing at a release that never built. It also refuses when
+`apps/shell/Cargo.toml` disagrees with `package.json`, since that version ends
+up inside the built binaries.
+
 **A release's notes cover everything since the last released tag, not just its
-own version.** A minor bump per PR outruns the tags: v0.16.0 was bumped and
-never released, so its changes went out under v0.16.1, whose notes fold them in
-and say so. Before tagging, check what the release actually contains and make
-sure the file for that version accounts for all of it:
+own version.** This mattered more before the automation, when a minor bump per
+PR outran the tags: v0.16.0 was bumped and never released, so its changes went
+out under v0.16.1, whose notes fold them in and say so. Bumps and tags now move
+together, but if a release did get skipped, check what the next one actually
+contains and make sure its file accounts for all of it:
 
 ```
 git log $(git describe --tags --abbrev=0)..HEAD --no-merges --oneline
 ```
 
-The workflow prints a warning when the file for the tagged version is missing,
-but it cannot tell that a file is *incomplete*. That part is the read-through
+Nothing can tell that a notes file is *incomplete*. That part is the read-through
 above.
 
 The shape:

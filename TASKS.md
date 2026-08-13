@@ -83,7 +83,9 @@ npm run version:bump -- --patch   # only when explicitly called for (a fix on a 
 npm run version:check         # assert every file still agrees
 ```
 
-Why a minor every time: releases here are cut by tagging (`git tag v0.18.0 && git push --tags`) and the publish job checks the tag against the root `package.json`, so a merged PR that left the version alone can never be released on its own. Bumping in the PR means `main` is always taggable, and the version in a bug report names the exact merge.
+Why a minor every time: the publish job checks the tag against the root `package.json`, so a merged PR that left the version alone can never be released on its own. Bumping in the PR means `main` is always taggable, and the version in a bug report names the exact merge.
+
+**Merging the bump is what cuts the release.** `version-release.yml` watches pushes to main that touch `package.json` and, when that version has no tag yet, tags it and dispatches `release.yml`; hand-tagging still works and is the fallback. It tags *and* dispatches because a tag pushed with `GITHUB_TOKEN` cannot trigger another workflow, so tagging alone would leave `release.yml` unfired. Before tagging it runs `version:check` and requires `docs/releases/<version>.md` to exist, so a partial bump or missing notes fails while there is still nothing tagged. Which means: **the notes file belongs in the same PR as the bump.**
 
 The version is written in **seven** files that must move together, which is the whole reason for the script: root `package.json`, `apps/daemon/package.json`, the `VERSION` constant in `apps/daemon/src/index.ts` (served on `/health` and compared against the update feed), `apps/shell/Cargo.toml` + `Cargo.lock`, `.claude-plugin/marketplace.json`, and `plugins/hypergate/.claude-plugin/plugin.json`. `npm run version:check` fails on drift.
 
@@ -471,6 +473,14 @@ This is another deliberate patch release: the requested 1.0.3 fixes the signed m
 This is a focused patch release: the Intel download previously paired an x86_64 shell with an arm64 SEA daemon, so an Intel Mac could never start the gateway.
 
 - [x] **Intel Mac releases contain an Intel daemon**: cross-architecture macOS builds inject the SEA blob into an official Node base for the target architecture, verify that archive against Node's `SHASUMS256.txt`, and assert the daemon's target Mach-O architecture alongside its V8 entitlements in the standalone and shipped-DMG smoke checks; native Apple Silicon builds keep their existing path. · [spec](SPEC.md#39-distribution-shipped) · Added: 2026-08-09 · Done: 2026-08-09
+
+## Epic 44: merging a version bump cuts the release (v1.3.0)
+
+Philip: *"let's also update that every PR for kotrain or hypergate cuts a new github release and installers when the version number is updated."* §4.1 says every PR bumps the minor, but releases were cut by hand-tagging, so the bumps outran the tags: v1.1.0 and v1.2.0 were both bumped and never released, and the last thing users could download was v1.0.4. This release closes that gap and ships both of them.
+
+- [x] **`version-release.yml`**: watches pushes to `main` that touch `package.json` and, when that version has no tag yet, tags it and dispatches `release.yml`. It **tags and dispatches** rather than only tagging, because a tag pushed with `GITHUB_TOKEN` cannot trigger another workflow (GitHub blocks that to prevent recursion), so tagging alone would leave the release unfired while looking like it worked; `gh workflow run release.yml --ref <tag>` gives that run the same `github.ref_name` a hand-pushed tag would, so nothing inside `release.yml` needed changing. No PAT, so no secret to provision. · [spec](SPEC.md#39-distribution-shipped) · Done: 2026-08-13
+- [x] **It refuses to tag a release that cannot build**: `node scripts/bump-version.mjs --check` (the repo's own seven-file assertion, which needs only Node built-ins, so no install step) and the existence of `docs/releases/<version>.md`, which `release.yml` reads for its notes. Both run **before** the tag exists, so a partial bump or missing notes fails while there is still nothing tagged, instead of leaving a tag pointing at a release that never built. A push that touches `package.json` without changing the version finds the tag already present and no-ops. Which makes the notes file part of the bump's own PR, now written into §4.1 and `docs/releases/README.md`. · [spec](SPEC.md#39-distribution-shipped) · Done: 2026-08-13
+- [x] **Same workflow in kotrain**, adapted to that repo (root/desktop/server version agreement instead of the seven-file check, and it dispatches `docker.yml` too). Kotrain's `release.yml` gained the `workflow_dispatch` trigger hypergate's already had. · Done: 2026-08-13
 
 ## Epic 43: Kotrain connects itself (v1.2.0)
 
