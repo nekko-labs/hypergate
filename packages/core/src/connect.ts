@@ -42,9 +42,13 @@ export const CONNECT_TARGETS: ConnectTarget[] = [
   {
     id: 'kotrain',
     name: 'Kotrain',
-    method: 'config',
+    // The one client that connects itself: Kotrain registers `kotrain://`, so
+    // the button hands the job to the app rather than writing a config file
+    // underneath it (Kotrain holds its settings in memory while it runs, so a
+    // file written behind its back would be overwritten by the next save).
+    method: 'deeplink',
     blurb: 'Local-first AI chat, cowork and coding in one window (Nekko Labs).',
-    hint: 'Or add it in Kotrain: Settings → MCP servers → add an HTTP server.',
+    hint: 'Kotrain comes forward and asks you to confirm, then shows Hypergate as a tab in its own window.',
     homepage: 'https://kotrain.com',
   },
   {
@@ -323,6 +327,26 @@ export const connectSnippet = (id: string, ctx: ConnectContext): string | undefi
   }
 };
 
+/**
+ * The URL that asks a `deeplink` client to connect itself to this gateway.
+ *
+ * Deliberately the whole payload: a port, and not one byte more. The client
+ * takes it as "there is a gateway here" and goes and looks, reading the
+ * daemon's version, its server count and its own scoped token back over
+ * loopback before asking its user. A token in a URL would be a credential
+ * handed through the OS's link handler on the word of whoever opened it.
+ */
+export const connectDeepLink = (id: string, ctx: ConnectContext): string | undefined => {
+  if (id !== 'kotrain') return undefined;
+  let port = '7777';
+  try {
+    port = new URL(ctx.url).port || port;
+  } catch {
+    /* a malformed gateway URL still gets the default, which is where it lives */
+  }
+  return `kotrain://hypergate/connect?port=${encodeURIComponent(port)}`;
+};
+
 // ── shell quoting ───────────────────────────────────────────────────────────
 // Only the Authorization header actually needs quoting today (it has a space),
 // but a token or URL from a future release shouldn't silently produce a command
@@ -365,6 +389,10 @@ export const formatCommands = (command: string, argv: string[]): Record<ConnectS
 export const agentConnectTarget = (status: ConnectTargetStatus, ctx: ConnectContext): AgentConnectTarget => {
   const snippet = connectSnippet(status.id, ctx);
   if (status.method === 'manual') return { ...status, token: ctx.token, snippet };
+  // A deep-link client still gets the snippet: the link needs the app to be
+  // installed, and someone reading about it before installing should be able to
+  // see exactly what it will do.
+  if (status.method === 'deeplink') return { ...status, deepLink: connectDeepLink(status.id, ctx), snippet };
   if (status.method === 'cli') {
     const argv = connectArgv(status.id, ctx);
     if (!argv) return { ...status, snippet };

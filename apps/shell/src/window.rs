@@ -55,6 +55,23 @@ fn open_external(url: &str) {
     }
 }
 
+/// The link that asks another local app to connect itself to this gateway.
+///
+/// Built here rather than taken from the page, which is the whole point: the
+/// page may name a *client* we know about, and the URL that reaches the OS is
+/// then ours, carrying our own port and nothing else. `is_web_url` keeps every
+/// other scheme out of `open_external` for exactly this reason, and widening it
+/// would have let any page in the webview launch anything.
+fn client_deep_link(client: &str) -> Option<String> {
+    match client {
+        "kotrain" => Some(format!(
+            "kotrain://hypergate/connect?port={}",
+            crate::paths::port()
+        )),
+        _ => None,
+    }
+}
+
 /// The size the window opens at when the screen has room for it.
 ///
 /// The manager is a two-column-ish dashboard — a server list whose rows carry a
@@ -248,6 +265,15 @@ impl ManagerWindow {
                 open_external(url);
                 return;
             }
+            // "Connect Kotrain": the page names a client, we build and launch
+            // that client's own URL. An unknown name is ignored, so the list of
+            // apps this can start is the one written above and no other.
+            if let Some(client) = body.strip_prefix("connect:") {
+                if let Some(link) = client_deep_link(client) {
+                    let _ = open::that_detached(link);
+                }
+                return;
+            }
             let event = match body {
                 "close:asking" => Wake::CloseAsked,
                 "close:tray" => Wake::Close(CloseDecision::Tray),
@@ -392,7 +418,7 @@ impl ManagerWindow {
 
 #[cfg(test)]
 mod tests {
-    use super::is_web_url;
+    use super::{client_deep_link, is_web_url};
 
     #[test]
     fn opens_web_urls() {
@@ -417,6 +443,24 @@ mod tests {
             "https-not-really/x",
         ] {
             assert!(!is_web_url(url), "should have refused {url}");
+        }
+    }
+
+    #[test]
+    fn builds_a_clients_own_link() {
+        let link = client_deep_link("kotrain").expect("kotrain is a known client");
+        assert!(link.starts_with("kotrain://hypergate/connect?port="));
+        // The port is ours, and a credential never rides along.
+        assert!(link.contains(&crate::paths::port().to_string()));
+        assert!(!link.contains("token"));
+    }
+
+    #[test]
+    fn refuses_clients_it_does_not_know() {
+        // The page names a client, not a URL: an unknown name has to be a
+        // no-op, or naming one would be the same as launching anything.
+        for client in ["", "explorer", "kotrain://x", "file:///c:/windows"] {
+            assert!(client_deep_link(client).is_none(), "should have refused {client}");
         }
     }
 }

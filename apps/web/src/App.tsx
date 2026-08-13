@@ -36,7 +36,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogConsole } from './components/LogConsole';
 import { ThemeSwitch } from './components/ThemeSwitch';
 import { WindowButtons } from './components/WindowButtons';
-import { inShell, onTitleBarMouseDown, shell } from './lib/shell';
+import { connectClient, inShell, onTitleBarMouseDown, shell } from './lib/shell';
 import { OAuthAppDialog } from './components/servers/OAuthAppDialog';
 import { TokenDialog } from './components/servers/TokenDialog';
 import { useToast } from './toast';
@@ -3039,6 +3039,8 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
   const [shell, setShell] = useState<ConnectShell | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ConnectResult | null>(null);
+  /** A deep link was handed to the OS; the outcome belongs to the other app now. */
+  const [launched, setLaunched] = useState(false);
   const [copied, copy] = useCopy();
   const verb = agent.lastUsed ? 'Reconnect' : 'Connect';
   /** Guards the quick-connect auto-install so a re-render can't fire it twice. */
@@ -3145,6 +3147,33 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
                   <pre className="snippet">{t.snippet}</pre>
                 </>
               )}
+            </>
+          ) : t.method === 'deeplink' && t.deepLink ? (
+            /* The client connects itself: one button that brings it forward,
+               and the file to write by hand if it isn't installed here. */
+            <>
+              <div className="row wrap-gap" style={{ marginTop: 10 }}>
+                <button className="btn btn-primary" onClick={() => { setLaunched(true); connectClient('kotrain', t.deepLink!); }}>
+                  {verb} {t.name}
+                </button>
+                <span className="small muted">
+                  Opens {t.name} and asks it to connect. It confirms with you there, and gets its own scoped token, so this
+                  link carries no credential.
+                </span>
+              </div>
+              {launched && (
+                <div className="conn-result ok">
+                  <b>✓ Handed to {t.name}.</b>
+                  <span className="small"> Finish in its window; this agent goes online once it does.</span>
+                </div>
+              )}
+              <div className="row wrap-gap" style={{ marginTop: 10 }}>
+                <span className="small muted">or, if {t.name} isn't on this machine yet, write it into</span>
+                <code className="path">{t.configPath ?? `${t.name}'s MCP config`}</code>
+                <div className="spacer" style={{ flex: 1 }} />
+                <button className="btn sm" onClick={() => copy('snip', t.snippet ?? '')}>{copied === 'snip' ? 'Copied!' : 'Copy snippet'}</button>
+              </div>
+              <pre className="snippet">{t.snippet}</pre>
             </>
           ) : t.method === 'manual' ? (
             /* No file to write and no CLI to run: this client keeps its MCP list

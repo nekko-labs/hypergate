@@ -43,6 +43,25 @@ export function tellShell(message: string): void {
 }
 
 /**
+ * Ask another local app to connect itself, over the URL scheme it registered.
+ *
+ * The two frames get there differently. A browser tab hands the URL to the OS
+ * itself, after asking the user whether to open the app. The shell's webview
+ * will not: `open_external` there takes http(s) only, on purpose, because URLs
+ * reaching it can come from pages we did not write (a remote server's sign-in
+ * flow). So the page names the *client*, and the shell builds the URL from the
+ * port it already knows: nothing from a page becomes something the OS
+ * launches.
+ */
+export function connectClient(client: 'kotrain', deepLink: string): void {
+  if (inShell) {
+    tellShell(`connect:${client}`);
+    return;
+  }
+  window.location.href = deepLink;
+}
+
+/**
  * Anything that would rather have the click than the window would.
  *
  * A drag region that eats clicks on the buttons sitting in it is worse than

@@ -680,11 +680,16 @@ export interface AgentClientInfo extends AgentClient {
 export type ConnectShell = 'powershell' | 'cmd' | 'bash';
 
 /**
- * How a client gets connected: run its CLI, paste a config snippet, or add the
+ * How a client gets connected: run its CLI, paste a config snippet, add the
  * endpoint by hand in the client's own settings (`manual` — a cloud agent or an
- * app whose MCP list lives in a UI, not a file we can name).
+ * app whose MCP list lives in a UI, not a file we can name), or hand the whole
+ * job to the client itself over a URL scheme it registered (`deeplink`).
+ *
+ * `deeplink` is the best of the four when a client offers it: the app comes
+ * forward, applies the entry to its own live state, and confirms with the
+ * user. No file to write behind a running app's back, no CLI to have installed.
  */
-export type ConnectMethod = 'cli' | 'config' | 'manual';
+export type ConnectMethod = 'cli' | 'config' | 'manual' | 'deeplink';
 
 /** An agent harness the gateway can be connected to. Pure data. */
 export interface ConnectTarget {
@@ -736,6 +741,15 @@ export interface AgentConnectTarget extends ConnectTargetStatus {
   snippet?: string;
   /** The bearer token to paste into a `manual` client's settings form. */
   token?: string;
+  /**
+   * The URL that asks the client to connect itself (`deeplink` targets).
+   *
+   * It names this gateway and nothing else, with no token riding along. The
+   * client reads what it needs back over loopback and asks its own user first,
+   * which is what keeps a URL (something any program can open) from being an
+   * instruction anyone can give.
+   */
+  deepLink?: string;
 }
 
 /** `GET /api/clients/:id/connect` — everything needed to connect one agent. */
