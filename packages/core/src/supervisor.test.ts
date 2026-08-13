@@ -48,3 +48,73 @@ describe('Supervisor remote bearer auth', () => {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }, 15000);
 });
+
+describe('Supervisor remote HTTP error pages', () => {
+  /** A host's error page, shaped like the real ones: a `401` sits in the markup. */
+  const errorPage = (status: number) =>
+    `<!DOCTYPE html><html><head><title>${status}: Internal Server Error</title>`
+    + '<script src="/_next/static/chunks/pages/_error-401cf280a3bb.js" defer=""></script>'
+    + `</head><body><h1>${status}</h1></body></html>`;
+
+  /** Boots a server that answers every MCP POST with `status` and an HTML page. */
+  const startFailing = async (status: number) => {
+    const server = createServer((_req, res) => {
+      res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(errorPage(status));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server did not bind');
+    const config: ManagedServerConfig = {
+      id: `html-${status}`,
+      name: `HTML ${status}`,
+      runtime: 'remote',
+      command: '',
+      url: `http://127.0.0.1:${address.port}/`,
+      transport: 'http',
+      auth: 'none',
+      enabled: true,
+    };
+    const close = () =>
+      new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    return { config, close };
+  };
+
+  it('reports a 500 HTML page as one readable line, not a dump of the page', async () => {
+    const { config, close } = await startFailing(500);
+    const supervisor = new Supervisor({});
+
+    const status = await supervisor.start(config);
+
+    expect(status.state).toBe('errored');
+    expect(status.error).toContain('HTTP 500');
+    expect(status.error).not.toContain('<html');
+    expect(status.error).not.toContain('_next');
+    expect(status.error!.length).toBeLessThan(200);
+    // The page itself is still there to debug with, just not as the row's error.
+    expect(supervisor.logs(config.id).some((line) => line.includes('_next'))).toBe(true);
+    await close();
+  }, 15000);
+
+  it('does not read a 500 whose markup happens to contain 401 as an auth challenge', async () => {
+    const { config, close } = await startFailing(500);
+    const supervisor = new Supervisor({});
+
+    const status = await supervisor.start(config);
+
+    expect(status.state).toBe('errored');
+    expect(status.error).not.toMatch(/sign in|token/i);
+    await close();
+  }, 15000);
+
+  it('still treats a real 401 as authorizing', async () => {
+    const { config, close } = await startFailing(401);
+    const supervisor = new Supervisor({});
+
+    const status = await supervisor.start(config);
+
+    expect(status.state).toBe('authorizing');
+    expect(status.error).toContain('HTTP 401');
+    await close();
+  }, 15000);
+});
