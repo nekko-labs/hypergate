@@ -5,6 +5,7 @@ import {
   agentConnectTarget,
   configPathFor,
   connectArgv,
+  connectDeepLink,
   connectSnippet,
   connectTarget,
   defaultShellFor,
@@ -25,6 +26,11 @@ describe('connect targets', () => {
         expect(t.command, t.id).toBeTruthy();
         expect(connectArgv(t.id, ctx), t.id).toBeDefined();
       } else if (t.method === 'config') {
+        expect(connectSnippet(t.id, ctx), t.id).toBeTruthy();
+        expect(configPathFor(t.id, 'linux'), t.id).toBeTruthy();
+      } else if (t.method === 'deeplink') {
+        expect(connectDeepLink(t.id, ctx), t.id).toBeTruthy();
+        // The link needs the app installed, so the by-hand route stays on offer.
         expect(connectSnippet(t.id, ctx), t.id).toBeTruthy();
         expect(configPathFor(t.id, 'linux'), t.id).toBeTruthy();
       }
@@ -123,6 +129,23 @@ describe('connect commands', () => {
     expect(antigravity).toEqual({ serverUrl: ctx.url, headers: { Authorization: `Bearer ${ctx.token}` } });
     // Hermes is YAML, with every value quoted so a numeric-looking token stays a string.
     expect(connectSnippet('hermes', ctx)).toContain(`Authorization: "Bearer ${ctx.token}"`);
+  });
+
+  it('asks Kotrain to connect itself, naming a port and nothing else', () => {
+    const link = connectDeepLink('kotrain', ctx)!;
+    expect(link).toBe('kotrain://hypergate/connect?port=7777');
+    // A token in a URL would be a credential handed through the OS's link
+    // handler; the client reads its own back over loopback instead.
+    expect(link).not.toContain(ctx.token);
+    expect(connectDeepLink('kotrain', { ...ctx, url: 'http://localhost:7999/mcp' })).toContain('port=7999');
+    // A gateway URL with no port at all still points at where the daemon lives.
+    expect(connectDeepLink('kotrain', { ...ctx, url: 'not a url' })).toContain('port=7777');
+  });
+
+  it('has no deep link for a client that never registered a scheme', () => {
+    for (const id of ['claude-code', 'cursor', 'devin', 'rm -rf']) {
+      expect(connectDeepLink(id, ctx), id).toBeUndefined();
+    }
   });
 
   it('adds the gateway to OpenClaw over streamable HTTP', () => {
@@ -226,6 +249,15 @@ describe('agentConnectTarget', () => {
   it('fills a config target with a snippet instead', () => {
     const t = agentConnectTarget(status({ id: 'cursor', name: 'Cursor', method: 'config', command: undefined }), ctx);
     expect(t.argv).toBeUndefined();
+    expect(t.snippet).toContain(ctx.token);
+  });
+
+  it('fills a deep-link target with the link, and never with the token', () => {
+    const t = agentConnectTarget(status({ id: 'kotrain', name: 'Kotrain', method: 'deeplink', command: undefined }), ctx);
+    expect(t.deepLink).toBe('kotrain://hypergate/connect?port=7777');
+    expect(t.argv).toBeUndefined();
+    expect(t.token).toBeUndefined();
+    // The by-hand route is still there for a machine without the app.
     expect(t.snippet).toContain(ctx.token);
   });
 
