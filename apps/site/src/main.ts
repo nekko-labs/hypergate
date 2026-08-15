@@ -12,19 +12,25 @@ const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const lowPower = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 760;
 
 /* ── Lenis smooth scroll ──────────────────────────────────── */
-const lenis = new Lenis({ autoRaf: false, lerp: 0.1 });
+const lenis = lowPower ? null : new Lenis({ autoRaf: false, lerp: 0.1 });
 let scrollVelocity = 0;
-lenis.on('scroll', (e: { velocity: number }) => {
+lenis?.on('scroll', (e: { velocity: number }) => {
   scrollVelocity = e.velocity;
 });
 
-// anchor links scroll through lenis so easing stays consistent
+// Desktop anchors use Lenis; low-power devices keep native scrolling.
 for (const a of document.querySelectorAll<HTMLAnchorElement>('a[data-scroll]')) {
   a.addEventListener('click', (ev) => {
     const href = a.getAttribute('href');
     if (!href?.startsWith('#')) return;
     ev.preventDefault();
-    lenis.scrollTo(href === '#top' ? 0 : href, { offset: -20, duration: 1.4 });
+    if (lowPower) {
+      const target = href === '#top' ? null : document.querySelector<HTMLElement>(href);
+      const top = target ? target.getBoundingClientRect().top + window.scrollY - 20 : 0;
+      window.scrollTo({ top: Math.max(0, top), behavior: reduced ? 'auto' : 'smooth' });
+    } else {
+      lenis?.scrollTo(href === '#top' ? 0 : href, { offset: -20, duration: 1.4 });
+    }
   });
 }
 
@@ -32,6 +38,15 @@ for (const a of document.querySelectorAll<HTMLAnchorElement>('a[data-scroll]')) 
 const nav = document.getElementById('nav')!;
 const onScrollNav = () => nav.classList.toggle('scrolled', window.scrollY > 24);
 onScrollNav();
+let navFrameId: number | undefined;
+function scheduleScrollNav() {
+  if (navFrameId !== undefined) return;
+  navFrameId = requestAnimationFrame(() => {
+    navFrameId = undefined;
+    onScrollNav();
+  });
+}
+if (lowPower) window.addEventListener('scroll', scheduleScrollNav, { passive: true });
 
 /* ── reveal on enter ──────────────────────────────────────── */
 for (const el of document.querySelectorAll<HTMLElement>('.reveal, .fly')) {
@@ -76,6 +91,7 @@ const parallaxState = parallaxEls.map((el) => ({
 }));
 
 function cacheParallax() {
+  if (lowPower) return;
   const scrollY = window.scrollY;
   for (const item of parallaxState) {
     const rect = item.el.getBoundingClientRect();
@@ -87,7 +103,7 @@ function cacheParallax() {
 }
 
 function applyParallax(scrollY = window.scrollY) {
-  if (reduced) return;
+  if (reduced || lowPower) return;
   const vh = window.innerHeight;
   for (const item of parallaxState) {
     const mid = item.top + item.height / 2 - scrollY - vh / 2;
@@ -311,7 +327,7 @@ let lastParallaxScrollY: number | undefined;
 function frame(t: number) {
   frameId = undefined;
   if (document.visibilityState === 'hidden') return;
-  lenis.raf(t);
+  lenis?.raf(t);
   onScrollNav();
   if (!reduced && window.scrollY !== lastParallaxScrollY) {
     applyParallax();
