@@ -82,6 +82,8 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 [hidden] { display: none !important; }
+html[data-mobile-browser] [data-download-group],
+html[data-mobile-browser] [data-install-command] { display: none !important; }
 html { scroll-behavior: auto; }
 html.lenis, html.lenis body { height: auto; }
 .lenis.lenis-smooth { scroll-behavior: auto !important; }
