@@ -145,7 +145,7 @@ function drawStars(t: number) {
 
 /* ── the gate: a WebGL liquid warp ring ───────────────────── */
 const gateCanvas = document.getElementById('gate') as HTMLCanvasElement;
-const gl = lowPower ? null : gateCanvas.getContext('webgl', { alpha: true, antialias: false });
+const gl = gateCanvas.getContext('webgl', { alpha: true, antialias: false });
 
 const FRAG = `
 precision highp float;
@@ -263,7 +263,8 @@ function sizeGate() {
   if (!gl) return;
   const rect = gateCanvas.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio, 1.5);
-  const scale = Math.min(dpr, 1280 / Math.max(rect.width, rect.height));
+  const maxDimension = lowPower ? 512 : 1280;
+  const scale = Math.min(dpr, maxDimension / Math.max(rect.width, rect.height));
   gateCanvas.width = Math.max(1, Math.round(rect.width * scale));
   gateCanvas.height = Math.max(1, Math.round(rect.height * scale));
   gl.viewport(0, 0, gateCanvas.width, gateCanvas.height);
@@ -276,6 +277,7 @@ if (!gateOk) {
     'radial-gradient(circle at 50% 46%, transparent 118px, rgba(109,94,252,.5) 128px, rgba(34,211,238,.45) 148px, transparent 170px)';
 }
 
+const staticGateTime = 1800;
 function drawGate(t: number) {
   if (!gl || !gateOk) return;
   gl.clearColor(0, 0, 0, 0);
@@ -324,7 +326,7 @@ function frame(t: number) {
 }
 
 function startFrame() {
-  if (document.visibilityState !== 'hidden' && frameId === undefined) {
+  if (!lowPower && document.visibilityState !== 'hidden' && frameId === undefined) {
     frameId = requestAnimationFrame(frame);
   }
 }
@@ -333,7 +335,7 @@ function sizeAll() {
   seedStars();
   sizeGate();
   drawStars(0);
-  drawGate(0);
+  drawGate(lowPower ? staticGateTime : 0);
   cacheParallax();
 }
 window.addEventListener('resize', sizeAll);
