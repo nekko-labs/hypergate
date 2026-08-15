@@ -23,9 +23,9 @@
   <meta name="twitter:description" content="Connect Claude Code, Codex, Cursor, or any agent to GitHub, Vercel, Slack, and Google Drive safely. Hypergate runs the MCP servers on your machine and keeps keys and permissions out of an agent's hands." />
   <meta name="twitter:image" content="https://hypergate.app/og.png" />
   <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="preload" href="/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/src/styles.css" />
   <!-- Structured data: so search and answer engines describe Hypergate accurately -->
   <script type="application/ld+json">
@@ -182,7 +182,10 @@
           </ul>
         </div>
         <figure class="shot reveal" data-parallax="0.05" data-title="Access control">
-          <img src="/demos/gateway.png" alt="Hypergate showing a masked gateway token, MCP servers including an OAuth-protected GitHub server awaiting sign-in, and connected agents scoped with per-server allow-lists" width="1360" height="850" loading="lazy" />
+          <picture>
+            <source type="image/webp" srcset="/demos/gateway-680.webp 680w, /demos/gateway.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
+            <img src="/demos/gateway.png" srcset="/demos/gateway-680.png 680w, /demos/gateway.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate showing a masked gateway token, MCP servers including an OAuth-protected GitHub server awaiting sign-in, and connected agents scoped with per-server allow-lists" width="1360" height="850" loading="lazy" />
+          </picture>
         </figure>
       </article>
 
@@ -201,7 +204,10 @@
           </ul>
         </div>
         <figure class="shot reveal" data-parallax="0.05" data-title="Servers">
-          <img src="/demos/servers.png" alt="Hypergate servers view: Fly.io process server, Context7 remote server, GitHub awaiting sign-in, and scoped connected agents" width="1360" height="850" loading="lazy" />
+          <picture>
+            <source type="image/webp" srcset="/demos/servers-680.webp 680w, /demos/servers.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
+            <img src="/demos/servers.png" srcset="/demos/servers-680.png 680w, /demos/servers.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate servers view: Fly.io process server, Context7 remote server, GitHub awaiting sign-in, and scoped connected agents" width="1360" height="850" loading="lazy" />
+          </picture>
         </figure>
       </article>
 
@@ -219,7 +225,10 @@
           </ul>
         </div>
         <figure class="shot reveal" data-parallax="0.05" data-title="Analytics">
-          <img src="/demos/analytics.png" alt="Hypergate analytics: 26 tool calls at 100 percent success across 4 clients, usage by server and a who's-calling breakdown" width="1360" height="850" loading="lazy" />
+          <picture>
+            <source type="image/webp" srcset="/demos/analytics-680.webp 680w, /demos/analytics.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
+            <img src="/demos/analytics.png" srcset="/demos/analytics-680.png 680w, /demos/analytics.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate analytics: 26 tool calls at 100 percent success across 4 clients, usage by server and a who's-calling breakdown" width="1360" height="850" loading="lazy" />
+          </picture>
         </figure>
       </article>
 
@@ -238,7 +247,10 @@
           </ul>
         </div>
         <figure class="shot reveal" data-parallax="0.05" data-title="Add a server">
-          <img src="/demos/catalog.png" alt="Hypergate catalog with official trust chips and one-click OAuth sign-in-and-add buttons for Context7, Supabase, Linear, and Figma" width="1360" height="850" loading="lazy" />
+          <picture>
+            <source type="image/webp" srcset="/demos/catalog-680.webp 680w, /demos/catalog.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
+            <img src="/demos/catalog.png" srcset="/demos/catalog-680.png 680w, /demos/catalog.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate catalog with official trust chips and one-click OAuth sign-in-and-add buttons for Context7, Supabase, Linear, and Figma" width="1360" height="850" loading="lazy" />
+          </picture>
         </figure>
       </article>
 
@@ -256,7 +268,10 @@
           </ul>
         </div>
         <figure class="shot reveal" data-parallax="0.05" data-title="Tool inspector">
-          <img src="/demos/tools.png" alt="Hypergate tool inspector showing Fly.io tools with typed parameters and required flags" width="1360" height="850" loading="lazy" />
+          <picture>
+            <source type="image/webp" srcset="/demos/tools-680.webp 680w, /demos/tools.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
+            <img src="/demos/tools.png" srcset="/demos/tools-680.png 680w, /demos/tools.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate tool inspector showing Fly.io tools with typed parameters and required flags" width="1360" height="850" loading="lazy" />
+          </picture>
         </figure>
       </article>
 
@@ -275,7 +290,10 @@
           </ul>
         </div>
         <figure class="shot reveal" data-parallax="0.05" data-title="Command-line tools">
-          <img src="/demos/clis.png" alt="Hypergate CLI detection: Node.js, npx, npm, Bun installed with versions and paths, Deno missing with an install hint" width="1360" height="850" loading="lazy" />
+          <picture>
+            <source type="image/webp" srcset="/demos/clis-680.webp 680w, /demos/clis.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
+            <img src="/demos/clis.png" srcset="/demos/clis-680.png 680w, /demos/clis.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate CLI detection: Node.js, npx, npm, Bun installed with versions and paths, Deno missing with an install hint" width="1360" height="850" loading="lazy" />
+          </picture>
         </figure>
       </article>
     </section>

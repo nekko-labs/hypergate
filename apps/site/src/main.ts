@@ -9,22 +9,28 @@ import { hydrateDownloadCtas } from './downloads';
 void hydrateDownloadCtas();
 
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const lowPower = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 760;
 
 /* ── Lenis smooth scroll ──────────────────────────────────── */
-const lenis = new Lenis({ autoRaf: false, lerp: 0.1 });
+const lenis = lowPower ? null : new Lenis({ autoRaf: false, lerp: 0.1 });
 let scrollVelocity = 0;
-lenis.on('scroll', (e: { velocity: number }) => {
+lenis?.on('scroll', (e: { velocity: number }) => {
   scrollVelocity = e.velocity;
-  applyParallax();
 });
 
-// anchor links scroll through lenis so easing stays consistent
+// Desktop anchors use Lenis; low-power devices keep native scrolling.
 for (const a of document.querySelectorAll<HTMLAnchorElement>('a[data-scroll]')) {
   a.addEventListener('click', (ev) => {
     const href = a.getAttribute('href');
     if (!href?.startsWith('#')) return;
     ev.preventDefault();
-    lenis.scrollTo(href === '#top' ? 0 : href, { offset: -20, duration: 1.4 });
+    if (lowPower) {
+      const target = href === '#top' ? null : document.querySelector<HTMLElement>(href);
+      const top = target ? target.getBoundingClientRect().top + window.scrollY - 20 : 0;
+      window.scrollTo({ top: Math.max(0, top), behavior: reduced ? 'auto' : 'smooth' });
+    } else {
+      lenis?.scrollTo(href === '#top' ? 0 : href, { offset: -20, duration: 1.4 });
+    }
   });
 }
 
@@ -32,6 +38,15 @@ for (const a of document.querySelectorAll<HTMLAnchorElement>('a[data-scroll]')) 
 const nav = document.getElementById('nav')!;
 const onScrollNav = () => nav.classList.toggle('scrolled', window.scrollY > 24);
 onScrollNav();
+let navFrameId: number | undefined;
+function scheduleScrollNav() {
+  if (navFrameId !== undefined) return;
+  navFrameId = requestAnimationFrame(() => {
+    navFrameId = undefined;
+    onScrollNav();
+  });
+}
+if (lowPower) window.addEventListener('scroll', scheduleScrollNav, { passive: true });
 
 /* ── reveal on enter ──────────────────────────────────────── */
 for (const el of document.querySelectorAll<HTMLElement>('.reveal, .fly')) {
@@ -68,14 +83,31 @@ for (const el of document.querySelectorAll('.reveal')) io.observe(el);
 
 /* ── screenshot parallax ──────────────────────────────────── */
 const parallaxEls = [...document.querySelectorAll<HTMLElement>('[data-parallax]')];
-function applyParallax() {
-  if (reduced) return;
+const parallaxState = parallaxEls.map((el) => ({
+  el,
+  factor: Number(el.dataset.parallax ?? 0),
+  top: 0,
+  height: 0,
+}));
+
+function cacheParallax() {
+  if (lowPower) return;
+  const scrollY = window.scrollY;
+  for (const item of parallaxState) {
+    const rect = item.el.getBoundingClientRect();
+    item.top = rect.top + scrollY;
+    item.height = rect.height;
+  }
+  applyParallax(scrollY);
+  lastParallaxScrollY = scrollY;
+}
+
+function applyParallax(scrollY = window.scrollY) {
+  if (reduced || lowPower) return;
   const vh = window.innerHeight;
-  for (const el of parallaxEls) {
-    const f = Number(el.dataset.parallax ?? 0);
-    const r = el.getBoundingClientRect();
-    const mid = r.top + r.height / 2 - vh / 2;
-    el.style.transform = `translateY(${(-mid * f).toFixed(1)}px)`;
+  for (const item of parallaxState) {
+    const mid = item.top + item.height / 2 - scrollY - vh / 2;
+    item.el.style.transform = `translateY(${(-mid * item.factor).toFixed(1)}px)`;
   }
 }
 
@@ -86,11 +118,11 @@ type Star = { x: number; y: number; r: number; tw: number; ph: number; drift: nu
 let stars: Star[] = [];
 
 function seedStars() {
-  const dpr = Math.min(window.devicePixelRatio, 2);
+  const dpr = Math.min(window.devicePixelRatio, lowPower ? 1 : 1.5);
   starCanvas.width = innerWidth * dpr;
   starCanvas.height = innerHeight * dpr;
   sCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const n = Math.floor((innerWidth * innerHeight) / 6500);
+  const n = Math.floor((innerWidth * innerHeight) / (lowPower ? 9000 : 6500));
   stars = Array.from({ length: n }, () => ({
     x: Math.random() * innerWidth,
     y: Math.random() * innerHeight,
@@ -146,7 +178,7 @@ float noise(vec2 p){
 }
 float fbm(vec2 p){
   float v = 0.0, a = 0.5;
-  for(int i = 0; i < 5; i++){
+  for(int i = 0; i < 4; i++){
     v += a * noise(p);
     p = p * 2.03 + vec2(17.0, 9.2);
     a *= 0.55;
@@ -245,10 +277,12 @@ function initGate(): boolean {
 
 function sizeGate() {
   if (!gl) return;
-  const dpr = Math.min(window.devicePixelRatio, 1.75);
   const rect = gateCanvas.getBoundingClientRect();
-  gateCanvas.width = rect.width * dpr;
-  gateCanvas.height = rect.height * dpr;
+  const dpr = Math.min(window.devicePixelRatio, 1.5);
+  const maxDimension = lowPower ? 512 : 1280;
+  const scale = Math.min(dpr, maxDimension / Math.max(rect.width, rect.height));
+  gateCanvas.width = Math.max(1, Math.round(rect.width * scale));
+  gateCanvas.height = Math.max(1, Math.round(rect.height * scale));
   gl.viewport(0, 0, gateCanvas.width, gateCanvas.height);
 }
 
@@ -259,6 +293,7 @@ if (!gateOk) {
     'radial-gradient(circle at 50% 46%, transparent 118px, rgba(109,94,252,.5) 128px, rgba(34,211,238,.45) 148px, transparent 170px)';
 }
 
+const staticGateTime = 1800;
 function drawGate(t: number) {
   if (!gl || !gateOk) return;
   gl.clearColor(0, 0, 0, 0);
@@ -287,20 +322,27 @@ canvasVisibility.observe(gateCanvas);
 canvasVisibility.observe(starCanvas);
 
 let frameId: number | undefined;
+let lastVisualFrame = -Infinity;
+let lastParallaxScrollY: number | undefined;
 function frame(t: number) {
   frameId = undefined;
   if (document.visibilityState === 'hidden') return;
-  lenis.raf(t);
+  lenis?.raf(t);
   onScrollNav();
-  if (!reduced) {
+  if (!reduced && window.scrollY !== lastParallaxScrollY) {
+    applyParallax();
+    lastParallaxScrollY = window.scrollY;
+  }
+  if (!reduced && !lowPower && t - lastVisualFrame >= 1000 / 30) {
     if (starsInView) drawStars(t);
     if (gateInView) drawGate(t);
+    lastVisualFrame = t;
   }
   frameId = requestAnimationFrame(frame);
 }
 
 function startFrame() {
-  if (document.visibilityState !== 'hidden' && frameId === undefined) {
+  if (!lowPower && document.visibilityState !== 'hidden' && frameId === undefined) {
     frameId = requestAnimationFrame(frame);
   }
 }
@@ -309,10 +351,11 @@ function sizeAll() {
   seedStars();
   sizeGate();
   drawStars(0);
-  drawGate(0);
-  applyParallax();
+  drawGate(lowPower ? staticGateTime : 0);
+  cacheParallax();
 }
 window.addEventListener('resize', sizeAll);
+for (const img of document.images) img.addEventListener('load', cacheParallax);
 sizeAll();
 startFrame();
 document.addEventListener('visibilitychange', () => {
