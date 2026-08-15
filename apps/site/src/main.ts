@@ -83,6 +83,7 @@ function cacheParallax() {
     item.height = rect.height;
   }
   applyParallax(scrollY);
+  lastParallaxScrollY = scrollY;
 }
 
 function applyParallax(scrollY = window.scrollY) {
@@ -304,12 +305,16 @@ canvasVisibility.observe(starCanvas);
 
 let frameId: number | undefined;
 let lastVisualFrame = -Infinity;
+let lastParallaxScrollY: number | undefined;
 function frame(t: number) {
   frameId = undefined;
   if (document.visibilityState === 'hidden') return;
   lenis.raf(t);
   onScrollNav();
-  if (!reduced) applyParallax();
+  if (!reduced && window.scrollY !== lastParallaxScrollY) {
+    applyParallax();
+    lastParallaxScrollY = window.scrollY;
+  }
   if (!reduced && !lowPower && t - lastVisualFrame >= 1000 / 30) {
     if (starsInView) drawStars(t);
     if (gateInView) drawGate(t);
