@@ -9,13 +9,13 @@ import { hydrateDownloadCtas } from './downloads';
 void hydrateDownloadCtas();
 
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const lowPower = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 760;
 
 /* ── Lenis smooth scroll ──────────────────────────────────── */
 const lenis = new Lenis({ autoRaf: false, lerp: 0.1 });
 let scrollVelocity = 0;
 lenis.on('scroll', (e: { velocity: number }) => {
   scrollVelocity = e.velocity;
-  applyParallax();
 });
 
 // anchor links scroll through lenis so easing stays consistent
@@ -68,14 +68,29 @@ for (const el of document.querySelectorAll('.reveal')) io.observe(el);
 
 /* ── screenshot parallax ──────────────────────────────────── */
 const parallaxEls = [...document.querySelectorAll<HTMLElement>('[data-parallax]')];
-function applyParallax() {
+const parallaxState = parallaxEls.map((el) => ({
+  el,
+  factor: Number(el.dataset.parallax ?? 0),
+  top: 0,
+  height: 0,
+}));
+
+function cacheParallax() {
+  const scrollY = window.scrollY;
+  for (const item of parallaxState) {
+    const rect = item.el.getBoundingClientRect();
+    item.top = rect.top + scrollY;
+    item.height = rect.height;
+  }
+  applyParallax(scrollY);
+}
+
+function applyParallax(scrollY = window.scrollY) {
   if (reduced) return;
   const vh = window.innerHeight;
-  for (const el of parallaxEls) {
-    const f = Number(el.dataset.parallax ?? 0);
-    const r = el.getBoundingClientRect();
-    const mid = r.top + r.height / 2 - vh / 2;
-    el.style.transform = `translateY(${(-mid * f).toFixed(1)}px)`;
+  for (const item of parallaxState) {
+    const mid = item.top + item.height / 2 - scrollY - vh / 2;
+    item.el.style.transform = `translateY(${(-mid * item.factor).toFixed(1)}px)`;
   }
 }
 
@@ -86,11 +101,11 @@ type Star = { x: number; y: number; r: number; tw: number; ph: number; drift: nu
 let stars: Star[] = [];
 
 function seedStars() {
-  const dpr = Math.min(window.devicePixelRatio, 2);
+  const dpr = Math.min(window.devicePixelRatio, lowPower ? 1 : 1.5);
   starCanvas.width = innerWidth * dpr;
   starCanvas.height = innerHeight * dpr;
   sCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const n = Math.floor((innerWidth * innerHeight) / 6500);
+  const n = Math.floor((innerWidth * innerHeight) / (lowPower ? 9000 : 6500));
   stars = Array.from({ length: n }, () => ({
     x: Math.random() * innerWidth,
     y: Math.random() * innerHeight,
@@ -129,7 +144,7 @@ function drawStars(t: number) {
 
 /* ── the gate: a WebGL liquid warp ring ───────────────────── */
 const gateCanvas = document.getElementById('gate') as HTMLCanvasElement;
-const gl = gateCanvas.getContext('webgl', { alpha: true, antialias: false });
+const gl = lowPower ? null : gateCanvas.getContext('webgl', { alpha: true, antialias: false });
 
 const FRAG = `
 precision highp float;
@@ -146,7 +161,7 @@ float noise(vec2 p){
 }
 float fbm(vec2 p){
   float v = 0.0, a = 0.5;
-  for(int i = 0; i < 5; i++){
+  for(int i = 0; i < 4; i++){
     v += a * noise(p);
     p = p * 2.03 + vec2(17.0, 9.2);
     a *= 0.55;
@@ -245,10 +260,11 @@ function initGate(): boolean {
 
 function sizeGate() {
   if (!gl) return;
-  const dpr = Math.min(window.devicePixelRatio, 1.75);
   const rect = gateCanvas.getBoundingClientRect();
-  gateCanvas.width = rect.width * dpr;
-  gateCanvas.height = rect.height * dpr;
+  const dpr = Math.min(window.devicePixelRatio, 1.5);
+  const scale = Math.min(dpr, 1280 / Math.max(rect.width, rect.height));
+  gateCanvas.width = Math.max(1, Math.round(rect.width * scale));
+  gateCanvas.height = Math.max(1, Math.round(rect.height * scale));
   gl.viewport(0, 0, gateCanvas.width, gateCanvas.height);
 }
 
@@ -287,14 +303,17 @@ canvasVisibility.observe(gateCanvas);
 canvasVisibility.observe(starCanvas);
 
 let frameId: number | undefined;
+let lastVisualFrame = -Infinity;
 function frame(t: number) {
   frameId = undefined;
   if (document.visibilityState === 'hidden') return;
   lenis.raf(t);
   onScrollNav();
-  if (!reduced) {
+  if (!reduced) applyParallax();
+  if (!reduced && !lowPower && t - lastVisualFrame >= 1000 / 30) {
     if (starsInView) drawStars(t);
     if (gateInView) drawGate(t);
+    lastVisualFrame = t;
   }
   frameId = requestAnimationFrame(frame);
 }
@@ -310,9 +329,10 @@ function sizeAll() {
   sizeGate();
   drawStars(0);
   drawGate(0);
-  applyParallax();
+  cacheParallax();
 }
 window.addEventListener('resize', sizeAll);
+for (const img of document.images) img.addEventListener('load', cacheParallax);
 sizeAll();
 startFrame();
 document.addEventListener('visibilitychange', () => {
