@@ -27,6 +27,12 @@
   <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/src/styles.css" />
+  <script>
+    // Keep this check aligned with isMobileBrowser() in src/downloads.ts.
+    if (navigator.userAgentData?.mobile || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      document.documentElement.dataset.mobileBrowser = '';
+    }
+  </script>
   <!-- Structured data: so search and answer engines describe Hypergate accurately -->
   <script type="application/ld+json">
   {

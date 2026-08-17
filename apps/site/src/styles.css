@@ -5,31 +5,61 @@
   font-family: "Inter";
   font-style: normal;
   font-weight: 400 700;
-  font-display: swap;
+  font-display: optional;
   src: url("/fonts/inter-latin.woff2") format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
     U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
     U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
+  font-family: "Inter Fallback";
+  font-style: normal;
+  font-weight: 400 700;
+  src: local("Arial"), local("Helvetica Neue"), local("Liberation Sans");
+  size-adjust: 106.58%;
+  ascent-override: 96.88%;
+  descent-override: 24.12%;
+  line-gap-override: 0%;
+}
+@font-face {
   font-family: "JetBrains Mono";
   font-style: normal;
   font-weight: 400 500;
-  font-display: swap;
+  font-display: optional;
   src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
     U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
     U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
+  font-family: "JetBrains Mono Fallback";
+  font-style: normal;
+  font-weight: 400 500;
+  src: local("Courier New"), local("Liberation Mono"), local("DejaVu Sans Mono");
+  size-adjust: 100%;
+  ascent-override: 102%;
+  descent-override: 30%;
+  line-gap-override: 0%;
+}
+@font-face {
   font-family: "Space Grotesk";
   font-style: normal;
   font-weight: 400 700;
-  font-display: swap;
+  font-display: optional;
   src: url("/fonts/space-grotesk-latin.woff2") format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
     U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
     U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Space Grotesk Fallback";
+  font-style: normal;
+  font-weight: 400 700;
+  src: local("Arial"), local("Helvetica Neue"), local("Liberation Sans");
+  size-adjust: 103.14%;
+  ascent-override: 98.4%;
+  descent-override: 29.2%;
+  line-gap-override: 0%;
 }
 
 :root {
@@ -44,14 +74,16 @@
   --cyan: #22d3ee;
   --ice: #a5f3fc;
   --grad: linear-gradient(100deg, #7c6bff 0%, #22d3ee 100%);
-  --font-d: "Space Grotesk", "Inter", system-ui, sans-serif;
-  --font-b: "Inter", system-ui, sans-serif;
-  --font-m: "JetBrains Mono", ui-monospace, monospace;
+  --font-d: "Space Grotesk", "Space Grotesk Fallback", "Inter", "Inter Fallback", system-ui, sans-serif;
+  --font-b: "Inter", "Inter Fallback", system-ui, sans-serif;
+  --font-m: "JetBrains Mono", "JetBrains Mono Fallback", ui-monospace, monospace;
   --nav-h: 64px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 [hidden] { display: none !important; }
+html[data-mobile-browser] [data-download-group],
+html[data-mobile-browser] [data-install-command] { display: none !important; }
 html { scroll-behavior: auto; }
 html.lenis, html.lenis body { height: auto; }
 .lenis.lenis-smooth { scroll-behavior: auto !important; }
