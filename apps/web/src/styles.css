@@ -192,27 +192,37 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 /* The one button with consequences gets the one colour that says so. */
 .win-btn-close:hover { background: #e0474c; color: #fff; }
 /* The gate mark: the hero shader's hollow ring, rebuilt for 28px. The conic
-   gradient moves colour around an open portal instead of filling its center. */
+   gradient moves colour around an open portal instead of filling its center, and
+   the mask's alpha ramps let both edges fall off into light rather than ending on
+   a stroke — the shader has no outlines, so neither does this. */
+.gate-wrap { position: relative; width: 28px; height: 28px; flex: none; display: block; }
+/* The glow the ring throws onto the space around it. Outside the mark's mask, so
+   it stays a soft wash instead of being cut to the annulus. */
+.gate-halo {
+  position: absolute; inset: -4px; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(109, 94, 252, 0) 46%, rgba(109, 94, 252, .34) 68%, rgba(34, 211, 238, .15) 84%, rgba(34, 211, 238, 0) 100%);
+}
 .gate-mark {
-  width: 28px; height: 28px; flex: none; display: block; border-radius: 50%;
-  position: relative;
-  background: conic-gradient(from 0turn, #6d5efc, #22d3ee 28%, #a5f3fc 44%, #22d3ee 62%, #6d5efc 100%);
-  -webkit-mask: radial-gradient(closest-side, transparent 56%, #000 64%);
-  mask: radial-gradient(closest-side, transparent 56%, #000 64%);
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--violet, #6d5efc) 52%, transparent));
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 0turn, #6d5efc, #22d3ee 24%, #a5f3fc 40%, #22d3ee 56%, #7c6bff 78%, #6d5efc 100%);
+  -webkit-mask: radial-gradient(closest-side, transparent 36%, rgba(0, 0, 0, .5) 50%, #000 66%, rgba(0, 0, 0, .34) 84%, transparent 100%);
+  mask: radial-gradient(closest-side, transparent 36%, rgba(0, 0, 0, .5) 50%, #000 66%, rgba(0, 0, 0, .34) 84%, transparent 100%);
 }
+/* An ice bloom drifting the other way, slowly enough to read as light moving
+   around the gate rather than as a shape spinning. The parent's mask shapes it,
+   so it needs no geometry of its own. */
 .gate-mark::after {
-  content: ''; position: absolute; inset: 2px; border-radius: 50%;
-  border: 2px solid #d8fbff; border-left-color: transparent; border-bottom-color: transparent;
-  transform: rotate(-32deg); opacity: .72;
-  -webkit-mask: radial-gradient(closest-side, transparent 56%, #000 64%);
-  mask: radial-gradient(closest-side, transparent 56%, #000 64%);
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from .5turn, rgba(165, 243, 252, 0) 0deg, rgba(165, 243, 252, .5) 80deg, rgba(124, 107, 255, .34) 170deg, rgba(165, 243, 252, 0) 300deg);
 }
-.gate-ring { animation: gate-spin 7s linear infinite; }
+/* Composited transforms on two cached layers: no repaints, no main-thread work,
+   which is what earns an animation that never stops. */
+.gate-ring { animation: gate-spin 16s linear infinite; will-change: transform; }
+.gate-ring::after { animation: gate-spin 27s linear infinite reverse; will-change: transform; }
 @keyframes gate-spin { to { transform: rotate(1turn); } }
 /* A mark that spins forever is exactly the kind of thing this setting is for. */
 @media (prefers-reduced-motion: reduce) {
-  .gate-ring { animation: none; }
+  .gate-ring, .gate-ring::after { animation: none; }
   .view.servers-view { scroll-behavior: auto; }
 }
 .wordmark { font-weight: 700; font-size: 15.5px; letter-spacing: -0.3px; }
