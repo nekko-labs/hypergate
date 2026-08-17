@@ -88,10 +88,11 @@ hardened-runtime startup can fail while V8 reserves its code region. The Rust
 `hypergate` shell is signed with the tighter default entitlements because it
 does not JIT. The source plist is
 `packaging/installers/macos/hypergate-daemon.entitlements.plist`; the
-post-signing smoke test runs the daemon from the mounted DMG and checks both
-entitlements before probing `/health`. It then validates the ticket and asks
-`codesign` and Gatekeeper to assess the finished disk image. It needs these
-secrets:
+post-signing smoke test mounts the shipped DMG, verifies the app's complete
+resource seal with strict deep code-signing checks, checks both daemon
+entitlements, asks Gatekeeper to assess the app, and probes `/health`. The
+workflow also validates the stapled ticket and assesses the finished disk
+image. It needs these secrets:
 
 | Secret | What it is |
 | --- | --- |

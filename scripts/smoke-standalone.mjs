@@ -29,6 +29,7 @@ const DIR = mkdtempSync(join(tmpdir(), 'hypergate-standalone-'));
 const ok = (m) => console.log(`✓ ${m}`);
 let daemon;
 let dmgMount;
+let appPath;
 let daemonPath = STANDALONE_DAEMON;
 let shellPath = join(ROOT, 'dist-standalone', `hypergate${EXE}`);
 let macEntitlementsChecked = false;
@@ -41,8 +42,11 @@ const fail = async (m) => {
 
 function detachDmg() {
   if (!dmgMount) return;
-  try { spawnSync('hdiutil', ['detach', dmgMount], { stdio: 'ignore' }); } catch {}
-  rmSync(dmgMount, { recursive: true, force: true });
+  const detached = spawnSync('hdiutil', ['detach', dmgMount], { stdio: 'ignore' });
+  if (detached.status !== 0) spawnSync('hdiutil', ['detach', '-force', dmgMount], { stdio: 'ignore' });
+  if (dmgMount.startsWith(tmpdir())) {
+    try { rmSync(dmgMount, { recursive: true, force: true }); } catch {}
+  }
   dmgMount = undefined;
 }
 
@@ -79,17 +83,80 @@ async function prepareDaemon() {
       await fail(`HYPERGATE_MACOS_DMG does not exist: ${dmg}`);
       return;
     }
-    dmgMount = mkdtempSync(join(tmpdir(), 'hypergate-standalone-dmg-'));
-    const mount = spawnSync('hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', dmgMount, dmg], {
+    const mount = spawnSync('hdiutil', ['attach', '-nobrowse', '-readonly', dmg], {
       stdio: 'pipe',
       encoding: 'utf8',
     });
-    if (mount.status !== 0) {
-      await fail(`could not mount macOS dmg: ${mount.stderr ?? mount.stdout ?? 'unknown error'}`);
+    const mountLine = (mount.stdout ?? '').split('\n').find((line) => line.includes('/Volumes/'));
+    dmgMount = mountLine?.split('\t').at(-1)?.trim();
+    if (mount.status !== 0 || !dmgMount) {
+      await fail(`could not mount macOS dmg: ${mount.stderr || mount.stdout || 'unknown error'}`);
       return;
     }
-    daemonPath = join(dmgMount, 'Hypergate.app', 'Contents', 'MacOS', 'hypergated');
-    shellPath = join(dmgMount, 'Hypergate.app', 'Contents', 'MacOS', 'hypergate');
+    appPath = join(dmgMount, 'Hypergate.app');
+    daemonPath = join(appPath, 'Contents', 'MacOS', 'hypergated');
+    shellPath = join(appPath, 'Contents', 'MacOS', 'hypergate');
+    const seal = spawnSync('codesign', ['--verify', '--deep', '--strict', '--verbose=4', appPath], {
+      encoding: 'utf8',
+    });
+    if (seal.status !== 0) {
+      await fail(`macOS app bundle signature is invalid: ${seal.stderr ?? seal.stdout ?? 'unknown error'}`);
+      return;
+    }
+    ok('macOS app bundle has a valid strict code-signing seal');
+    const background = join(appPath, 'Contents', 'Resources', 'dmg-background.png');
+    const store = join(dmgMount, '.DS_Store');
+    if (!existsSync(background) || !existsSync(store)) {
+      await fail('macOS dmg is missing its background or Finder layout');
+      return;
+    }
+    ok('macOS dmg contains its branded background and Finder layout');
+    const layout = spawnSync('osascript', ['-', `Hypergate ${VERSION}`], {
+      input: `on run argv
+  set volumeName to item 1 of argv
+  tell application "Finder"
+    set dmgDisk to disk volumeName
+    tell dmgDisk
+      open
+      delay 1
+      set dmgWindow to container window
+      set windowBounds to bounds of dmgWindow
+      set windowWidth to (item 3 of windowBounds) - (item 1 of windowBounds)
+      set windowHeight to (item 4 of windowBounds) - (item 2 of windowBounds)
+      set summary to (windowWidth as text) & "," & (windowHeight as text) & "," & ((toolbar visible of dmgWindow) as text) & "," & ((statusbar visible of dmgWindow) as text) & "," & ((pathbar visible of dmgWindow) as text) & "," & ((sidebar width of dmgWindow) as text) & "," & ((current view of dmgWindow is icon view) as text)
+      close dmgWindow
+      return summary
+    end tell
+  end tell
+end run`,
+      encoding: 'utf8',
+    });
+    const [width, height, toolbar, statusbar, pathbar, sidebar, iconView] = (layout.stdout ?? '').trim().split(',');
+    if (
+      layout.status !== 0 ||
+      width !== '660' ||
+      Number(height) < 400 ||
+      Number(height) > 440 ||
+      toolbar !== 'false' ||
+      statusbar !== 'false' ||
+      pathbar !== 'false' ||
+      sidebar !== '0' ||
+      iconView !== 'true'
+    ) {
+      await fail(`macOS dmg Finder layout is wrong: ${layout.stderr || layout.stdout || 'no layout result'}`);
+      return;
+    }
+    ok(`macOS dmg opens at ${width}×${height} with Finder chrome hidden`);
+    if (process.env.HYPERGATE_MACOS_GATEKEEPER === '1') {
+      const assessment = spawnSync('spctl', ['--assess', '--type', 'execute', '--verbose=4', appPath], {
+        encoding: 'utf8',
+      });
+      if (assessment.status !== 0) {
+        await fail(`Gatekeeper rejected the macOS app: ${assessment.stderr ?? assessment.stdout ?? 'unknown error'}`);
+        return;
+      }
+      ok('Gatekeeper accepts the macOS app');
+    }
   }
   if (!existsSync(daemonPath)) {
     await fail(`${daemonPath} is missing, so run \`npm run build:standalone\` first`);

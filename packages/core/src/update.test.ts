@@ -83,7 +83,7 @@ describe('updatePlan', () => {
     expect(updatePlan('npm', undefined, 'linux').command).toBe('npm install -g hypergated@latest');
   });
 
-  it('refuses to auto-run an unsigned installer, and explains instead', () => {
+  it('keeps native installer updates manual, and explains how state survives replacement', () => {
     for (const platform of ['win32', 'darwin', 'linux']) {
       const plan = updatePlan('installer', '0.12.0', platform);
       expect(plan.canApply, platform).toBe(false);
@@ -91,7 +91,11 @@ describe('updatePlan', () => {
     }
     // Linux additionally needs root, so the command is the package manager's.
     expect(updatePlan('installer', '0.12.0', 'linux').command).toContain('apt install');
-    expect(updatePlan('installer', '0.12.0', 'darwin').note).toContain('.dmg');
+    const mac = updatePlan('installer', '0.12.0', 'darwin');
+    expect(mac.note).toContain('.dmg');
+    expect(mac.note).toContain('Quit Hypergate');
+    expect(mac.note).toContain('eject any older Hypergate disk image');
+    expect(mac.note).toContain('settings');
   });
 
   it('tells a checkout to pull, and an unplaceable install nothing but the truth', () => {

@@ -326,6 +326,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "macOS" ] && [ -n "${MACOS_SIGNING_CERTS_P12:-}" ]; then
             export HYPERGATE_MACOS_DMG="$(ls dist-installers/*.dmg)"
+            export HYPERGATE_MACOS_GATEKEEPER=1
           fi
           npm run smoke:standalone
 
