@@ -754,10 +754,12 @@ fn startup_html(error: Option<&str>) -> String {
 <style>
 :root{{color-scheme:dark}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1117;color:#e7e9ee;font:15px/1.5 system-ui,sans-serif}}
 main{{width:min(440px,calc(100vw - 48px));text-align:center;padding:40px 28px;border:1px solid #2a3042;border-radius:20px;background:#171b27;box-shadow:0 18px 60px #05060a99}}
-svg{{width:116px;height:116px;margin-bottom:12px}}h1{{font-size:24px;margin:0 0 8px}}p{{color:#aab3c7;margin:8px 0}}.error{{color:#ff9aab}}button{{margin:18px 6px 0;padding:9px 15px;border:1px solid #5662a4;border-radius:9px;background:#252c51;color:#f2f4ff;cursor:pointer}}button:hover{{background:#303a6b}}code{{font-size:12px;overflow-wrap:anywhere;color:#8fddec}}
-</style></head><body><main>{svg}<h1>{title}</h1>{message}
+h1{{font-size:24px;margin:0 0 8px}}p{{color:#aab3c7;margin:8px 0}}.error{{color:#ff9aab}}button{{margin:18px 6px 0;padding:9px 15px;border:1px solid #5662a4;border-radius:9px;background:#252c51;color:#f2f4ff;cursor:pointer}}button:hover{{background:#303a6b}}code{{font-size:12px;overflow-wrap:anywhere;color:#8fddec}}
+{gate_css}
+</style></head><body><main>{gate}<h1>{title}</h1>{message}
 {failure_details}</main></body></html>"#,
-        svg = icon::svg(),
+        gate_css = GATE_CSS,
+        gate = gate_markup(error.is_some()),
         title = if error.is_some() {
             "Hypergate did not start"
         } else {
@@ -765,6 +767,38 @@ svg{{width:116px;height:116px;margin-bottom:12px}}h1{{font-size:24px;margin:0 0 
         },
         message = message,
         failure_details = failure_details,
+    )
+}
+
+/// The warp gate as three stacked gradients: a colour sweep, a slower ice bloom
+/// drifting the other way, and a static halo that breathes.
+///
+/// The site draws this ring in a WebGL shader; a startup window that exists
+/// because the machine is already busy launching a daemon cannot justify a GL
+/// context, so the softness comes from mask alpha ramps (painted once, cached by
+/// the compositor) and the motion from `transform` and `opacity` alone. Both are
+/// composited properties, so the animation costs no repaints and no main-thread
+/// work — it keeps running at a steady frame while the daemon boots.
+const GATE_CSS: &str = "\
+.gate{position:relative;width:132px;height:132px;margin:0 auto 14px}\
+.gate span{position:absolute;inset:0;border-radius:50%}\
+.gate .ring,.gate .bloom{will-change:transform;\
+-webkit-mask:radial-gradient(closest-side,transparent 38%,rgba(0,0,0,.5) 50%,#000 64%,rgba(0,0,0,.34) 84%,transparent 100%);\
+mask:radial-gradient(closest-side,transparent 38%,rgba(0,0,0,.5) 50%,#000 64%,rgba(0,0,0,.34) 84%,transparent 100%)}\
+.gate .ring{background:conic-gradient(from 0turn,#6d5efc,#22d3ee 24%,#a5f3fc 40%,#22d3ee 56%,#7c6bff 78%,#6d5efc 100%);animation:gate-spin 16s linear infinite}\
+.gate .bloom{background:conic-gradient(from .5turn,rgba(165,243,252,0) 0deg,rgba(165,243,252,.5) 80deg,rgba(124,107,255,.34) 170deg,rgba(165,243,252,0) 300deg);opacity:.8;animation:gate-spin 27s linear infinite reverse}\
+.gate .halo{background:radial-gradient(closest-side,rgba(109,94,252,0) 52%,rgba(109,94,252,.3) 70%,rgba(34,211,238,.16) 84%,rgba(34,211,238,0) 100%);animation:gate-breathe 7s ease-in-out infinite alternate}\
+@keyframes gate-spin{to{transform:rotate(1turn)}}\
+@keyframes gate-breathe{from{opacity:.62}to{opacity:1}}\
+.gate.still span{animation:none}\
+@media (prefers-reduced-motion:reduce){.gate span{animation:none}}";
+
+/// The gate's elements. `still` for the failure state: a loader that keeps
+/// turning after the thing it was waiting for gave up is a lie.
+fn gate_markup(still: bool) -> String {
+    format!(
+        "<div class=\"gate{}\" aria-hidden=\"true\"><span class=\"halo\"></span><span class=\"bloom\"></span><span class=\"ring\"></span></div>",
+        if still { " still" } else { "" }
     )
 }
 
@@ -787,4 +821,31 @@ fn ask_running_instance_to_open() -> bool {
         return false;
     };
     stream.write_all(b"open\n").is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_startup_gate_turns_while_waiting() {
+        let html = startup_html(None);
+        assert!(html.contains("Starting Hypergate"));
+        assert!(html.contains("class=\"gate\""), "the waiting gate must not be stilled");
+        assert!(html.contains("@keyframes gate-spin"), "the gate must carry its animation");
+    }
+
+    #[test]
+    fn a_failed_start_stops_the_gate() {
+        let html = startup_html(Some("Hypergate could not start the local daemon."));
+        assert!(html.contains("class=\"gate still\""));
+        assert!(html.contains("Hypergate did not start"));
+    }
+
+    #[test]
+    fn the_error_message_is_escaped() {
+        let html = startup_html(Some("<script>alert(1)</script>"));
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("&lt;script&gt;"));
+    }
 }

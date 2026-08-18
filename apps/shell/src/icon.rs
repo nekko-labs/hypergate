@@ -42,9 +42,10 @@ fn sample(x: f32, y: f32, size: u32, coloured: bool) -> ([f32; 3], f32) {
     let (dx, dy) = (x - c, y - c);
     let r = (dx * dx + dy * dy).sqrt() / k;
 
-    // The ring: an annulus with both edges feathered. Feather widths shrink with
-    // scale so a large icon gets a crisp edge instead of a blurry one.
-    let feather = 1.2 / k.max(1.0);
+    // The ring: an annulus with both edges feathered. The feather is stated in
+    // grid units and widens with scale, so a 16px tray slot keeps its definition
+    // while a 256px render softens into light the way the site's shader ring does.
+    let feather = 1.0 + 1.4 * (1.0 - 1.0 / k.max(1.0));
     let ring = smoothstep(8.8, 8.8 + feather, r) * (1.0 - smoothstep(14.2 - feather, 14.2, r));
 
     // Several violet-dominant bands sweep around the ring, echoing the site's
@@ -67,26 +68,25 @@ fn sample(x: f32, y: f32, size: u32, coloured: bool) -> ([f32; 3], f32) {
             CYAN[2] + (ICE[2] - CYAN[2]) * mix,
         ]
     };
-    // A short ice-white hot arc adds the premium highlight without painting
-    // anything into the portal opening.
-    let hot_arc = ((angle + 0.55).cos().max(0.0)).powf(18.0) * ring;
-    ring_rgb[0] += (255.0 - ring_rgb[0]) * hot_arc * 0.32;
-    ring_rgb[1] += (255.0 - ring_rgb[1]) * hot_arc * 0.32;
-    ring_rgb[2] += (255.0 - ring_rgb[2]) * hot_arc * 0.32;
-    if ring <= 0.0 {
-        if coloured && r > 14.2 {
-            let halo = (1.0 - smoothstep(14.2, 15.0, r)) * 0.40;
-            if halo > 0.0 {
-                return ([HALO[0] * halo, HALO[1] * halo, HALO[2] * halo], halo);
-            }
-        }
-        return ([0.0; 3], 0.0);
-    }
-    let halo = if coloured && r > 14.2 {
-        (1.0 - smoothstep(14.2, 15.0, r)) * 0.40
+    // A broad ice bloom on the crests, mixed within the brand ramp. A short white
+    // arc laid over the ring read as a grey scratch across the top of the mark.
+    let bloom = crest.powf(1.6) * ring * 0.22;
+    ring_rgb[0] += (ICE[0] - ring_rgb[0]) * bloom;
+    ring_rgb[1] += (ICE[1] - ring_rgb[1]) * bloom;
+    ring_rgb[2] += (ICE[2] - ring_rgb[2]) * bloom;
+    // The halo starts under the ring's outer edge rather than after it, so the two
+    // blend into one soft falloff instead of meeting at a visible boundary.
+    let halo = if coloured {
+        (1.0 - smoothstep(13.6, 14.9, r)) * smoothstep(12.6, 13.6, r) * 0.42
     } else {
         0.0
     };
+    if ring <= 0.0 {
+        if halo > 0.0 {
+            return ([HALO[0] * halo, HALO[1] * halo, HALO[2] * halo], halo);
+        }
+        return ([0.0; 3], 0.0);
+    }
     let coverage = (ring + halo).min(1.0);
     (
         [
@@ -240,8 +240,8 @@ pub fn ico_bytes() -> Vec<u8> {
 /// stay beside the raster renderer above rather than drifting from it.
 pub fn svg() -> String {
     let hex = |c: [f32; 3]| format!("#{:02x}{:02x}{:02x}", c[0] as u8, c[1] as u8, c[2] as u8);
-    // Ring radius and stroke width restated from `sample`'s 32px design grid:
-    // centreline at (8.8 + 14.2) / 2, stroke spanning the annulus.
+    // The mask's stops restate `sample`'s annulus from the 32px design grid as
+    // fractions of the 16px mask radius: 8.8 → .55, 14.2 → .89.
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
   <defs>
@@ -255,19 +255,26 @@ pub fn svg() -> String {
       <stop offset=".9" stop-color="{violet}"/>
       <stop offset="1" stop-color="{violet}"/>
     </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation=".7"/>
-    </filter>
+    <!-- Alpha by radius: both edges of the ring ramp off instead of stopping at a
+         stroke boundary, which is what makes the site's shader ring read as light
+         rather than as a drawn outline. -->
+    <radialGradient id="feather">
+      <stop offset=".42" stop-color="#fff" stop-opacity="0"/>
+      <stop offset=".55" stop-color="#fff" stop-opacity=".85"/>
+      <stop offset=".72" stop-color="#fff" stop-opacity=".95"/>
+      <stop offset=".89" stop-color="#fff" stop-opacity=".34"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="ring" maskContentUnits="userSpaceOnUse">
+      <circle cx="16" cy="16" r="16" fill="url(#feather)"/>
+    </mask>
   </defs>
-  <circle cx="16" cy="16" r="11.5" fill="none" stroke="{halo}" stroke-width="2.2" opacity=".4" filter="url(#glow)"/>
-  <circle cx="16" cy="16" r="11.5" fill="none" stroke="url(#gate)" stroke-width="5.4"/>
-  <path d="M 8.1 9.3 A 11.5 11.5 0 0 1 22.2 7.8" fill="none" stroke="#d8fbff" stroke-width="1.9" stroke-linecap="round" opacity=".7"/>
+  <circle cx="16" cy="16" r="16" fill="url(#gate)" mask="url(#ring)"/>
 </svg>
 "##,
         violet = hex(VIOLET),
         cyan = hex(CYAN),
         ice = hex(ICE),
-        halo = hex(HALO),
     )
 }
 
@@ -409,12 +416,16 @@ mod tests {
         assert!(svg.contains("viewBox=\"0 0 32 32\""));
         assert!(svg.contains("#6d5efc"), "violet stop missing");
         assert!(svg.contains("#22d3ee"), "cyan stop missing");
-        assert!(svg.contains("r=\"11.5\""), "SVG must use the design-grid ring radius");
+        assert!(svg.contains("fill=\"url(#gate)\""), "SVG must use the banded gradient");
         assert!(
-            svg.contains("stroke=\"url(#gate)\""),
-            "SVG must use the banded stroke gradient"
+            svg.contains("mask=\"url(#ring)\""),
+            "SVG must feather the annulus through the radial mask"
         );
         assert!(!svg.contains("#baf6ff"), "the hollow gate must not render a core");
+        assert!(
+            !svg.contains("#d8fbff"),
+            "the white hot arc read as a grey line across the top of the mark"
+        );
         assert!(svg.contains("</svg>"));
     }
 

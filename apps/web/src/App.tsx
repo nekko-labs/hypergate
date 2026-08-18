@@ -895,14 +895,22 @@ function NavIcon({ view }: { view: View }) {
  * The marketing site draws this as a liquid ring in a WebGL shader; a 28px
  * mark in a topbar cannot justify a GL context, so it is rebuilt out of the
  * thing that actually carries the look: a hollow conic sweep from violet
- * through cyan to ice. The masked conic gradient lets the *colour* travel
- * around the portal instead of rotating a static shape.
+ * through cyan to ice, its edges feathered by the mask so the ring falls off
+ * into light instead of ending on an outline. The masked conic gradient lets the
+ * *colour* travel around the portal instead of rotating a static shape, and a
+ * second sweep drifts the other way behind it as the bloom. The halo sits
+ * outside the mask, where the glow can spill.
  *
  * The animation stops under `prefers-reduced-motion` (styles.css), which is
  * the same courtesy the site's shader extends by freezing its clock.
  */
 function GateMark() {
-  return <span className="gate-mark gate-ring" aria-hidden="true" />;
+  return (
+    <span className="gate-wrap" aria-hidden="true">
+      <span className="gate-halo" />
+      <span className="gate-mark gate-ring" />
+    </span>
+  );
 }
 
 /** The official GitHub mark — the one footer link that needs no label. */

@@ -1,30 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Hypergate">
-  <!--
-    The gate, as the hero shader draws it: a violet-to-cyan ring swept round to
-    ice at its brightest point, with a halo bleeding past the stroke and a clear
-    opening through the middle. No entry streaks, since the ring alone is the mark.
-  -->
+  <!-- The gate is an open, luminous ring; its center is intentionally empty. -->
   <defs>
     <linearGradient id="hgRing" x1="0.08" y1="0.05" x2="0.92" y2="0.95">
-      <stop offset="0" stop-color="#6d5efc"/>
-      <stop offset="0.45" stop-color="#22d3ee"/>
-      <stop offset="0.72" stop-color="#a5f3fc"/>
+      <stop offset="0" stop-color="#7c6bff"/>
+      <stop offset="0.3" stop-color="#6d5efc"/>
+      <stop offset="0.6" stop-color="#22d3ee"/>
+      <stop offset="0.8" stop-color="#a5f3fc"/>
       <stop offset="1" stop-color="#6d5efc"/>
     </linearGradient>
-    <radialGradient id="hgHalo" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0.52" stop-color="#6d5efc" stop-opacity="0"/>
-      <stop offset="0.74" stop-color="#7c6bff" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    <!-- Alpha by radius. The hero shader's ring has no outline: it fades in and out
+         of the space around it, so the mark's edges ramp instead of ending on a
+         stroke, and the ring reads as light rather than as a drawn circle. -->
+    <radialGradient id="hgFeather">
+      <stop offset="0.46" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="0.58" stop-color="#fff" stop-opacity="0.5"/>
+      <stop offset="0.7" stop-color="#fff" stop-opacity="1"/>
+      <stop offset="0.86" stop-color="#fff" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
     </radialGradient>
+    <!-- r=40 keeps the outer glow inside the tile, corners included. -->
+    <mask id="hgGate" maskContentUnits="userSpaceOnUse">
+      <circle cx="50" cy="50" r="40" fill="url(#hgFeather)"/>
+    </mask>
   </defs>
   <!-- deep space tile -->
   <rect x="4" y="4" width="92" height="92" rx="23" fill="#05060f"/>
-  <!-- the glow the ring throws onto the space around it -->
-  <circle cx="50" cy="50" r="44" fill="url(#hgHalo)"/>
-  <!-- the center stays open so the mark reads as a portal -->
-  <!-- the gate itself -->
-  <circle cx="50" cy="50" r="27" fill="none" stroke="url(#hgRing)" stroke-width="9.5"/>
-  <!-- the hot arc, where the shader folds violet through to ice -->
-  <path d="M 27.9 34.4 A 27 27 0 0 1 69.1 30.6" fill="none" stroke="#d8fbff"
-        stroke-width="4" stroke-linecap="round" opacity="0.62"/>
+  <circle cx="50" cy="50" r="40" fill="url(#hgRing)" mask="url(#hgGate)"/>
 </svg>
