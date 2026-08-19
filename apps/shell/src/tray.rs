@@ -832,7 +832,10 @@ mod tests {
         let html = startup_html(None);
         assert!(html.contains("Starting Hypergate"));
         assert!(html.contains("class=\"gate\""), "the waiting gate must not be stilled");
-        assert!(html.contains("@keyframes gate-spin"), "the gate must carry its animation");
+        assert!(
+            html.contains("@keyframes gate-spin"),
+            "the gate must carry its animation"
+        );
     }
 
     #[test]
