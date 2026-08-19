@@ -21,12 +21,10 @@ for (const literal of [
   '[124.0, 107.0, 255.0]',
   '8.8',
   '14.2',
-  '15.0',
-  'angle + 0.55',
-  'powf(18.0)',
+  '1.0 + 1.4 * (1.0 - 1.0 / k.max(1.0))',
   'powf(3.2)',
-  'hot_arc * 0.32',
-  '* 0.40',
+  'crest.powf(1.6) * ring * 0.22',
+  '(1.0 - smoothstep(13.6, 14.9, r)) * smoothstep(12.6, 13.6, r) * 0.42',
 ]) {
   if (!RUST.includes(literal)) {
     throw new Error(`ICNS renderer drift guard failed: icon.rs no longer contains ${literal}`);
@@ -48,7 +46,7 @@ const sample = (x, y, size) => {
   const dx = x - c;
   const dy = y - c;
   const r = Math.hypot(dx, dy) / k;
-  const feather = 1.2 / Math.max(k, 1);
+  const feather = 1 + 1.4 * (1 - 1 / Math.max(k, 1));
   const ring = smooth(8.8, 8.8 + feather, r) * (1 - smooth(14.2 - feather, 14.2, r));
   const angle = Math.atan2(dy, dx);
   const phase = 0.5 + 0.5 * Math.sin(angle * 3 + 0.28 * Math.sin(angle * 5));
@@ -56,15 +54,15 @@ const sample = (x, y, size) => {
   const rgb = crest < 0.68
     ? VIOLET.map((v, i) => v + (CYAN[i] - v) * (crest / 0.68))
     : CYAN.map((v, i) => v + (ICE[i] - v) * ((crest - 0.68) / 0.32) * 0.67);
-  const hotArc = Math.max(Math.cos(angle + 0.55), 0) ** 18 * ring;
-  const hot = rgb.map((v) => v + (255 - v) * hotArc * 0.32);
+  const bloom = crest ** 1.6 * ring * 0.22;
+  const lit = rgb.map((v, i) => v + (ICE[i] - v) * bloom);
+  const halo = (1 - smooth(13.6, 14.9, r)) * smooth(12.6, 13.6, r) * 0.42;
   if (ring <= 0) {
-    const halo = r > 14.2 ? (1 - smooth(14.2, 15.0, r)) * 0.4 : 0;
+    if (halo <= 0) return [[0, 0, 0], 0];
     return [HALO.map((v) => v * halo), halo];
   }
-  const halo = r > 14.2 ? (1 - smooth(14.2, 15.0, r)) * 0.4 : 0;
   const coverage = Math.min(1, ring + halo);
-  return [[hot[0] * ring + HALO[0] * halo, hot[1] * ring + HALO[1] * halo, hot[2] * ring + HALO[2] * halo], coverage];
+  return [[lit[0] * ring + HALO[0] * halo, lit[1] * ring + HALO[1] * halo, lit[2] * ring + HALO[2] * halo], coverage];
 };
 
 const crcTable = (() => {
