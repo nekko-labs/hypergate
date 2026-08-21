@@ -767,6 +767,66 @@ pre.logs { max-height: 220px; }
 .conn-result.err { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent); }
 .conn-result .snippet { max-height: 160px; }
 
+/* ── credential vault ───────────────────────────────────────────────────── */
+/* The provider search. Full-width and first, because with ~50 guides typing is
+   the fast path and browsing the categories is the fallback, not the reverse. */
+.cred-search { width: 100%; margin-bottom: 10px; }
+
+/* Categories, collapsed by default: the point of grouping fifty providers is
+   that the panel opens as eight readable lines rather than a wall. */
+.cred-cats { display: flex; flex-direction: column; gap: 2px; }
+.cred-cat-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px;
+  border: 0; border-radius: 10px; background: none; color: var(--ink); cursor: pointer;
+  font: inherit; text-align: left; transition: background .12s ease;
+}
+.cred-cat-head:hover { background: var(--card-2); }
+.cred-cat.open > .cred-cat-head { background: var(--card-2); }
+.cred-cat > .list { padding: 2px 0 8px 22px; }
+
+/* "Add your own", deliberately not a row in the list above it.
+   The dashed border is the whole point: it reads as an outline where a provider
+   would be rather than as another provider, so the escape hatch looks like an
+   escape hatch. */
+.cred-own {
+  margin-top: 14px; padding: 13px 14px; border-radius: 12px;
+  border: 1px dashed color-mix(in srgb, var(--ink-3) 42%, transparent);
+  background: color-mix(in srgb, var(--card-2) 60%, transparent);
+  transition: border-color .14s ease, background .14s ease;
+}
+.cred-own:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.cred-own.open {
+  border-style: solid; border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
+  background: var(--card-2);
+}
+
+/* Pending access requests. Accent-tinted because it is the one thing on this
+   page that someone else is waiting on. */
+.cred-requests {
+  margin-bottom: 12px; padding: 12px 14px; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--paper-2));
+}
+.cred-requests > .list > .list-row { border: 0; }
+
+/* Where a deep link landed. A brief ring, not a permanent state: it answers
+   "which of these did the agent mean" and then gets out of the way. */
+.cred-focus { animation: cred-focus-ring 6s ease-out forwards; border-radius: 12px; }
+@keyframes cred-focus-ring {
+  0%, 55% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cred-focus { animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+}
+
+/* The section-nav count. Those buttons are not flex containers, so the nav's
+   own `margin-left: auto` rule does not apply here. */
+.section-nav .n-badge {
+  margin-left: 6px; padding: 0 5px; border-radius: 999px; font-size: 10px; font-weight: 700;
+  color: var(--paper); background: var(--accent);
+}
+
 /* ── forms ──────────────────────────────────────────────────────────────── */
 input, select, textarea {
   background: var(--paper); border: 1px solid var(--line); color: var(--ink);

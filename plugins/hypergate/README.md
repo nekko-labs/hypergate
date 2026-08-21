@@ -33,6 +33,28 @@ is yours to set, per agent, in the manager at <http://localhost:7777> under
 **Connected agents**. Turning a server off there hides its tools from Claude Code
 on the very next request.
 
+## Keys, without asking you to paste one
+
+Hypergate also holds this machine's API keys and access tokens, and Claude Code can
+use them without a secret ever passing through the conversation. Every session is
+told so: the gateway advertises the vault when Claude Code connects.
+
+When a command needs a key, Claude Code calls `hypergate__credentials_list` to see
+what exists, then `hypergate__credential_env` to fetch one it has been granted and
+set it on the process that needs it (or runs the command through
+`hypergate run -- <command>`, which injects it).
+
+Keys are **deny-by-default**: a new agent gets none. When Claude Code needs one it
+has not been granted, it calls `hypergate__credential_request` with a short reason,
+which files a request in the manager and returns a link. Open the link, press
+**Approve**, and Claude Code's next attempt succeeds. Nothing is granted by the
+request itself, and every fetch, refusal and reveal shows up in Analytics.
+
+Claude Code can see the *names* of keys it has not been granted, so that it can ask
+for them by name. It never sees a value, or even the masked hint. Turn off **Agents
+can see credential names** in Settings if you would rather it saw only what you have
+already handed over.
+
 ## Requirements
 
 - Hypergate installed, with `hypergate` on your `PATH` (`npm i -g hypergated`, or

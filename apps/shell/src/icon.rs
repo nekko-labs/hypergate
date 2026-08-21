@@ -162,6 +162,13 @@ pub fn window_icon() -> Result<tao::window::Icon, String> {
         .map_err(|e| format!("could not build the window icon: {e}"))
 }
 
+#[cfg(target_os = "macos")]
+pub fn menu_icon() -> Result<muda::Icon, String> {
+    const MENU_SIZE: u32 = 128;
+    muda::Icon::from_rgba(rgba_at(MENU_SIZE, false), MENU_SIZE, MENU_SIZE)
+        .map_err(|e| format!("could not build the menu icon: {e}"))
+}
+
 /// Sizes a Windows `.ico` should carry: 16 for the Start Menu list, 32 for the
 /// desktop, 48 for large icons, 256 for Explorer's extra-large view.
 const ICO_SIZES: [u32; 4] = [16, 32, 48, 256];
@@ -355,6 +362,12 @@ mod tests {
                 "{size}px: gate opening should be transparent"
             );
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn builds_the_macos_menu_icon() {
+        assert!(menu_icon().is_ok());
     }
 
     #[test]

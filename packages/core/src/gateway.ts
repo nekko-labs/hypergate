@@ -29,6 +29,34 @@ export interface GatewayBuiltinTool {
 }
 
 /**
+ * What the gateway tells a connecting agent about itself, returned in the
+ * `initialize` result.
+ *
+ * This exists because tool descriptions were not enough. An agent that hits
+ * "flyctl: not logged in" has to already suspect that a local vault might hold
+ * that token before it thinks to look through fifty namespaced tools for one
+ * that could help; the ones that did not look asked the user to paste a key
+ * into the chat instead, which is the exact failure the vault was built to
+ * prevent. `instructions` is the one channel every harness reads regardless of
+ * how it treats tool metadata, so the fact that keys are available here belongs
+ * in it.
+ *
+ * Deliberately short. It earns its place in every context window by naming the
+ * three things an agent cannot infer from the tool list: that the keys are
+ * here, that asking the user to paste one is the wrong move, and that a refusal
+ * is a request rather than a wall.
+ */
+export const GATEWAY_INSTRUCTIONS = `Hypergate is a local gateway. Tools are namespaced "<server>__<tool>"; its own tools are under "hypergate__".
+
+This machine's API keys and access tokens live in Hypergate's credential vault. When a command or API call needs one:
+
+1. Call hypergate__credentials_list to see what exists. Rows with "allowed": true are yours to fetch.
+2. Call hypergate__credential_env with the id to get it as environment variables, then set those on the process that needs it (or run the command through "hypergate run -- <command>", which injects them for you).
+3. If a credential you need is not allowed, call hypergate__credential_request with the id and a short reason. That files a request with the user and returns a URL. Give the user that URL so they can approve it, then retry.
+
+Do not ask the user to paste a secret into this conversation, and do not ask them to re-authenticate a CLI by hand. Fetch the key, or request access to it.`;
+
+/**
  * Build the aggregating MCP gateway: one MCP server that fans out to every
  * ready managed server. Tools are namespaced `${serverId}__${tool}` and calls
  * are routed to the owning server's client. The caller connects the returned
@@ -39,7 +67,7 @@ export function createGateway(
   info: { name: string; version: string } = { name: 'hypergate-gateway', version: '0.1.0' },
   opts: { caller?: string; allowServer?: (serverId: string) => boolean; builtins?: GatewayBuiltinTool[] } = {},
 ): Server {
-  const server = new Server(info, { capabilities: { tools: {} } });
+  const server = new Server(info, { capabilities: { tools: {} }, instructions: GATEWAY_INSTRUCTIONS });
   const caller = opts.caller ?? 'unknown client';
   const builtins = opts.builtins ?? [];
   // Per-agent scoping: when provided, a server the caller isn't allowed to see

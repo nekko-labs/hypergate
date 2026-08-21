@@ -265,6 +265,14 @@ pub fn run(with_window: bool) -> Result<(), String> {
         event_loop.set_dock_visibility(false);
     }
 
+    // The application menu, which is how macOS delivers Cmd+V (see menu.rs).
+    // After the event loop, because that is what creates NSApp, and before any
+    // window exists so the first one already has working shortcuts. A failure
+    // costs the keyboard shortcuts and nothing else, so it is logged, not fatal.
+    if let Err(e) = crate::menu::install() {
+        crate::logging::line(format!("could not install the application menu: {e}"));
+    }
+
     // Forward muda's menu events into the loop so clicks are acted on at once.
     let menu_proxy = event_loop.create_proxy();
     MenuEvent::set_event_handler(Some(move |e: MenuEvent| {

@@ -16,8 +16,10 @@ import type {
   CliStatus,
   CliCatalogEntry,
   CliCheckResult,
+  AuthorizeCapability,
   CredentialGuideInfo,
   CredentialInfo,
+  CredentialRequest,
   OAuthAppInfo,
   ConnectShell,
   ConnectTargetStatus,
@@ -29,7 +31,14 @@ import type {
   InstallChannel,
   CloseAction,
 } from '@hypergate/shared';
-import { looksSecret, mergeCatalogSearch, registryConnections, resolveRegistryConnection } from '@hypergate/shared';
+import {
+  CREDENTIAL_CATEGORIES,
+  looksSecret,
+  mergeCatalogSearch,
+  registryConnections,
+  resolveRegistryConnection,
+  searchGuides,
+} from '@hypergate/shared';
 import { api } from './api';
 import { AdviceNote } from './components/AdviceNote';
 import { Dialog } from './components/Dialog';
@@ -401,6 +410,29 @@ export function App() {
     void api.clients().then(setAgents).catch(() => {});
   }, []);
 
+  // Pending credential requests, held here rather than in the Credentials
+  // section because the nav badge and the section have to agree, and because an
+  // agent can file one while the user is looking at a different page.
+  const [credRequests, setCredRequests] = useState<CredentialRequest[]>([]);
+  const refreshCredRequests = useCallback(() => {
+    void api.credentialRequests().then((r) => setCredRequests(r.requests)).catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshCredRequests();
+    // Polled, not pushed: the daemon has no channel to the page, and a request
+    // is only interesting on a human timescale. 10s is well inside the window
+    // where an agent is still waiting to retry.
+    const t = setInterval(refreshCredRequests, 10_000);
+    return () => clearInterval(t);
+  }, [refreshCredRequests]);
+
+  // The OS's answer about proving who is at the keyboard, which decides whether
+  // Reveal is offered at all. Fetched once: it cannot change while we run.
+  const [authorize, setAuthorize] = useState<AuthorizeCapability | undefined>();
+  useEffect(() => {
+    void api.settings().then((s) => setAuthorize(s.authorize)).catch(() => {});
+  }, []);
+
   // The whole update flow: state, the buttons' actions, and the polling that
   // watches a running one. Shared, so the topbar and Settings can't disagree.
   const updater = useUpdater(gateway);
@@ -614,6 +646,13 @@ export function App() {
                         onClick={() => scrollToSection(section.id)}
                       >
                         {section.label}
+                        {/* An agent is blocked on a key. This is the only way
+                            the user finds out while looking at another page. */}
+                        {section.id === 'credentials' && credRequests.length > 0 && (
+                          <span className="n-badge" title="Agents waiting for credential access">
+                            {credRequests.length}
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -765,7 +804,14 @@ export function App() {
                 </section>
 
                 <section id="credentials" className="dashboard-section">
-                  <CredentialsSection agents={agents} token={gateway?.token} onAgentsChange={refreshAgents} />
+                  <CredentialsSection
+                    agents={agents}
+                    token={gateway?.token}
+                    onAgentsChange={refreshAgents}
+                    authorize={authorize}
+                    requests={credRequests}
+                    onRequestsChange={refreshCredRequests}
+                  />
                 </section>
                 </>
               ) : view === 'analytics' ? (
@@ -1278,7 +1324,7 @@ function Caret({ open }: { open: boolean }) {
  * and for assistive tech; clicking the head is the mouse's shortcut to it.
  */
 function ExpandRow({
-  open, onToggle, label, head, sub, actions, children,
+  open, onToggle, label, head, sub, actions, className, children,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -1290,11 +1336,13 @@ function ExpandRow({
   sub?: ReactNode;
   /** The controls, kept out of the click target. */
   actions: ReactNode;
+  /** Extra classes on the row, e.g. a transient highlight from a deep link. */
+  className?: string;
   children: ReactNode;
 }) {
   const panelId = useId();
   return (
-    <div className={`list-row expandable ${open ? 'open' : ''}`}>
+    <div className={`list-row expandable ${open ? 'open' : ''} ${className ?? ''}`}>
       <div className="row-top" onClick={onToggle}>
         <div className="list-head between">
           <div className="row wrap-gap row-ident">
@@ -1625,11 +1673,16 @@ function ServerAgents({ server, agents, onChange }: { server: ServerStatus; agen
  * the API, so every row shows metadata + a masked hint. Rolling and deleting
  * live here; per-agent grants mirror the per-server switches.
  */
-function CredentialsSection({ agents, token, onAgentsChange }: {
+function CredentialsSection({ agents, token, onAgentsChange, authorize, requests, onRequestsChange }: {
   agents: AgentClientInfo[];
   /** Master gateway token — required for every vault mutation. */
   token?: string;
   onAgentsChange: () => void;
+  /** What this machine can do about proving who is at the keyboard. */
+  authorize?: AuthorizeCapability;
+  /** Pending access requests, polled by the parent so the nav badge agrees. */
+  requests: CredentialRequest[];
+  onRequestsChange: () => void;
 }) {
   const [creds, setCreds] = useState<CredentialInfo[] | null>(null);
   const [guides, setGuides] = useState<CredentialGuideInfo[]>([]);
@@ -1639,6 +1692,11 @@ function CredentialsSection({ agents, token, onAgentsChange }: {
     void api.credentialGuides().then(setGuides).catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // The credential a deep link asked us to focus. An agent's refusal hands the
+  // user a URL, and landing on the page with fifty rows and no idea which one
+  // was meant would waste the whole mechanism.
+  const focusId = useCredentialDeepLink();
 
   return (
     <>
@@ -1659,6 +1717,9 @@ function CredentialsSection({ agents, token, onAgentsChange }: {
         gateway's <span className="mono">hypergate__credential_env</span> tool or <span className="mono">hypergate run</span>,
         instead of stopping to ask you to sign in.
       </p>
+      {requests.length > 0 && (
+        <PendingRequests requests={requests} token={token} onChange={() => { onRequestsChange(); load(); onAgentsChange(); }} />
+      )}
       {adding && <AddCredentialPanel guides={guides} creds={creds ?? []} token={token} onAdded={() => { setAdding(false); load(); }} />}
       <div className="list">
         {!creds ? (
@@ -1671,11 +1732,137 @@ function CredentialsSection({ agents, token, onAgentsChange }: {
           )
         ) : (
           creds.map((c) => (
-            <CredentialRow key={c.id} c={c} guides={guides} agents={agents} token={token} onChange={() => { load(); onAgentsChange(); }} />
+            <CredentialRow
+              key={c.id}
+              c={c}
+              guides={guides}
+              agents={agents}
+              token={token}
+              authorize={authorize}
+              highlight={focusId === c.id}
+              onChange={() => { load(); onAgentsChange(); }}
+            />
           ))
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * Read `#credentials/<id>/request` once on mount.
+ *
+ * The link in an agent's refusal has to survive being pasted into a terminal,
+ * clicked, and opened in whichever frame the user has (the app window or a
+ * browser tab), so it is a plain URL with a hash rather than a custom scheme.
+ * The hash is consumed rather than left in place: it is a one-time instruction
+ * about where to look, and leaving it would re-highlight the row on every
+ * reload for the rest of the session.
+ */
+function useCredentialDeepLink(): string | undefined {
+  const [id, setId] = useState<string | undefined>(() => {
+    const m = /^#credentials\/([^/]+)(?:\/request)?$/.exec(window.location.hash);
+    return m ? decodeURIComponent(m[1]) : undefined;
+  });
+  useEffect(() => {
+    if (!id) return;
+    // Scroll the section into view: the deep link's whole job.
+    document.getElementById('credentials')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    // The highlight is a pointer, not a state: fade it once it has been seen.
+    const t = setTimeout(() => setId(undefined), 6000);
+    return () => clearTimeout(t);
+  }, [id]);
+  return id;
+}
+
+/**
+ * Agents waiting on a key.
+ *
+ * This is the half v1.7.0 was missing. Deny-by-default produced a refusal the
+ * user never saw, so the agent's only remaining move was to ask them to paste
+ * a secret by hand. Now the refusal lands here, naming who asked, for what, and
+ * how long they have been stuck, with the two buttons that end it.
+ */
+function PendingRequests({ requests, token, onChange }: {
+  requests: CredentialRequest[];
+  token?: string;
+  onChange: () => void;
+}) {
+  const reveal = useRevealOnMount<HTMLDivElement>();
+  const [busy, setBusy] = useState<string | null>(null);
+  const toast = useToast();
+
+  const answer = async (r: CredentialRequest, approve: boolean) => {
+    if (!token) return;
+    setBusy(r.id);
+    try {
+      const res = await api.resolveCredentialRequest(r.id, approve, token);
+      toast.show(
+        approve
+          ? res.granted
+            ? `${r.agentName} can now fetch ${r.credentialName}`
+            : `Request cleared, but nothing was granted — the agent or the credential is gone`
+          : `Denied ${r.agentName} access to ${r.credentialName}`,
+        approve && res.granted ? 'success' : 'info',
+      );
+      onChange();
+    } catch {
+      toast.show('Could not answer the request', 'error');
+    }
+    setBusy(null);
+  };
+
+  return (
+    <div className="panel cred-requests" ref={reveal}>
+      <div className="row between wrap-gap" style={{ marginBottom: 6 }}>
+        <span className="server-name">
+          {requests.length === 1 ? 'An agent is asking for a key' : `${requests.length} agents are asking for keys`}
+        </span>
+        <span className="small muted">Approving grants exactly this one credential to exactly this one agent.</span>
+      </div>
+      <div className="list">
+        {requests.map((r) => (
+          <div key={r.id} className="list-row">
+            <div className="row between wrap-gap">
+              <div className="row wrap-gap" style={{ gap: 8, flex: 1, minWidth: 220 }}>
+                <span className="pill pill-starting"><span className="dot" />waiting</span>
+                <span className="server-name">{r.agentName}</span>
+                <span className="small muted">wants</span>
+                <span className="chip">{r.credentialName}</span>
+                {r.attempts > 1 && (
+                  <span className="small muted" title="How many times it has tried since it first asked">
+                    tried {r.attempts}×
+                  </span>
+                )}
+              </div>
+              <div className="row" style={{ gap: 8 }}>
+                <button
+                  className="btn sm btn-primary"
+                  disabled={busy === r.id || !token}
+                  onClick={() => void answer(r, true)}
+                >
+                  {busy === r.id ? 'Granting…' : 'Approve'}
+                </button>
+                <button className="btn sm" disabled={busy === r.id || !token} onClick={() => void answer(r, false)}>
+                  Deny
+                </button>
+              </div>
+            </div>
+            {/* Agent-supplied text. Rendered as text, never as markup. */}
+            {r.reason && <div className="small" style={{ marginTop: 4 }}>“{r.reason}”</div>}
+            <div className="small muted" style={{ marginTop: 3 }}>
+              Asked {new Date(r.askedAt).toLocaleTimeString()} · <span className="mono">{r.credentialId}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      {!token && (
+        <div className="small" style={{ color: 'var(--warning)', marginTop: 6 }}>
+          Waiting for the daemon's master token — answering is disabled until it loads.
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1696,11 +1883,14 @@ function GuideHint({ g }: { g: CredentialGuideInfo }) {
   );
 }
 
-function CredentialRow({ c, guides, agents, token, onChange }: {
+function CredentialRow({ c, guides, agents, token, authorize, highlight, onChange }: {
   c: CredentialInfo;
   guides: CredentialGuideInfo[];
   agents: AgentClientInfo[];
   token?: string;
+  authorize?: AuthorizeCapability;
+  /** Briefly mark this row: a deep link sent the user here to find it. */
+  highlight?: boolean;
   onChange: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1709,7 +1899,14 @@ function CredentialRow({ c, guides, agents, token, onChange }: {
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const guide = c.service ? guides.find((g) => g.service === c.service) : undefined;
+  const rollUrl = guide?.manageUrl ?? guide?.createUrl;
   const allowedBy = c.usedBy.agents.length;
+
+  // A deep link means "this is the one": open it, so the agent switches the
+  // user came to flip are already on screen.
+  useEffect(() => {
+    if (highlight) setOpen(true);
+  }, [highlight]);
 
   const roll = async () => {
     if (!token || !rollValue.trim()) return;
@@ -1735,6 +1932,7 @@ function CredentialRow({ c, guides, agents, token, onChange }: {
       open={open}
       onToggle={() => setOpen((v) => !v)}
       label={c.name}
+      className={highlight ? 'cred-focus' : undefined}
       head={
         <>
           <span className="pill pill-ready" title={c.storage === 'keychain' ? 'Value stored in the OS keychain' : 'No OS keychain available — value stored in a file only this user can read'}>
@@ -1786,7 +1984,20 @@ function CredentialRow({ c, guides, agents, token, onChange }: {
           </>
         ) : (
           <>
-            <button className="btn sm" onClick={() => { setOpen(true); }} title={`Replace ${c.name}'s value`}>↻ Roll</button>
+            {rollUrl ? (
+              <a
+                className="btn sm"
+                href={rollUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setOpen(true)}
+                title={`Open ${c.name}'s provider page and replace its value`}
+              >
+                ↻ Roll
+              </a>
+            ) : (
+              <button className="btn sm" onClick={() => setOpen(true)} title={`Replace ${c.name}'s value`}>↻ Roll</button>
+            )}
             <IconBtn icon="trash" label={`Delete ${c.name}`} tone="danger" onClick={() => setArmed(true)} />
           </>
         )
@@ -1812,6 +2023,9 @@ function CredentialRow({ c, guides, agents, token, onChange }: {
           Servers referencing this credential restart onto the new value; agents pick it up on their next fetch.
         </div>
       </Block>
+      <Block label={<>Reveal the value <span className="dl-note">asks the OS to confirm it is you</span></>}>
+        <RevealValue c={c} token={token} authorize={authorize} />
+      </Block>
       {agents.length > 0 && (
         <Block label={<>Agents <span className="dl-count">{allowedBy}/{agents.length}</span></>}>
           <CredentialAgents c={c} agents={agents} token={token} onChange={onChange} />
@@ -1831,6 +2045,114 @@ function CredentialRow({ c, guides, agents, token, onChange }: {
         {c.note && <> · {c.note}</>}
       </div>
     </ExpandRow>
+  );
+}
+
+/**
+ * The reveal door's UI: the fourth and only way a value comes back out.
+ *
+ * v1.7.0 had no such thing on purpose, and the omission turned out to be the
+ * wrong shape of strict. A user who stored a key and later needed to read it
+ * (to paste it somewhere Hypergate does not reach, or just to check *which* key
+ * is in there) had one option: go to the provider and roll it. That is a worse
+ * outcome for security than showing it, because rolling invalidates whatever
+ * else was using the old value and teaches people to keep a copy elsewhere.
+ *
+ * What makes it safe is not that it is hard to reach, it is that it needs the
+ * *person*: the master token proves a local process, an OS consent prompt
+ * proves a human. The value is held only in this component's state, is never
+ * written anywhere, and is dropped after 30 seconds so a screen left unlocked
+ * does not leave a key on it indefinitely.
+ */
+function RevealValue({ c, token, authorize }: {
+  c: CredentialInfo;
+  token?: string;
+  authorize?: AuthorizeCapability;
+}) {
+  const [value, setValue] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [left, setLeft] = useState(0);
+  const [, copy] = useCopy();
+  const toast = useToast();
+
+  // Re-mask on a timer, and count it down out loud so the disappearance is
+  // expected rather than startling.
+  useEffect(() => {
+    if (value === null) return;
+    if (left <= 0) {
+      setValue(null);
+      return;
+    }
+    const t = setTimeout(() => setLeft((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [value, left]);
+
+  const ask = async () => {
+    if (!token) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api.revealCredential(c.id, token);
+      if (res.ok && res.value !== undefined) {
+        setValue(res.value);
+        setLeft(30);
+      } else if (res.reason === 'unavailable') {
+        setErr(res.detail ?? 'This machine has no way to confirm it is you.');
+      } else if (res.reason === 'denied') {
+        setErr('Not confirmed, so the value stays in the keychain.');
+      } else {
+        setErr(res.detail ?? 'Could not reveal the value.');
+      }
+    } catch {
+      setErr('Could not reach the daemon.');
+    }
+    setBusy(false);
+  };
+
+  // No consent prompt on this machine means no reveal. Saying so up front beats
+  // a button that always fails, and it is deliberately not replaced by a weaker
+  // check: a password typed into this page would prove nothing about who typed it.
+  if (authorize && !authorize.available) {
+    return (
+      <div className="small muted">
+        Revealing needs an OS confirmation prompt, and this machine has none
+        {authorize.detail ? <> ({authorize.detail})</> : null}. The value is still in the{' '}
+        {c.storage === 'keychain' ? 'keychain' : 'file store'}, and roll still works.
+      </div>
+    );
+  }
+
+  const method =
+    authorize?.method === 'touch-id' ? 'Touch ID' : authorize?.method === 'windows-hello' ? 'Windows Hello' : 'your system password';
+
+  return (
+    <>
+      {value === null ? (
+        <div className="row wrap-gap" style={{ gap: 8, alignItems: 'center' }}>
+          <button className="btn sm" disabled={!token || busy} onClick={() => void ask()}>
+            {busy ? 'Waiting for confirmation…' : '👁 Reveal'}
+          </button>
+          <span className="small muted">Confirm with {method}. Every reveal is recorded in Analytics.</span>
+        </div>
+      ) : (
+        <div className="row wrap-gap" style={{ gap: 8, alignItems: 'center' }}>
+          <input className="mono" style={{ flex: 1, minWidth: 220 }} readOnly value={value} onFocus={(e) => e.target.select()} />
+          <button
+            className="btn sm"
+            onClick={() => {
+              copy(`reveal-${c.id}`, value);
+              toast.show('Copied to the clipboard', 'success');
+            }}
+          >
+            Copy
+          </button>
+          <button className="btn sm" onClick={() => setValue(null)}>Hide</button>
+          <span className="small muted" aria-live="polite">hides in {left}s</span>
+        </div>
+      )}
+      {err && <div className="small" style={{ color: 'var(--danger)', marginTop: 6 }}>{err}</div>}
+    </>
   );
 }
 
@@ -1889,9 +2211,22 @@ function CredentialAgents({ c, agents, token, onChange }: {
 }
 
 /**
- * The add flow: the guides first (each names its env var and links the
- * provider's own create-token page or command), then a custom credential for
- * anything without a guide.
+ * The add flow: search the provider guides, or store your own.
+ *
+ * Two things changed here after v1.7.0 shipped with eight guides and no search.
+ *
+ * **Search.** Eight rows are a list; fifty are a haystack. The box matches on
+ * name, service, env var, aliases and CLI name, because a user arrives from
+ * whichever of those they happen to know: the product ("fly"), the command that
+ * just failed ("flyctl"), or the variable an error message named
+ * ("FLY_API_TOKEN"). Unsearched, the panel shows categories rather than
+ * everything, so the default view stays readable.
+ *
+ * **"Add your own" is not a provider.** It used to be the last row of the guide
+ * list with identical markup, which made the escape hatch look like a
+ * fifty-first service. It is now its own block, below the list and past a
+ * divider, because it answers a different question: not "which of these" but
+ * "none of these".
  */
 function AddCredentialPanel({ guides, creds, token, onAdded }: {
   guides: CredentialGuideInfo[];
@@ -1906,7 +2241,24 @@ function AddCredentialPanel({ guides, creds, token, onAdded }: {
   const [customName, setCustomName] = useState('');
   const [customEnv, setCustomEnv] = useState('');
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState('');
+  // Which category headings are expanded. Collapsed by default: the point of
+  // grouping fifty providers is that you see eight lines first.
+  const [openCats, setOpenCats] = useState<Set<string>>(new Set());
   const toast = useToast();
+
+  const searching = query.trim().length > 0;
+  // `searchGuides` is the same ranking the daemon and its tests use, so the
+  // order here is not a second opinion about what "fly" means.
+  const results = useMemo(() => (searching ? searchGuides(query, guides) : []), [query, guides, searching]);
+  const byCategory = useMemo(
+    () =>
+      CREDENTIAL_CATEGORIES.map((cat) => ({
+        ...cat,
+        entries: guides.filter((g) => g.category === cat.id),
+      })).filter((c) => c.entries.length > 0),
+    [guides],
+  );
 
   const save = async (body: { name: string; service?: string; envVar?: string; kind?: 'api-key' | 'token' | 'other' }) => {
     if (!token || !value.trim()) return;
@@ -1924,110 +2276,195 @@ function AddCredentialPanel({ guides, creds, token, onAdded }: {
     setBusy(false);
   };
 
+  /** One guide, rendered the same whether it came from a search or a category. */
+  const guideRow = (g: CredentialGuideInfo) => {
+    const stored = g.storedId ? creds.find((c) => c.id === g.storedId) : undefined;
+    const isOpen = openService === g.service;
+    return (
+      <div key={g.service} className="list-row">
+        <div className="row between wrap-gap">
+          <div className="row wrap-gap" style={{ gap: 8, flex: 1, minWidth: 220 }}>
+            <span className="server-name">{g.name}</span>
+            <span className="chip mono">{g.envVar}</span>
+            {stored && <span className="chip chip-accent" title={`Stored as ${stored.id}`}>✓ stored</span>}
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <GuideHint g={g} />
+            <button
+              className={`btn sm ${isOpen ? '' : 'btn-primary'}`}
+              onClick={() => { setOpenService(isOpen ? null : g.service); setCustom(false); setValue(''); }}
+            >
+              {isOpen ? 'Cancel' : stored ? 'Replace' : 'Store'}
+            </button>
+          </div>
+        </div>
+        {g.note && <div className="small muted" style={{ marginTop: 3 }}>{g.note}</div>}
+        {isOpen && (
+          <div className="row wrap-gap" style={{ gap: 8, marginTop: 8 }}>
+            <input
+              type="password"
+              className="mono"
+              style={{ flex: 1, minWidth: 220 }}
+              placeholder={`Paste the ${g.name}`}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              autoComplete="off"
+              autoFocus
+            />
+            <button
+              className="btn sm btn-primary"
+              disabled={!token || !value.trim() || busy}
+              onClick={() => {
+                // Replacing an already-stored guide credential is a roll,
+                // so references and grants survive the new value.
+                if (stored && token) {
+                  setBusy(true);
+                  void api.rollCredential(stored.id, value.trim(), token)
+                    .then(() => { toast.show(`Rolled ${stored.name}`, 'success'); setValue(''); setOpenService(null); onAdded(); })
+                    .catch(() => toast.show(`Could not roll ${stored.name}`, 'error'))
+                    .finally(() => setBusy(false));
+                  return;
+                }
+                void save({ name: g.name, service: g.service, envVar: g.envVar, kind: g.kind });
+              }}
+            >
+              {busy ? 'Storing…' : stored ? 'Roll' : 'Store'}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /** Prefill the custom form from whatever the search failed to find. */
+  const storeQueryAsOwn = () => {
+    setCustomName(query.trim());
+    setCustom(true);
+    setOpenService(null);
+    setValue('');
+  };
+
   return (
     <div className="panel" ref={reveal}>
       <div className="small muted" style={{ marginBottom: 8 }}>
-        Each guide links the provider's own token page or command — create the key there, paste it here, and it goes
+        Each guide links the provider's own token page or command: create the key there, paste it here, and it goes
         straight into the {guides.length ? 'OS keychain' : 'vault'}. The value is sent once and never shown again.
       </div>
-      <div className="list">
-        {guides.map((g) => {
-          const stored = g.storedId ? creds.find((c) => c.id === g.storedId) : undefined;
-          const isOpen = openService === g.service;
-          return (
-            <div key={g.service} className="list-row">
+      <input
+        className="cred-search"
+        type="search"
+        placeholder={`Search ${guides.length} providers by name, service, or env var (fly, flyctl, FLY_API_TOKEN…)`}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        aria-label="Search credential providers"
+      />
+
+      {searching ? (
+        <div className="list">
+          {results.length > 0 ? (
+            results.map(guideRow)
+          ) : (
+            // A dead end is the one place the escape hatch belongs inline: the
+            // user has told us exactly what they wanted and we do not have it.
+            <div className="list-row">
               <div className="row between wrap-gap">
-                <div className="row wrap-gap" style={{ gap: 8, flex: 1, minWidth: 220 }}>
-                  <span className="server-name">{g.name}</span>
-                  <span className="chip mono">{g.envVar}</span>
-                  {stored && <span className="chip chip-accent" title={`Stored as ${stored.id}`}>✓ stored</span>}
-                </div>
-                <div className="row" style={{ gap: 8 }}>
-                  <GuideHint g={g} />
-                  <button
-                    className={`btn sm ${isOpen ? '' : 'btn-primary'}`}
-                    onClick={() => { setOpenService(isOpen ? null : g.service); setCustom(false); setValue(''); }}
-                  >
-                    {isOpen ? 'Cancel' : stored ? 'Replace' : 'Store'}
-                  </button>
-                </div>
+                <span className="small muted">
+                  No provider matches <b>{query.trim()}</b>. Hypergate can still hold the key: a guide only adds the
+                  link to the provider's token page.
+                </span>
+                <button className="btn sm btn-primary" onClick={storeQueryAsOwn}>
+                  Store “{query.trim()}” as your own
+                </button>
               </div>
-              {g.note && <div className="small muted" style={{ marginTop: 3 }}>{g.note}</div>}
-              {isOpen && (
-                <div className="row wrap-gap" style={{ gap: 8, marginTop: 8 }}>
-                  <input
-                    type="password"
-                    className="mono"
-                    style={{ flex: 1, minWidth: 220 }}
-                    placeholder={`Paste the ${g.name}`}
-                    value={value}
-                    onChange={(e) => setValue(e.target.value)}
-                    autoComplete="off"
-                    autoFocus
-                  />
-                  <button
-                    className="btn sm btn-primary"
-                    disabled={!token || !value.trim() || busy}
-                    onClick={() => {
-                      // Replacing an already-stored guide credential is a roll,
-                      // so references and grants survive the new value.
-                      if (stored && token) {
-                        setBusy(true);
-                        void api.rollCredential(stored.id, value.trim(), token)
-                          .then(() => { toast.show(`Rolled ${stored.name}`, 'success'); setValue(''); setOpenService(null); onAdded(); })
-                          .catch(() => toast.show(`Could not roll ${stored.name}`, 'error'))
-                          .finally(() => setBusy(false));
-                        return;
-                      }
-                      void save({ name: g.name, service: g.service, envVar: g.envVar, kind: g.kind });
-                    }}
-                  >
-                    {busy ? 'Storing…' : stored ? 'Roll' : 'Store'}
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-        <div className="list-row">
-          <div className="row between wrap-gap">
-            <div className="row wrap-gap" style={{ gap: 8, flex: 1 }}>
-              <span className="server-name">Custom credential</span>
-              <span className="small muted">any other API key or token</span>
-            </div>
-            <button className={`btn sm ${custom ? '' : 'btn-primary'}`} onClick={() => { setCustom((v) => !v); setOpenService(null); setValue(''); }}>
-              {custom ? 'Cancel' : 'Store'}
-            </button>
-          </div>
-          {custom && (
-            <div className="row wrap-gap" style={{ gap: 8, marginTop: 8 }}>
-              <input style={{ minWidth: 160 }} placeholder="Name (e.g. Stripe secret key)" value={customName} onChange={(e) => setCustomName(e.target.value)} />
-              <input
-                className="mono"
-                style={{ minWidth: 160 }}
-                placeholder="ENV_VAR (optional)"
-                value={customEnv}
-                onChange={(e) => setCustomEnv(e.target.value.toUpperCase())}
-              />
-              <input
-                type="password"
-                className="mono"
-                style={{ flex: 1, minWidth: 200 }}
-                placeholder="Paste the value"
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                autoComplete="off"
-              />
-              <button
-                className="btn sm btn-primary"
-                disabled={!token || !customName.trim() || !value.trim() || busy}
-                onClick={() => void save({ name: customName.trim(), envVar: customEnv.trim() || undefined })}
-              >
-                {busy ? 'Storing…' : 'Store'}
-              </button>
             </div>
           )}
         </div>
+      ) : (
+        <div className="cred-cats">
+          {byCategory.map((cat) => {
+            const isOpen = openCats.has(cat.id);
+            const storedCount = cat.entries.filter((g) => g.storedId).length;
+            return (
+              <div key={cat.id} className={`cred-cat ${isOpen ? 'open' : ''}`}>
+                <button
+                  className="cred-cat-head"
+                  aria-expanded={isOpen}
+                  onClick={() =>
+                    setOpenCats((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(cat.id)) next.delete(cat.id);
+                      else next.add(cat.id);
+                      return next;
+                    })
+                  }
+                >
+                  <span className="tool-caret">{isOpen ? '▾' : '▸'}</span>
+                  <span className="setting-label">{cat.label}</span>
+                  <span className="dl-count">{cat.entries.length}</span>
+                  {storedCount > 0 && <span className="chip chip-accent">{storedCount} stored</span>}
+                </button>
+                {isOpen && <div className="list">{cat.entries.map(guideRow)}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/*
+        Your own credential, deliberately outside the roster above. It is not a
+        provider you might pick, it is what you do when none of them fit, so it
+        gets its own block rather than a row that looks like the others.
+      */}
+      <div className={`cred-own ${custom ? 'open' : ''}`}>
+        <div className="row between wrap-gap">
+          <div style={{ minWidth: 220 }}>
+            <div className="row wrap-gap" style={{ gap: 8 }}>
+              <span className="server-name">Add your own credential</span>
+              <span className="chip">no guide needed</span>
+            </div>
+            <div className="small muted" style={{ marginTop: 3 }}>
+              Any API key or token, named by you. A guide only adds a link to the provider's token page, so anything
+              not listed above is stored exactly as securely as everything that is.
+            </div>
+          </div>
+          <button className={`btn sm ${custom ? '' : 'btn-primary'}`} onClick={() => { setCustom((v) => !v); setOpenService(null); setValue(''); }}>
+            {custom ? 'Cancel' : 'Add your own'}
+          </button>
+        </div>
+        {custom && (
+          <div className="row wrap-gap" style={{ gap: 8, marginTop: 10 }}>
+            <input
+              style={{ minWidth: 160 }}
+              placeholder="Name (e.g. Stripe secret key)"
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              autoFocus
+            />
+            <input
+              className="mono"
+              style={{ minWidth: 160 }}
+              placeholder="ENV_VAR (optional)"
+              value={customEnv}
+              onChange={(e) => setCustomEnv(e.target.value.toUpperCase())}
+            />
+            <input
+              type="password"
+              className="mono"
+              style={{ flex: 1, minWidth: 200 }}
+              placeholder="Paste the value"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              autoComplete="off"
+            />
+            <button
+              className="btn sm btn-primary"
+              disabled={!token || !customName.trim() || !value.trim() || busy}
+              onClick={() => void save({ name: customName.trim(), envVar: customEnv.trim() || undefined })}
+            >
+              {busy ? 'Storing…' : 'Store'}
+            </button>
+          </div>
+        )}
       </div>
       {!token && <div className="small" style={{ color: 'var(--warning)', marginTop: 6 }}>Waiting for the daemon's master token — storing is disabled until it loads.</div>}
     </div>

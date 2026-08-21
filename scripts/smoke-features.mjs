@@ -327,13 +327,124 @@ if (badRef.status !== 400) fail(`an unknown credential ref should be refused, go
 ok('the hypergate id is reserved and a dangling credentialRef is refused at add time');
 
 // Gating on the gateway: deny-by-default, then a one-flip grant.
+//
+// Since v1.9.0 an ungranted agent *sees* the credential (name and env var, so
+// it can ask for it) but still cannot fetch it. The row must carry allowed:false
+// and a request URL, and must not carry the hint, which is still four characters
+// of a secret this caller was not granted.
 const deniedList = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credentials_list', arguments: {} });
-if (JSON.parse(deniedList.body?.result?.content?.[0]?.text ?? '[]').length !== 0)
-  fail('an ungranted agent should see an empty credentials_list');
+const deniedRows = JSON.parse(deniedList.body?.result?.content?.[0]?.text ?? '[]');
+const deniedRow = deniedRows.find((r) => r.id === cred.id);
+if (!deniedRow) fail(`an ungranted agent should still see the credential name: ${JSON.stringify(deniedRows)}`);
+if (deniedRow.allowed !== false) fail(`the row must say allowed:false, got ${JSON.stringify(deniedRow)}`);
+if (!deniedRow.requestUrl?.includes(cred.id)) fail(`the row must carry a request URL: ${JSON.stringify(deniedRow)}`);
+if (deniedRow.hint) fail('an ungranted row must not carry the masked hint');
+if (JSON.stringify(deniedRows).includes(SECRET_VALUE)) fail('credentials_list leaked a value');
 const deniedEnv = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_env', arguments: { id: cred.id } });
 if (!(deniedEnv.body?.error || deniedEnv.body?.result?.isError)) fail(`an ungranted agent must be refused credential_env: ${JSON.stringify(deniedEnv.body)}`);
 if (JSON.stringify(deniedEnv.body).includes(SECRET_VALUE)) fail('a refusal leaked the value');
-ok('credentials are deny-by-default on the gateway (empty list, refused fetch)');
+ok('credentials are deny-by-default on the gateway (named but unfetchable, refused fetch)');
+
+// The refusal above must have filed a request, so the user has something to act
+// on rather than a dead end.
+const filedAfterRefusal = await (await fetch(`${BASE}/api/credential-requests`)).json();
+const refusalReq = filedAfterRefusal.requests?.find((r) => r.credentialId === cred.id && r.agentId === allowed.id);
+if (!refusalReq) fail(`a refused credential_env should file a request: ${JSON.stringify(filedAfterRefusal)}`);
+if (JSON.stringify(filedAfterRefusal).includes(SECRET_VALUE)) fail('the request list leaked a value');
+ok(`a refused fetch files an access request (${refusalReq.id})`);
+
+// credential_request: explicit, carries a reason, and deduped onto the row the
+// refusal already created rather than piling up.
+const askedAgain = await mcp(allowed.token, 'tools/call', {
+  name: 'hypergate__credential_request',
+  arguments: { id: cred.id, reason: 'smoke test needs the token' },
+});
+const askedPayload = JSON.parse(askedAgain.body?.result?.content?.[0]?.text ?? '{}');
+if (!askedPayload.filed || !askedPayload.url?.includes(cred.id)) fail(`credential_request should file and return a URL: ${JSON.stringify(askedAgain.body)}`);
+const afterAsk = await (await fetch(`${BASE}/api/credential-requests`)).json();
+const deduped = afterAsk.requests.filter((r) => r.credentialId === cred.id && r.agentId === allowed.id);
+if (deduped.length !== 1) fail(`asking twice must dedupe to one request, got ${deduped.length}`);
+if (deduped[0].attempts < 2) fail(`the deduped request should count attempts, got ${deduped[0].attempts}`);
+if (deduped[0].reason !== 'smoke test needs the token') fail(`the later reason should stick: ${JSON.stringify(deduped[0])}`);
+ok('credential_request files once, counts attempts, and keeps the supplied reason');
+
+// Answering a request is a grant, so it needs the master token + same origin.
+const answerNoToken = await fetch(`${BASE}/api/credential-requests/${deduped[0].id}/approve`, { method: 'POST' });
+if (answerNoToken.status !== 401) fail(`approving without the master token should 401, got ${answerNoToken.status}`);
+const answerForeign = await fetch(`${BASE}/api/credential-requests/${deduped[0].id}/approve`, {
+  method: 'POST', headers: { ...credHeaders, origin: 'https://evil.example' },
+});
+if (answerForeign.status !== 403) fail(`a cross-origin page must not approve a request, got ${answerForeign.status}`);
+ok('answering an access request refuses no-token and cross-origin callers');
+
+// Deny clears the request and grants nothing.
+const denied = await (await fetch(`${BASE}/api/credential-requests/${deduped[0].id}/deny`, {
+  method: 'POST', headers: credHeaders,
+})).json();
+if (!denied.ok || denied.granted !== false) fail(`deny should resolve without granting: ${JSON.stringify(denied)}`);
+const afterDeny = await (await fetch(`${BASE}/api/credential-requests`)).json();
+if (afterDeny.requests.some((r) => r.id === deduped[0].id)) fail('a denied request should be gone from the list');
+const stillDenied = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_env', arguments: { id: cred.id } });
+if (!(stillDenied.body?.error || stillDenied.body?.result?.isError)) fail('deny must not have granted access');
+ok('deny clears the request and grants nothing');
+
+// Approve flips the same grant the per-agent switch does.
+const reAsked = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_request', arguments: { id: cred.id } });
+const reAskedId = (await (await fetch(`${BASE}/api/credential-requests`)).json())
+  .requests.find((r) => r.credentialId === cred.id && r.agentId === allowed.id)?.id;
+if (!reAskedId) fail(`re-asking should file a fresh request: ${JSON.stringify(reAsked.body)}`);
+const approved = await (await fetch(`${BASE}/api/credential-requests/${reAskedId}/approve`, {
+  method: 'POST', headers: credHeaders,
+})).json();
+if (!approved.ok || approved.granted !== true) fail(`approve should grant: ${JSON.stringify(approved)}`);
+const afterApprove = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_env', arguments: { id: cred.id } });
+if (JSON.parse(afterApprove.body?.result?.content?.[0]?.text ?? '{}').env?.SMOKE_TOKEN !== SECRET_VALUE)
+  fail(`the agent should be able to fetch after approval: ${JSON.stringify(afterApprove.body)}`);
+// Already granted: asking again must say so rather than filing a pointless request.
+const askGranted = JSON.parse(
+  (await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_request', arguments: { id: cred.id } }))
+    .body?.result?.content?.[0]?.text ?? '{}',
+);
+if (askGranted.filed !== false || askGranted.allowed !== true) fail(`requesting an already-granted key should be a no-op: ${JSON.stringify(askGranted)}`);
+ok('approve grants exactly that credential, and requesting a granted one files nothing');
+
+// Revoke again so the rest of the script sees the pre-approval state.
+await fetch(`${BASE}/api/clients/${allowed.id}/credentials/${cred.id}`, {
+  method: 'POST', headers: credHeaders, body: JSON.stringify({ allowed: false }),
+});
+
+// The gateway tells a connecting agent that the vault exists. Without this an
+// agent has to guess that a local keystore might hold the token it needs.
+const initialized = await mcp(allowed.token, 'initialize', {
+  protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'smoke', version: '0' },
+});
+const instructions = initialized.body?.result?.instructions ?? '';
+if (!instructions.includes('credentials_list') || !instructions.includes('credential_request'))
+  fail(`initialize should carry instructions naming the credential tools: ${JSON.stringify(initialized.body?.result)}`);
+ok('the gateway advertises the vault in its MCP instructions');
+
+// The reveal door. No consent prompt is available in CI, and the smoke daemon
+// has no shell binary, so the honest outcome is a refusal — never the value.
+const revealNoToken = await fetch(`${BASE}/api/credentials/${cred.id}/reveal`, { method: 'POST' });
+if (revealNoToken.status !== 401) fail(`reveal without the master token should 401, got ${revealNoToken.status}`);
+const revealForeign = await fetch(`${BASE}/api/credentials/${cred.id}/reveal`, {
+  method: 'POST', headers: { ...credHeaders, origin: 'https://evil.example' },
+});
+if (revealForeign.status !== 403) fail(`a cross-origin page must not reveal a value, got ${revealForeign.status}`);
+const revealUnknown = await fetch(`${BASE}/api/credentials/no-such-cred/reveal`, { method: 'POST', headers: credHeaders });
+if (revealUnknown.status !== 404) fail(`revealing an unknown credential should 404, got ${revealUnknown.status}`);
+const revealRes = await fetch(`${BASE}/api/credentials/${cred.id}/reveal`, { method: 'POST', headers: credHeaders });
+const revealBody = await revealRes.json();
+if (revealRes.status === 200) {
+  // Only reachable where a real consent prompt said yes, which cannot happen
+  // unattended. If it does, the value must at least be the right one.
+  if (revealBody.value !== SECRET_VALUE) fail(`an authorized reveal returned the wrong value: ${JSON.stringify(revealBody)}`);
+  ok('reveal returned the value after an OS consent prompt');
+} else {
+  if (revealBody.authorized !== false) fail(`an unauthorized reveal must say so: ${JSON.stringify(revealBody)}`);
+  if (JSON.stringify(revealBody).includes(SECRET_VALUE)) fail('a refused reveal leaked the value');
+  ok(`reveal fails closed without OS consent (${revealRes.status}, ${revealBody.reason})`);
+}
 
 const grant = await fetch(`${BASE}/api/clients/${allowed.id}/credentials/${cred.id}`, {
   method: 'POST', headers: credHeaders, body: JSON.stringify({ allowed: true }),

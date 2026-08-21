@@ -16,7 +16,10 @@ import type {
   CreateCredentialRequest,
   CredentialGuideInfo,
   CredentialInfo,
+  CredentialRequestsResponse,
   DeleteCredentialResponse,
+  ResolveCredentialRequestResponse,
+  RevealCredentialResponse,
   ConnectTargetsInfo,
   AgentConnectInfo,
   ConnectResult,
@@ -97,6 +100,32 @@ export const api = {
       headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ allowed }),
     }),
+  // Pending access requests: what an agent's refusal turns into. Reading is a
+  // plain GET (a request names no secret); answering one is a grant, so it
+  // carries the master token like every other vault mutation.
+  credentialRequests: () => j<CredentialRequestsResponse>('/api/credential-requests'),
+  resolveCredentialRequest: (id: string, approve: boolean, token: string) =>
+    j<ResolveCredentialRequestResponse>(
+      `/api/credential-requests/${encodeURIComponent(id)}/${approve ? 'approve' : 'deny'}`,
+      { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+    ),
+  /**
+   * The reveal door. Deliberately not routed through `j`: a refusal is a
+   * *result* here, not an error, and its body carries the difference between
+   * "you were denied" and "this machine cannot ask" plus the detail explaining
+   * why. Throwing away the body would leave the UI unable to say which.
+   */
+  revealCredential: async (id: string, token: string): Promise<RevealCredentialResponse> => {
+    const res = await fetch(`${BASE}/api/credentials/${encodeURIComponent(id)}/reveal`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    try {
+      return (await res.json()) as RevealCredentialResponse;
+    } catch {
+      return { ok: false, authorized: false, reason: 'error', detail: `HTTP ${res.status}` };
+    }
+  },
   // The one-time OAuth app for a provider that registers none itself (GitHub).
   // The daemon answers with the exact redirect URI to register and never returns
   // a whole credential back.

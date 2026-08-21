@@ -57,6 +57,17 @@ export function SettingsView() {
               disabled={busy === 'startMinimized'}
               onChange={(v) => void update({ startMinimized: v }, 'startMinimized')}
             />
+            <ToggleRow
+              label="Agents can see credential names"
+              desc={
+                'Lets an agent list the keys it has NOT been granted (names and env vars only, never values) so it ' +
+                'can ask you for one. Turn it off and an agent sees only what you already gave it, which also means ' +
+                'it can no longer request anything it has not been told about.'
+              }
+              checked={s.agentsSeeAllCredentialNames !== false}
+              disabled={busy === 'agentsSeeAllCredentialNames'}
+              onChange={(v) => void update({ agentsSeeAllCredentialNames: v }, 'agentsSeeAllCredentialNames')}
+            />
           </div>
         )}
       </div>
