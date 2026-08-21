@@ -102,12 +102,20 @@ export function findInstaller(
   device: Device,
   linuxFormat: LinuxFormat = 'deb',
 ): ReleaseAsset | undefined {
+  if (device.platform === 'macos') {
+    // The stable alias is the asset that says Apple silicon, so it is the name
+    // a visitor sees in their downloads folder; the versioned disk image (still
+    // arm64, because the in-app updater asks for that exact file) is the
+    // fallback for releases published before the alias existed.
+    if (device.architecture !== 'arm64') return undefined;
+    return release.assets.find((asset) => asset.name === 'hypergate-macos-apple-silicon.dmg')
+      ?? release.assets.find((asset) => asset.name.toLowerCase().endsWith('-macos-arm64.dmg'));
+  }
   const terms = architectureTerms(device.architecture);
   return release.assets.find((asset) => {
     const name = asset.name.toLowerCase();
     if (!terms.some((term) => name.includes(term))) return false;
     if (device.platform === 'windows') return name.endsWith('-setup.exe');
-    if (device.platform === 'macos') return name.endsWith('.dmg') || name === `hypergate-darwin-${device.architecture}`;
     if (device.platform === 'linux') return linuxFormat === 'tar.gz' ? name.endsWith('.tar.gz') : name.endsWith(`.${linuxFormat}`);
     return false;
   });
@@ -120,16 +128,27 @@ function platformName(platform: Platform): string {
   return 'your computer';
 }
 
+/**
+ * Hypergate on macOS is Apple silicon only, and an Intel Mac cannot run the
+ * arm64 build at all (Rosetta translates the other way), so those visitors are
+ * told that rather than handed a disk image that will not open.
+ */
+function unsupportedMac(device: Device): boolean {
+  return device.platform === 'macos' && device.architecture !== 'arm64';
+}
+
 export function installerUrlFor(device: Device): string | null {
   const arch = device.architecture;
+  if (unsupportedMac(device)) return null;
   if (device.platform === 'windows') return `${LATEST_ASSET}/hypergate-windows-${arch}-setup.exe`;
-  if (device.platform === 'macos') return `${LATEST_ASSET}/hypergate-macos-${arch}.dmg`;
+  if (device.platform === 'macos') return `${LATEST_ASSET}/hypergate-macos-apple-silicon.dmg`;
   if (device.platform === 'linux') return `${LATEST_ASSET}/hypergate-linux-${arch}.deb`;
   return null;
 }
 
 export function installCommandFor(device: Device): InstallCommand | null {
   const arch = device.architecture;
+  if (unsupportedMac(device)) return null;
   if (device.platform === 'windows') {
     const asset = `${LATEST_ASSET}/hypergate-windows-${arch}-setup.exe`;
     return {
@@ -138,7 +157,7 @@ export function installCommandFor(device: Device): InstallCommand | null {
     };
   }
   if (device.platform === 'macos') {
-    const asset = `${LATEST_ASSET}/hypergate-macos-${arch}.dmg`;
+    const asset = `${LATEST_ASSET}/hypergate-macos-apple-silicon.dmg`;
     return {
       shell: 'Terminal',
       command: `curl -fsSL "${asset}" -o /tmp/hypergate.dmg && open /tmp/hypergate.dmg`,
@@ -176,34 +195,14 @@ function hydrateInstallCommand(device: Device): void {
   }
 }
 
-function macPicker(release: GithubRelease): HTMLDetailsElement {
-  const details = document.createElement('details');
-  details.className = 'download-picker';
-  const summary = document.createElement('summary');
-  summary.ariaLabel = 'Choose a Mac architecture';
-  const caret = document.createElement('span');
-  caret.ariaHidden = 'true';
-  caret.textContent = '⌄';
-  summary.append(caret);
-  const menu = document.createElement('div');
-  menu.className = 'download-menu';
-
-  for (const [architecture, name, description] of [
-    ['arm64', 'Apple silicon', 'M-series Macs'],
-    ['x64', 'Intel', 'Intel Macs'],
-  ] as const) {
-    const asset = findInstaller(release, { platform: 'macos', architecture });
-    const link = document.createElement('a');
-    link.href = asset?.browser_download_url ?? release.html_url;
-    link.textContent = name;
-    const note = document.createElement('small');
-    note.textContent = description;
-    link.append(note);
-    menu.append(link);
-  }
-
-  details.append(summary, menu);
-  return details;
+/** The label on the primary button, once we know what this device can run. */
+function downloadLabel(device: Device, hasDownload: boolean): string {
+  if (unsupportedMac(device)) return 'Needs an Apple silicon Mac';
+  if (!hasDownload) return 'View latest downloads';
+  // "Apple silicon" is said out loud, because a Mac owner knows that phrase from
+  // their own About This Mac window and may not know it means arm64.
+  if (device.platform === 'macos') return 'Download for Mac (Apple silicon)';
+  return `Download for ${platformName(device.platform)}`;
 }
 
 export async function hydrateDownloadCtas(): Promise<void> {
@@ -223,7 +222,7 @@ export async function hydrateDownloadCtas(): Promise<void> {
     const link = group.querySelector<HTMLAnchorElement>('[data-download-primary]');
     const label = group.querySelector<HTMLElement>('[data-download-label]');
     if (link) link.href = fallbackUrl ?? RELEASES_URL;
-    if (label) label.textContent = fallbackUrl ? `Download for ${platformName(device.platform)}` : 'View latest downloads';
+    if (label) label.textContent = downloadLabel(device, !!fallbackUrl);
   }
 
   try {
@@ -234,8 +233,10 @@ export async function hydrateDownloadCtas(): Promise<void> {
       const label = group.querySelector<HTMLElement>('[data-download-label]');
       const version = group.querySelector<HTMLElement>('[data-download-version]');
       if (link) link.href = asset?.browser_download_url ?? fallbackUrl ?? release.html_url;
-      if (label) label.textContent = asset || fallbackUrl ? `Download for ${platformName(device.platform)}` : 'View latest downloads';
-      if (version) version.textContent = release.tag_name;
+      if (label) label.textContent = downloadLabel(device, !!(asset || fallbackUrl));
+      // A version number beside "Needs an Apple silicon Mac" would read as an
+      // offer, so the chip stays empty when there is nothing to download.
+      if (version) version.textContent = unsupportedMac(device) ? '' : release.tag_name;
     }
 
     if (device.platform === 'linux') {
@@ -254,19 +255,13 @@ export async function hydrateDownloadCtas(): Promise<void> {
         }
       }
     }
-
-    if (device.platform === 'macos') {
-      for (const group of groups.filter((item) => item.classList.contains('download-control'))) {
-        group.append(macPicker(release));
-      }
-    }
   } catch {
     for (const group of groups) {
       const link = group.querySelector<HTMLAnchorElement>('[data-download-primary]');
       const label = group.querySelector<HTMLElement>('[data-download-label]');
       const version = group.querySelector<HTMLElement>('[data-download-version]');
       if (!fallbackUrl && link) link.href = RELEASES_URL;
-      if (!fallbackUrl && label) label.textContent = 'View latest downloads';
+      if (!fallbackUrl && label) label.textContent = downloadLabel(device, false);
       if (version) version.textContent = '';
     }
   }

@@ -1,11 +1,11 @@
 /**
  * Generate Hypergate's macOS icon without executing the payload binary.
  *
- * This is deliberately a second copy of the mark's geometry in JavaScript:
- * build-artifacts cross-compiles the Intel payload on an arm64 macOS runner,
- * and that host cannot assume Rosetta is installed to run the x86_64 binary.
- * The simple literal guard below makes changes to icon.rs fail loudly instead
- * of silently letting this packaging-only renderer drift.
+ * This is deliberately a second copy of the mark's geometry in JavaScript: the
+ * shell binary only knows how to write `.ico` and `.svg`, so there is nothing
+ * to run for an `.icns`. The simple literal guard below makes changes to
+ * icon.rs fail loudly instead of silently letting this packaging-only renderer
+ * drift.
  */
 import { deflateSync } from 'node:zlib';
 import { readFileSync, writeFileSync } from 'node:fs';
