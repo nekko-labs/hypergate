@@ -1,6 +1,6 @@
 name: Build artifacts
 
-# Every downloadable Hypergate build, for all six platform/architecture pairs:
+# Every downloadable Hypergate build, for all five platform/architecture pairs:
 #
 #   shell-<platform>      the bare `hypergate` binary the npm packages wrap
 #   installer-<platform>  the native installer, for machines with no Node
@@ -33,14 +33,11 @@ jobs:
         include:
           - { name: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
           - { name: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
+          # macOS is Apple silicon only: `macos-13` (the last Intel runner) is
+          # retired, so an Intel build would have to be cross-compiled and can
+          # never be run — not by its own build job, and not by the notarisation
+          # or smoke steps that follow it.
           - { name: darwin-arm64, runner: macos-latest, target: aarch64-apple-darwin }
-          # Cross-compiled from the arm64 runner rather than built on an Intel
-          # one: `macos-13` is retired, and a job asking for it is not slow, it
-          # never starts — the 2026-07-27 build sat queued for the full 24-hour
-          # timeout and was cancelled, which is why no release had ever been cut
-          # even before the publish step was fixed. Apple's SDK carries both
-          # slices, so `--target x86_64-apple-darwin` needs nothing extra.
-          - { name: darwin-x64, runner: macos-latest, target: x86_64-apple-darwin }
           - { name: linux-x64, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { name: linux-arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
     steps:
@@ -159,66 +156,18 @@ jobs:
             apps/shell/target/${{ matrix.target }}/release/hypergate.exe
           if-no-files-found: error
 
-      - name: Prepare cross-architecture Node base (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          runner_arch="$(uname -m)"
-          case "$runner_arch" in
-            arm64) runner_node_arch=arm64 ;;
-            x86_64) runner_node_arch=x64 ;;
-            *) echo "unsupported macOS runner architecture: $runner_arch" >&2; exit 1 ;;
-          esac
-          case "${{ matrix.target }}" in
-            aarch64-apple-darwin) target_node_arch=arm64 ;;
-            x86_64-apple-darwin) target_node_arch=x64 ;;
-            *) exit 0 ;;
-          esac
-          if [ "$runner_node_arch" = "$target_node_arch" ]; then
-            echo "Native macOS Node base: $runner_node_arch"
-            exit 0
-          fi
-
-          node_version="$(node --version)"
-          node_version="${node_version#v}"
-          archive_name="node-v${node_version}-darwin-${target_node_arch}.tar.gz"
-          base_dir="$RUNNER_TEMP/node-sea-${target_node_arch}"
-          archive="$RUNNER_TEMP/$archive_name"
-          mkdir -p "$base_dir"
-          curl --fail --location --retry 3 \
-            -o "$archive" "https://nodejs.org/dist/v${node_version}/${archive_name}"
-          curl --fail --location --retry 3 \
-            -o "$RUNNER_TEMP/SHASUMS256.txt" \
-            "https://nodejs.org/dist/v${node_version}/SHASUMS256.txt"
-          expected="$(awk -v name="$archive_name" '$2 == name { print $1 }' "$RUNNER_TEMP/SHASUMS256.txt")"
-          if [ -z "$expected" ]; then
-            echo "Node checksum entry missing for $archive_name" >&2
-            exit 1
-          fi
-          printf '%s  %s\n' "$expected" "$archive" | shasum -a 256 -c -
-          tar -xzf "$archive" --strip-components=1 -C "$base_dir"
-          test -x "$base_dir/bin/node"
-          echo "HYPERGATE_SEA_NODE=$base_dir/bin/node" >> "$GITHUB_ENV"
-          echo "Using verified Node $node_version $target_node_arch base: $base_dir/bin/node"
-
       # `--skip-build` reuses the workspace and cargo output above. The shell
       # path is explicit because a target triple puts the binary somewhere other
-      # than target/release.
+      # than target/release. Every matrix entry now builds for the runner's own
+      # architecture, so the SEA takes the runner's Node as its base.
       - name: Build the standalone payload
         shell: bash
         run: |
           set -euo pipefail
           exe=""
           [ "$RUNNER_OS" = "Windows" ] && exe=".exe"
-          if [ "$RUNNER_OS" = "macOS" ] && [ -n "${HYPERGATE_SEA_NODE:-}" ]; then
-            node scripts/build-standalone.mjs --skip-build \
-              --node "$HYPERGATE_SEA_NODE" \
-              --shell "apps/shell/target/${{ matrix.target }}/release/hypergate$exe"
-          else
-            node scripts/build-standalone.mjs --skip-build \
-              --shell "apps/shell/target/${{ matrix.target }}/release/hypergate$exe"
-          fi
+          node scripts/build-standalone.mjs --skip-build \
+            --shell "apps/shell/target/${{ matrix.target }}/release/hypergate$exe"
 
       # ── Signing, part 2: hypergated is minted by the SEA build above, so it
       # can only be signed now. (The shell copy in the payload is already

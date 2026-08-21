@@ -14,7 +14,7 @@ permissions:
   id-token: write # npm provenance
 
 jobs:
-  # Every binary and installer, for all six platform/architecture pairs. Shared
+  # Every binary and installer, for all five platform/architecture pairs. Shared
   # with the on-demand build so a release and a test build are the same thing.
   build:
     uses: ./.github/workflows/build-artifacts.yml
@@ -61,7 +61,7 @@ jobs:
       - name: Assemble the npm packages
         run: |
           set -euo pipefail
-          for name in win32-x64 win32-arm64 darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+          for name in win32-x64 win32-arm64 darwin-arm64 linux-x64 linux-arm64; do
             binary=$(find "artifacts/shell-$name" -type f \( -name 'hypergate' -o -name 'hypergate.exe' \) | head -1)
             [ -n "$binary" ] || { echo "no binary for $name" >&2; exit 1; }
             chmod +x "$binary"
@@ -117,7 +117,11 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           cp "release-assets/hypergate-${version}-windows-x64-setup.exe" "release-assets/hypergate-windows-x64-setup.exe"
           cp "release-assets/hypergate-${version}-windows-arm64-setup.exe" "release-assets/hypergate-windows-arm64-setup.exe"
-          cp "release-assets/hypergate-${version}-macos-x64.dmg" "release-assets/hypergate-macos-x64.dmg"
+          # "apple-silicon" is the name a person recognises; the arm64 alias stays
+          # because links to it are already published. The *versioned* disk image
+          # keeps its arm64 name: the in-app updater in 1.8.x asks for that exact
+          # file, and renaming it would strand those installs.
+          cp "release-assets/hypergate-${version}-macos-arm64.dmg" "release-assets/hypergate-macos-apple-silicon.dmg"
           cp "release-assets/hypergate-${version}-macos-arm64.dmg" "release-assets/hypergate-macos-arm64.dmg"
           cp "release-assets/hypergate_${version}_amd64.deb" "release-assets/hypergate-linux-x64.deb"
           cp "release-assets/hypergate_${version}_arm64.deb" "release-assets/hypergate-linux-arm64.deb"
@@ -134,7 +138,7 @@ jobs:
           # them here would silently break updating.
           cp npm-tarballs/*.tgz release-assets/
           # The bare binaries, for anyone scripting an install themselves.
-          for name in win32-x64 win32-arm64 darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+          for name in win32-x64 win32-arm64 darwin-arm64 linux-x64 linux-arm64; do
             binary=$(find "artifacts/shell-$name" -type f | head -1)
             case "$name" in
               win32-*) cp "$binary" "release-assets/hypergate-$name.exe" ;;

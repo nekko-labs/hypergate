@@ -10,7 +10,7 @@
 
 **Windows:** [x64 installer](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-windows-x64-setup.exe) · [Arm64 installer](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-windows-arm64-setup.exe)
 
-**macOS:** [Apple silicon disk image](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-macos-arm64.dmg) · [Intel standalone binary](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-darwin-x64)
+**macOS (Apple silicon):** [Disk image](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-macos-apple-silicon.dmg) · [Standalone binary](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-darwin-arm64)
 
 **Linux:** [DEB x64](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-linux-x64.deb) · [DEB Arm64](https://github.com/nekko-labs/hypergate/releases/latest/download/hypergate-linux-arm64.deb) · [RPM and tarball options](https://hypergate.app/release-notes.html)
 
@@ -18,7 +18,7 @@
 
 ## Install
 
-**An installer, if you'd rather not think about it.** Use the direct download for your machine above. Every [latest release](https://github.com/nekko-labs/hypergate/releases/latest) includes a `-setup.exe` for Windows, a `.dmg` for macOS, and `.deb`/`.rpm`/tarball packages for Linux, each for x64 and arm64. On macOS, open the disk image and drag `Hypergate.app` to Applications; launching it can create the CLI links without an admin prompt. **Nothing else is required, not even Node**: the daemon ships as a single compiled executable.
+**An installer, if you'd rather not think about it.** Use the direct download for your machine above. Every [latest release](https://github.com/nekko-labs/hypergate/releases/latest) includes a `-setup.exe` for Windows and `.deb`/`.rpm`/tarball packages for Linux, each for x64 and arm64, plus an Apple silicon `.dmg` for macOS (Intel Macs are not supported). On macOS, open the disk image and drag `Hypergate.app` to Applications; launching it can create the CLI links without an admin prompt. **Nothing else is required, not even Node**: the daemon ships as a single compiled executable.
 
 **Or npm, if you already have Node:**
 
@@ -110,7 +110,7 @@ npm run build:npm     # assemble dist-npm/hypergated + this host's shell package
 npm run smoke:install # pack it, install into a clean project, drive the installed CLI
 ```
 
-`scripts/build-npm.mjs` bundles the daemon into one file (esbuild, with core, shared and the MCP SDK inlined), copies the built web UI beside it, and writes the `hypergated` package plus a `hypergate-shell-<os>-<arch>` package holding the native binary. The main package lists all six platform builds as **optional** dependencies guarded by npm's `os`/`cpu`, so a machine pulls exactly one, and an unsupported platform still gets a working daemon instead of a failed install.
+`scripts/build-npm.mjs` bundles the daemon into one file (esbuild, with core, shared and the MCP SDK inlined), copies the built web UI beside it, and writes the `hypergated` package plus a `hypergate-shell-<os>-<arch>` package holding the native binary. The main package lists all five platform builds as **optional** dependencies guarded by npm's `os`/`cpu`, so a machine pulls exactly one, and an unsupported platform still gets a working daemon instead of a failed install.
 
 ### Installers
 
@@ -128,9 +128,9 @@ The installers deliberately reuse Hypergate's own code for the parts that need j
 
 On macOS, run `/Applications/Hypergate.app/Contents/Resources/uninstall.sh` before dragging the app to the Trash. It disables the login item, removes Hypergate's CLI links, and leaves `~/.hypergate` untouched.
 
-[`.github/workflows/build-artifacts.yml`](.github/workflows/build-artifacts.yml) builds all six platforms and can be run on demand, without cutting a release, when you want an installer to test.
+[`.github/workflows/build-artifacts.yml`](.github/workflows/build-artifacts.yml) builds all five platforms and can be run on demand, without cutting a release, when you want an installer to test.
 
-Releases are cut by tag: `git tag v0.9.0 && git push --tags` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which cross-builds all six shells, publishes the platform packages and then the main package to npm with provenance, and attaches standalone binaries to the GitHub release.
+Releases are cut by tag: `git tag v0.9.0 && git push --tags` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds all five shells, publishes the platform packages and then the main package to npm with provenance, and attaches standalone binaries to the GitHub release.
 
 **Every pull request bumps the version by one minor**, unless the PR says otherwise, so `main` is always taggable:
 

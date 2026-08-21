@@ -62,9 +62,10 @@ fn current_app_bundle() -> Option<PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn macos_asset_name(version: &str) -> Option<String> {
+    // Apple silicon only: no other Mac disk image is built, so there is nothing
+    // to name for one.
     let arch = match std::env::consts::ARCH {
         "aarch64" => "arm64",
-        "x86_64" => "x64",
         _ => return None,
     };
     Some(format!("hypergate-{version}-macos-{arch}.dmg"))
@@ -907,9 +908,13 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn names_the_disk_image_for_this_architecture() {
-        let name = macos_asset_name("1.8.0").expect("supported Mac architecture");
-        assert!(name == "hypergate-1.8.0-macos-arm64.dmg" || name == "hypergate-1.8.0-macos-x64.dmg");
+    fn names_the_apple_silicon_disk_image() {
+        let name = macos_asset_name("1.9.0");
+        if std::env::consts::ARCH == "aarch64" {
+            assert_eq!(name.as_deref(), Some("hypergate-1.9.0-macos-arm64.dmg"));
+        } else {
+            assert_eq!(name, None);
+        }
     }
 
     #[cfg(target_os = "macos")]

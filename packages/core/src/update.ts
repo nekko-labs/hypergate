@@ -162,7 +162,7 @@ export function updatePlan(channel: InstallChannel, latest?: string, platform: s
 
 /**
  * The npm package that carries the native binary for a platform. `hypergated`
- * lists all six as optional dependencies, so an install needs exactly one.
+ * lists all five as optional dependencies, so an install needs exactly one.
  */
 export const shellPackageFor = (platform: string, arch: string): string => `hypergate-shell-${platform}-${arch}`;
 
@@ -263,6 +263,9 @@ export function macosInstallerFromGithub(
 ): UpdateAsset[] {
   const assets = (doc as { assets?: { name?: string; browser_download_url?: string; size?: number }[] } | null)?.assets;
   if (!Array.isArray(assets)) return [];
+  // Apple silicon only: there is no Intel disk image to offer, and an arm64 one
+  // would not run on the machine asking for it.
+  if (arch !== 'arm64') return [];
   const name = `hypergate-${version}-macos-${arch}.dmg`;
   const asset = assets.find((item) => item.name === name);
   const sha256 = parseSha256Sums(checksumsText ?? '')[name];
