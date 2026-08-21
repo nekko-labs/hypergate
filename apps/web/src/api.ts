@@ -13,6 +13,10 @@ import type {
   CliCatalogEntry,
   CliCheckResult,
   OAuthAppInfo,
+  CreateCredentialRequest,
+  CredentialGuideInfo,
+  CredentialInfo,
+  DeleteCredentialResponse,
   ConnectTargetsInfo,
   AgentConnectInfo,
   ConnectResult,
@@ -64,6 +68,35 @@ export const api = {
   // against npm + Homebrew that the MCP registry search is modelled on.
   cliCatalog: () => j<CliCatalogEntry[]>('/api/clis/catalog'),
   searchClis: (q: string) => j<CliCatalogEntry[]>(`/api/clis/search?q=${encodeURIComponent(q)}`),
+  // The credential vault. Reads are metadata + masked hints only; every
+  // mutation carries the master token on top of the same-origin guard, because
+  // creating, rolling, deleting, or granting a key must not be reachable by a
+  // page that merely guesses the request shape. Values never come back.
+  credentials: () => j<CredentialInfo[]>('/api/credentials'),
+  credentialGuides: () => j<CredentialGuideInfo[]>('/api/credentials/guides'),
+  addCredential: (body: CreateCredentialRequest, token: string) =>
+    j<CredentialInfo>('/api/credentials', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    }),
+  rollCredential: (id: string, value: string, token: string) =>
+    j<CredentialInfo & { restarted: string[] }>(`/api/credentials/${encodeURIComponent(id)}/roll`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ value }),
+    }),
+  deleteCredential: (id: string, token: string) =>
+    j<DeleteCredentialResponse>(`/api/credentials/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  setAgentCredential: (agentId: string, credentialId: string, allowed: boolean, token: string) =>
+    j<AgentClientInfo>(`/api/clients/${encodeURIComponent(agentId)}/credentials/${encodeURIComponent(credentialId)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ allowed }),
+    }),
   // The one-time OAuth app for a provider that registers none itself (GitHub).
   // The daemon answers with the exact redirect URI to register and never returns
   // a whole credential back.

@@ -26,7 +26,10 @@ const fail = (m) => {
 
 const boot = async () => {
   const d = spawn(process.execPath, ['--experimental-strip-types', join(ROOT, 'apps/daemon/src/index.ts')], {
-    env: { ...process.env, HYPERGATE_DIR: DIR, PORT: String(PORT) },
+    // HYPERGATE_NO_KEYCHAIN: a smoke daemon has no business writing scratch
+    // secrets into the developer's real OS keychain; the file fallback keeps
+    // everything inside the temp data dir it is about to delete.
+    env: { ...process.env, HYPERGATE_DIR: DIR, PORT: String(PORT), HYPERGATE_NO_KEYCHAIN: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   d.stderr.on('data', (x) => process.stderr.write(x));
@@ -262,6 +265,135 @@ const noSecret = await appPost({ origin: BASE, authorization: `Bearer ${master}`
 if (noSecret.status !== 400) fail(`GitHub requires a client secret; POST without one should 400, got ${noSecret.status}`);
 ok('OAuth app setup reports this port’s callback, 404s an unknown provider, demands GitHub’s secret, and refuses no-token / cross-origin writes');
 
+// ── the credential vault ─────────────────────────────────────────────────────
+// Store → gate → hand out → roll → delete, end to end. Values must reach
+// exactly three places (a spawned server's env, an allowed agent's
+// credential_env call, /api/credentials/resolve) and no API response else.
+const credHeaders = { 'content-type': 'application/json', authorization: `Bearer ${master}` };
+
+const credNoToken = await fetch(`${BASE}/api/credentials`, {
+  method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'X', value: 'y' }),
+});
+if (credNoToken.status !== 401) fail(`creating a credential without the master token should 401, got ${credNoToken.status}`);
+const credForeign = await fetch(`${BASE}/api/credentials`, {
+  method: 'POST', headers: { ...credHeaders, origin: 'https://evil.example' }, body: JSON.stringify({ name: 'X', value: 'y' }),
+});
+if (credForeign.status !== 403) fail(`a cross-origin page must not create a credential, got ${credForeign.status}`);
+ok('credential writes refuse no-token and cross-origin callers');
+
+const SECRET_VALUE = 'smoke_fly_v1_0123456789abcdef';
+const cred = await (await fetch(`${BASE}/api/credentials`, {
+  method: 'POST', headers: credHeaders,
+  body: JSON.stringify({ name: 'Smoke token', value: SECRET_VALUE, envVar: 'SMOKE_TOKEN' }),
+})).json();
+if (!cred.id || cred.envVar !== 'SMOKE_TOKEN') fail(`credential create failed: ${JSON.stringify(cred)}`);
+const credList = await (await fetch(`${BASE}/api/credentials`)).json();
+if (JSON.stringify(credList).includes(SECRET_VALUE)) fail('the credentials list leaked a value');
+if (!credList.find((c) => c.id === cred.id)?.hint) fail('the credentials list carries no masked hint');
+ok(`credential stored (${cred.id}), list is masked and valueless`);
+
+// The guides: static, joined with what is stored, never a fetch.
+const guides = await (await fetch(`${BASE}/api/credentials/guides`)).json();
+if (!Array.isArray(guides) || !guides.find((g) => g.service === 'fly')?.createUrl) fail('credential guides missing the fly guide');
+ok(`credential guides served (${guides.length} services)`);
+
+// Spawn injection: a server whose config references the credential sees the
+// value in its env; nothing was written into servers.json.
+const ENVPROBE = join(ROOT, 'packages/core/src/fixtures/env-server.mjs');
+const probeAdd = await (await fetch(`${BASE}/api/servers`, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    id: 'envprobe', name: 'Env probe', runtime: 'process', command: process.execPath, args: [ENVPROBE],
+    credentialRefs: { SMOKE_TOKEN: cred.id }, enabled: true,
+  }),
+})).json();
+if (probeAdd.state !== 'ready') fail(`envprobe not ready: ${JSON.stringify(probeAdd)}`);
+const probeEnv = await mcp(master, 'tools/call', { name: 'envprobe__env', arguments: { name: 'SMOKE_TOKEN' } });
+if (probeEnv.body?.result?.content?.[0]?.text !== SECRET_VALUE) fail(`credentialRefs did not reach the child env: ${JSON.stringify(probeEnv.body)}`);
+const { readFileSync } = await import('node:fs');
+if (readFileSync(join(DIR, 'servers.json'), 'utf8').includes(SECRET_VALUE)) fail('servers.json contains the secret value');
+ok('a credentialRefs entry reaches the spawned server env; servers.json holds only the reference');
+
+const reserved = await fetch(`${BASE}/api/servers`, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ id: 'hypergate', name: 'Shadow', runtime: 'process', command: 'x', enabled: false }),
+});
+if (reserved.status !== 400) fail(`the reserved id "hypergate" should be refused, got ${reserved.status}`);
+const badRef = await fetch(`${BASE}/api/servers`, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ id: 'badref', name: 'Bad', runtime: 'process', command: 'x', credentialRefs: { SMOKE_TOKEN: 'no-such-cred' } }),
+});
+if (badRef.status !== 400) fail(`an unknown credential ref should be refused, got ${badRef.status}`);
+ok('the hypergate id is reserved and a dangling credentialRef is refused at add time');
+
+// Gating on the gateway: deny-by-default, then a one-flip grant.
+const deniedList = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credentials_list', arguments: {} });
+if (JSON.parse(deniedList.body?.result?.content?.[0]?.text ?? '[]').length !== 0)
+  fail('an ungranted agent should see an empty credentials_list');
+const deniedEnv = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_env', arguments: { id: cred.id } });
+if (!(deniedEnv.body?.error || deniedEnv.body?.result?.isError)) fail(`an ungranted agent must be refused credential_env: ${JSON.stringify(deniedEnv.body)}`);
+if (JSON.stringify(deniedEnv.body).includes(SECRET_VALUE)) fail('a refusal leaked the value');
+ok('credentials are deny-by-default on the gateway (empty list, refused fetch)');
+
+const grant = await fetch(`${BASE}/api/clients/${allowed.id}/credentials/${cred.id}`, {
+  method: 'POST', headers: credHeaders, body: JSON.stringify({ allowed: true }),
+});
+if (grant.status !== 200) fail(`granting the credential failed: ${grant.status}`);
+const grantUnknown = await fetch(`${BASE}/api/clients/${allowed.id}/credentials/nope`, {
+  method: 'POST', headers: credHeaders, body: JSON.stringify({ allowed: true }),
+});
+if (grantUnknown.status !== 404) fail(`granting an unknown credential should 404, got ${grantUnknown.status}`);
+const grantedEnv = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_env', arguments: { id: cred.id } });
+const grantedPayload = JSON.parse(grantedEnv.body?.result?.content?.[0]?.text ?? '{}');
+if (grantedPayload.env?.SMOKE_TOKEN !== SECRET_VALUE) fail(`a granted agent should receive the env: ${JSON.stringify(grantedEnv.body)}`);
+ok('a one-flip grant lets the agent fetch the credential as env (and the fetch is recorded)');
+
+// The hypergate run door: master resolves everything; an agent's scope holds.
+const resolveMaster = await (await fetch(`${BASE}/api/credentials/resolve`, {
+  method: 'POST', headers: credHeaders, body: JSON.stringify({}),
+})).json();
+if (resolveMaster.env?.SMOKE_TOKEN !== SECRET_VALUE) fail(`master resolve missing the env: ${JSON.stringify(resolveMaster.used)}`);
+const resolveDenied = await fetch(`${BASE}/api/credentials/resolve`, {
+  method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${blocked.token}` },
+  body: JSON.stringify({ ids: [cred.id] }),
+});
+if (resolveDenied.status !== 403) fail(`an ungranted agent's resolve should 403, got ${resolveDenied.status}`);
+const resolveAs = await (await fetch(`${BASE}/api/credentials/resolve`, {
+  method: 'POST', headers: credHeaders, body: JSON.stringify({ agent: 'echo-agent' }),
+})).json();
+if (resolveAs.env?.SMOKE_TOKEN !== SECRET_VALUE) fail(`master resolving as the granted agent should get the env: ${JSON.stringify(resolveAs)}`);
+ok('resolve honours scope: master all, an ungranted agent 403, master-as-agent its allow-list');
+
+// Roll: value replaced in place, the referencing server restarted onto it.
+const ROLLED_VALUE = 'smoke_fly_v2_fedcba9876543210';
+const rolledCred = await (await fetch(`${BASE}/api/credentials/${cred.id}/roll`, {
+  method: 'POST', headers: credHeaders, body: JSON.stringify({ value: ROLLED_VALUE }),
+})).json();
+if (!rolledCred.rotatedAt || !(rolledCred.restarted ?? []).includes('envprobe')) fail(`roll should stamp rotatedAt and restart envprobe: ${JSON.stringify(rolledCred)}`);
+const probeEnv2 = await mcp(master, 'tools/call', { name: 'envprobe__env', arguments: { name: 'SMOKE_TOKEN' } });
+if (probeEnv2.body?.result?.content?.[0]?.text !== ROLLED_VALUE) fail(`the restarted server should see the rolled value: ${JSON.stringify(probeEnv2.body)}`);
+ok('rolling replaces the value and restarts the servers that reference it');
+
+// Delete means deleted: value, grants, and server references all go.
+const credDelete = await (await fetch(`${BASE}/api/credentials/${cred.id}`, {
+  method: 'DELETE', headers: credHeaders,
+})).json();
+if (!credDelete.ok || !credDelete.servers.includes('envprobe') || !credDelete.agents.includes(allowed.id))
+  fail(`delete should prune refs and grants: ${JSON.stringify(credDelete)}`);
+const afterDelete = await (await fetch(`${BASE}/api/credentials`)).json();
+if (afterDelete.some((c) => c.id === cred.id)) fail('the credential is still listed after delete');
+const goneEnv = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_env', arguments: { id: cred.id } });
+if (!(goneEnv.body?.error || goneEnv.body?.result?.isError)) fail('a deleted credential must not be fetchable');
+ok('delete removes the credential, every agent grant, and every server reference');
+
+// Keep a credential around to prove the vault survives the restart below.
+const keeper = await (await fetch(`${BASE}/api/credentials`, {
+  method: 'POST', headers: credHeaders,
+  body: JSON.stringify({ name: 'Keeper token', value: 'keeper_value_123456', envVar: 'KEEPER_TOKEN' }),
+})).json();
+if (!keeper.id) fail(`keeper credential create failed: ${JSON.stringify(keeper)}`);
+await fetch(`${BASE}/api/servers/envprobe/stop`, { method: 'POST' });
+
 // ── persistence across a restart ────────────────────────────────────────────
 const before = analytics.totalCalls;
 await new Promise((r) => setTimeout(r, 2300)); // let the debounced writer flush
@@ -278,6 +410,17 @@ ok(`analytics persisted across restart (totalCalls ${before} → ${after.totalCa
 const usageAfter = await (await fetch(`${BASE}/api/usage/events?limit=50`)).json();
 if (!Array.isArray(usageAfter) || usageAfter.length < 1) fail('durable usage history did not survive the restart');
 ok(`durable usage history survived the restart (${usageAfter.length} event(s))`);
+
+// The vault survives too: metadata, the stored value, and resolvability.
+const credsAfter = await (await fetch(`${BASE}/api/credentials`)).json();
+if (!credsAfter.some((c) => c.id === keeper.id)) fail('the vault lost a credential across the restart');
+const keeperResolved = await (await fetch(`${BASE}/api/credentials/resolve`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', authorization: `Bearer ${await gwToken()}` },
+  body: JSON.stringify({ ids: [keeper.id] }),
+})).json();
+if (keeperResolved.env?.KEEPER_TOKEN !== 'keeper_value_123456') fail(`the stored value did not survive the restart: ${JSON.stringify(keeperResolved)}`);
+ok('the credential vault survived the restart (metadata + value)');
 
 // ── a stopped server survives a restart ─────────────────────────────────────
 // Stopping a server persists `enabled: false`; it must still be in the roster

@@ -167,6 +167,13 @@ export class Supervisor {
   private authHeadersFor?: AuthHeadersFor;
   /** Path to the `hypergate` shell binary, used to enforce per-server resource limits. */
   private launcher?: string;
+  /**
+   * Resolves a config's `credentialRefs` into secret env at spawn time
+   * (injected by the daemon, which owns the vault). Core never sees where the
+   * values live; the resolved map is merged into the child's env exactly like
+   * `secrets` and never stored or logged.
+   */
+  private secretsFor?: (config: ManagedServerConfig) => Record<string, string>;
 
   constructor(
     opts: {
@@ -175,6 +182,7 @@ export class Supervisor {
       authProviderFor?: AuthProviderFor;
       authHeadersFor?: AuthHeadersFor;
       launcher?: string;
+      secretsFor?: (config: ManagedServerConfig) => Record<string, string>;
     } = {},
   ) {
     this.onUsage = opts.onUsage;
@@ -182,6 +190,7 @@ export class Supervisor {
     this.authProviderFor = opts.authProviderFor;
     this.authHeadersFor = opts.authHeadersFor;
     this.launcher = opts.launcher;
+    this.secretsFor = opts.secretsFor;
   }
 
   /**
@@ -415,7 +424,13 @@ export class Supervisor {
 
   /** Local stdio child (process/docker) — the original path. */
   private stdioTransport(config: ManagedServerConfig, inst: Instance): StdioClientTransport {
-    const spec = runtimeFor(config.runtime, { launcher: this.launcher }).spawnSpec(config);
+    // Vault-referenced secrets resolve into the config's secret env *before* the
+    // runtime shapes the spawn, so they reach a Docker child's `-e` flags the
+    // same way they reach a process child's env. Resolved last: a ref always
+    // wins over a stale plaintext copy of the same key.
+    const vaultEnv = this.secretsFor?.(config) ?? {};
+    const effective = Object.keys(vaultEnv).length ? { ...config, secrets: { ...config.secrets, ...vaultEnv } } : config;
+    const spec = runtimeFor(config.runtime, { launcher: this.launcher }).spawnSpec(effective);
     // Say plainly whether the requested limits are actually in force. A config
     // that asks for a sandbox we cannot apply must be visible, never assumed.
     const wanted = Object.entries(config.limits ?? {}).filter(([, v]) => v);
