@@ -298,7 +298,20 @@ APPLESCRIPT
 
 rm -rf "$MOUNT/.fseventsd"
 sync
-hdiutil detach "$DEVICE"
+# Finder's diskimages-help can still hold the volume for a few seconds after the
+# window closes, and a plain detach then fails with "Resource busy". Wait it out
+# rather than forcing immediately: a forced detach can drop the layout Finder has
+# not flushed yet, which is the whole point of this mount.
+detach_attempt=1
+until hdiutil detach "$DEVICE" >/dev/null 2>&1; do
+  if [ "$detach_attempt" -ge 10 ]; then
+    echo "macOS disk image layout: volume still busy after 10 attempts, forcing detach" >&2
+    hdiutil detach "$DEVICE" -force
+    break
+  fi
+  detach_attempt=$((detach_attempt + 1))
+  sleep 3
+done
 DEVICE=""
 hdiutil convert "$auto_layout_dmg" -format UDZO -imagekey zlib-level=9 -o "$WORK/final.dmg"
 
