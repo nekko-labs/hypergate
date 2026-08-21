@@ -137,6 +137,42 @@ pub fn method() -> Method {
 
 // ── Windows: Windows Hello ──────────────────────────────────────────────────
 
+/// Block on a WinRT async operation without pulling in an async runtime.
+///
+/// `windows-future` 0.2 had an inherent `get()` that did exactly this; 0.3
+/// removed it in favour of `IntoFuture`, and this binary has no executor to
+/// await on. So this is the underlying WinRT pattern the old helper wrapped:
+/// watch `IAsyncInfo::Status` and call `GetResults` once it leaves `Started`.
+///
+/// The timeout matters because the operation being waited on is a prompt in
+/// front of a human. `Cancel` on the way out means a prompt nobody answered is
+/// dismissed rather than left on their screen.
+#[cfg(windows)]
+fn block_on<T: windows::core::RuntimeType>(
+    op: &windows_future::IAsyncOperation<T>,
+    timeout: std::time::Duration,
+) -> Result<T, String> {
+    use windows::core::Interface;
+    use windows_future::{AsyncStatus, IAsyncInfo};
+
+    let info: IAsyncInfo = op.cast().map_err(|e| e.to_string())?;
+    let started = std::time::Instant::now();
+    loop {
+        match info.Status().map_err(|e| e.to_string())? {
+            AsyncStatus::Started => {
+                if started.elapsed() > timeout {
+                    let _ = info.Cancel();
+                    return Err("timed out waiting for an answer".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            AsyncStatus::Completed => return op.GetResults().map_err(|e| e.to_string()),
+            // Canceled or Error. Neither is a "yes".
+            _ => return Err("the request did not complete".into()),
+        }
+    }
+}
+
 /// Windows Hello (face, fingerprint, or PIN), via the WinRT consent verifier.
 #[cfg(windows)]
 pub fn authorize(reason: &str) -> Verdict {
@@ -155,7 +191,7 @@ pub fn authorize(reason: &str) -> Verdict {
     // Compared rather than pattern-matched: these WinRT "enums" are newtypes
     // over i32 with associated constants, not Rust enum variants, so a const
     // pattern is not guaranteed to be usable here while `==` always is.
-    match op.get() {
+    match block_on(&op, std::time::Duration::from_secs(90)) {
         Ok(result) if result == UserConsentVerificationResult::Verified => Verdict::Authorized,
         // Everything else is a no: Canceled, RetriesExhausted, DeviceBusy,
         // NotConfiguredForUser, DeviceNotPresent, DisabledByPolicy.
@@ -168,7 +204,13 @@ pub fn authorize(reason: &str) -> Verdict {
 #[cfg(windows)]
 fn available_detail() -> Option<String> {
     use windows::Security::Credentials::UI::{UserConsentVerifier, UserConsentVerifierAvailability};
-    let availability = match UserConsentVerifier::CheckAvailabilityAsync().and_then(|op| op.get()) {
+    let op = match UserConsentVerifier::CheckAvailabilityAsync() {
+        Ok(op) => op,
+        Err(e) => return Some(format!("Windows Hello could not be queried: {e}")),
+    };
+    // A capability probe, not a prompt: it should never make the settings
+    // response wait, so its budget is seconds rather than a minute and a half.
+    let availability = match block_on(&op, std::time::Duration::from_secs(10)) {
         Ok(a) => a,
         Err(e) => return Some(format!("Windows Hello could not be queried: {e}")),
     };

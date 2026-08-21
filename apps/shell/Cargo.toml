@@ -45,6 +45,10 @@ objc2-foundation = "0.3.2"
 objc2-local-authentication = { version = "0.3.2", features = ["LAContext", "LAError", "block2"] }
 
 [target."cfg(windows)".dependencies]
+# WinRT async types (IAsyncOperation and friends). They live in their own crate
+# and `windows` references them as `windows_future::…` rather than re-exporting
+# them, so blocking on Windows Hello's consent operation needs it by name.
+windows-future = "0.3.2"
 windows = { version = "0.62.2", features = [
     "Win32_System_JobObjects",
     "Win32_System_Threading",
