@@ -500,13 +500,25 @@ export interface CliCheckResult {
 }
 
 /**
- * The credential vault — named secret values (API keys, access tokens) for the
+ * The credential vault: named secret values (API keys, access tokens) for the
  * CLIs and MCP servers Hypergate manages. Values live in the OS keychain (file
  * fallback mirrors the OAuth grants); everything here is metadata and **never
- * contains the value**. A value leaves the daemon through exactly three doors:
- * launch-time env for a managed server (`credentialRefs`), the gateway's
- * `hypergate__credential_env` tool for an agent that was granted it, and
- * `hypergate run`, which injects it into a child process's env.
+ * contains the value**.
+ *
+ * A value leaves the daemon through exactly four doors. Three hand it to a
+ * machine: launch-time env for a managed server (`credentialRefs`), the
+ * gateway's `hypergate__credential_env` tool for an agent that was granted it,
+ * and `hypergate run`, which injects it into a child process's env. The fourth
+ * hands it back to the person: `POST /api/credentials/:id/reveal`, which needs
+ * the master token, a same-origin request, *and* a live OS consent prompt
+ * (Touch ID, Windows Hello, polkit), and is recorded every time.
+ *
+ * v1.7.0 shipped with three doors and "there is no reveal endpoint" written
+ * into the spec. The rule it was protecting was never "a value must not be
+ * readable by its owner" (the owner can read the keychain entry directly with
+ * the OS's own tools); it was "a value must not be readable by something that
+ * merely reached the API". The fourth door keeps that: it is the only door
+ * that requires proof of the *person*, not just the token.
  */
 export type CredentialKind = 'api-key' | 'token' | 'other';
 
@@ -542,7 +554,33 @@ export interface CredentialInfo extends CredentialMeta {
 }
 
 /**
- * How to obtain one service's credential — the guidance half of the vault.
+ * Where a guide sits in the add flow. Purely presentational: it groups the
+ * catalog so an unsearched panel shows eight headings instead of fifty rows.
+ */
+export type CredentialCategory =
+  | 'ai'
+  | 'cloud'
+  | 'data'
+  | 'dev'
+  | 'search'
+  | 'comms'
+  | 'money'
+  | 'observability';
+
+/** Display order and label for each category. */
+export const CREDENTIAL_CATEGORIES: { id: CredentialCategory; label: string }[] = [
+  { id: 'ai', label: 'AI and models' },
+  { id: 'dev', label: 'Developer tools' },
+  { id: 'cloud', label: 'Cloud and hosting' },
+  { id: 'data', label: 'Databases' },
+  { id: 'search', label: 'Search and scraping' },
+  { id: 'comms', label: 'Messaging and email' },
+  { id: 'money', label: 'Payments' },
+  { id: 'observability', label: 'Analytics and monitoring' },
+];
+
+/**
+ * How to obtain one service's credential, the guidance half of the vault.
  * Curated in `@hypergate/core` under the catalog's trust rules: every URL and
  * command comes from the vendor's own docs, and a guide only exists when there
  * is a real first-party page or command to point at.
@@ -553,6 +591,8 @@ export interface CredentialGuide {
   /** What the credential is called, e.g. "GitHub personal access token". */
   name: string;
   kind: CredentialKind;
+  /** Which group this guide is listed under. */
+  category: CredentialCategory;
   /** Canonical env var the value is injected as. */
   envVar: string;
   /** Other env var names tools read the same value from (injected alongside). */
@@ -575,6 +615,92 @@ export interface CredentialGuide {
 export interface CredentialGuideInfo extends CredentialGuide {
   /** Id of the stored credential created from this guide, when one exists. */
   storedId?: string;
+}
+
+/**
+ * One row of `hypergate__credentials_list`, as an agent sees it.
+ *
+ * The interesting field is `allowed`. v1.7.0 filtered unpermitted credentials
+ * out entirely, which is airtight and useless: an agent cannot ask for a key
+ * whose existence is hidden from it, so every refusal became "ask the human to
+ * go find something". A row with `allowed: false` carries the name and env var
+ * and nothing else (no `hint`, never a value), which is enough to request it by
+ * id and not enough to use it. `agentsSeeAllCredentialNames: false` restores
+ * the old behaviour for anyone who would rather an agent not learn the
+ * inventory at all.
+ */
+export interface AgentCredentialListing {
+  id: string;
+  name: string;
+  kind: CredentialKind;
+  service?: string;
+  envVar?: string;
+  /** Whether this caller may fetch it right now. */
+  allowed: boolean;
+  /** Last rolled, so an agent can tell a stale failure from a fresh key. */
+  rotatedAt?: string;
+  /** Where to send the user to approve access. Present only when not allowed. */
+  requestUrl?: string;
+}
+
+/**
+ * Every string a guide can be found by. This is what makes the search feel
+ * like it knows what you meant: the same Fly row answers to "fly", "flyctl",
+ * and "FLY_API_TOKEN", because a user arrives from three directions (the
+ * product they use, the command that failed, and the variable an error named).
+ */
+const guideHaystack = (g: CredentialGuide): string =>
+  [g.name, g.service, g.envVar, ...(g.aliases ?? []), ...(g.clis ?? []), ...(g.servers ?? []), g.category]
+    .join(' ')
+    .toLowerCase();
+
+/**
+ * Search the credential guides. Empty query returns everything, in catalog
+ * order.
+ *
+ * Lives here rather than in `@hypergate/core` because both sides need it and
+ * only one of them can have it: the add panel ranks guides the daemon already
+ * served it, in the browser, which does not bundle core. The catalog *data*
+ * stays in core; this is pure logic over whatever list it is handed.
+ *
+ * Scored rather than merely filtered, because substring matching alone puts
+ * "GitHub" third for the query "git". The ranking is: an exact service or env
+ * var match, then a prefix match on the name or service, then an env var
+ * substring, then a word-boundary hit anywhere in the searchable text, then a
+ * bare substring. Ties keep catalog order, which is deliberate rather than
+ * alphabetical (the providers most people want are listed first in each
+ * category).
+ *
+ * Every whitespace-separated term must match something, so "fly token" narrows
+ * rather than widening to everything that mentions either word.
+ */
+export function searchGuides<T extends CredentialGuide>(query: string, guides: readonly T[]): T[] {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [...guides];
+
+  const scored: { g: T; score: number; order: number }[] = [];
+  guides.forEach((g, order) => {
+    const text = guideHaystack(g);
+    const name = g.name.toLowerCase();
+    const service = g.service.toLowerCase();
+    const envVar = g.envVar.toLowerCase();
+    let total = 0;
+    for (const term of terms) {
+      let best = 0;
+      if (service === term || envVar === term) best = 100;
+      else if (name.startsWith(term) || service.startsWith(term)) best = 60;
+      else if (envVar.includes(term)) best = 45;
+      else if (new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(text)) best = 30;
+      else if (text.includes(term)) best = 10;
+      // One unmatched term disqualifies the row: a two-word query is a
+      // narrowing, not a union.
+      if (best === 0) return;
+      total += best;
+    }
+    scored.push({ g, score: total, order });
+  });
+
+  return scored.sort((a, b) => b.score - a.score || a.order - b.order).map((s) => s.g);
 }
 
 /** Env var shape a credential may declare: `FLY_API_TOKEN`, not `fly token`. */
@@ -618,6 +744,78 @@ export interface DeleteCredentialResponse {
 /** Flip one credential for one agent (`POST /api/clients/:id/credentials/:credId`). */
 export interface SetAgentCredentialRequest {
   allowed: boolean;
+}
+
+/**
+ * An agent asking for a credential it was not granted.
+ *
+ * Deny-by-default is the right default and a dead end on its own: the agent
+ * hits a refusal, and the user never learns it happened. A request turns that
+ * refusal into something the user can act on, without the agent ever being
+ * able to grant itself anything: filing one is free, and only the master token
+ * plus a same-origin request can approve it.
+ */
+export interface CredentialRequest {
+  /** Request id, stable for the life of the request. */
+  id: string;
+  /** The credential being asked for. */
+  credentialId: string;
+  /** Display name of that credential, so the UI needs no second lookup. */
+  credentialName: string;
+  /** Agent client id that asked. */
+  agentId: string;
+  /** Display name of that agent. */
+  agentName: string;
+  /** Why the agent says it needs the key. Agent-supplied text, shown as-is. */
+  reason?: string;
+  /** First time this agent asked for this credential. */
+  askedAt: string;
+  /** How many times it has asked since. Dedupe means one row, not twenty. */
+  attempts: number;
+}
+
+/** Pending requests, newest first (`GET /api/credential-requests`). */
+export interface CredentialRequestsResponse {
+  requests: CredentialRequest[];
+}
+
+/** What approving or denying a request did. */
+export interface ResolveCredentialRequestResponse {
+  ok: boolean;
+  /** True when the grant was actually flipped on (approve only). */
+  granted: boolean;
+}
+
+/**
+ * The reveal door (`POST /api/credentials/:id/reveal`).
+ *
+ * Guarded three ways: the master token, a same-origin request, and an OS
+ * consent prompt the daemon cannot fake (it shells out to `hypergate
+ * authorize`, which returns 0 only after Touch ID / Windows Hello / polkit
+ * says the person at the keyboard agreed). `authorized: false` with a `reason`
+ * is the honest answer where no such prompt exists, rather than handing the
+ * value over on a weaker check.
+ */
+export interface RevealCredentialResponse {
+  ok: boolean;
+  /** The secret, present only when the OS consent prompt succeeded. */
+  value?: string;
+  /** Whether the consent prompt succeeded. */
+  authorized: boolean;
+  /** Why not, when it did not: `denied`, `unavailable`, or `error`. */
+  reason?: 'denied' | 'unavailable' | 'error';
+  /** Human-readable detail for `unavailable` (e.g. no polkit on this box). */
+  detail?: string;
+}
+
+/** What the local OS can do about proving who is at the keyboard. */
+export interface AuthorizeCapability {
+  /** Whether a consent prompt is available at all. */
+  available: boolean;
+  /** Which one: `touch-id`, `windows-hello`, `polkit`, or `none`. */
+  method: 'touch-id' | 'windows-hello' | 'polkit' | 'none';
+  /** Why it is unavailable, when it is. */
+  detail?: string;
 }
 
 /**
@@ -967,6 +1165,17 @@ export interface DaemonSettings {
    * "never update again".
    */
   skippedUpdate?: string;
+  /**
+   * Whether `hypergate__credentials_list` names credentials the caller may not
+   * fetch (metadata only, never a value or a hint).
+   *
+   * On by default, because an agent that cannot see a key cannot ask for it,
+   * and asking is the whole point of the request queue. Turn it off and the
+   * list returns to v1.7.0 behaviour: granted credentials only, and an agent
+   * can request a key only if it learned the id some other way (a server's
+   * `requires`, a failing CLI, the user naming it).
+   */
+  agentsSeeAllCredentialNames?: boolean;
 }
 
 /** `/api/settings` payload: the settings plus what this platform can actually do. */
@@ -983,6 +1192,12 @@ export interface SettingsInfo extends DaemonSettings {
   startupVia: 'shell' | 'daemon' | 'none';
   /** The command the login item runs, when autostart is available. */
   startupCommand?: string;
+  /**
+   * Whether this machine can prove who is at the keyboard, and how. Decides
+   * whether the UI offers Reveal at all: an OS with no consent prompt gets the
+   * button disabled with the reason, not a reveal on a weaker check.
+   */
+  authorize?: AuthorizeCapability;
 }
 
 /** Request body to update settings (partial). */
@@ -992,6 +1207,7 @@ export interface UpdateSettingsRequest {
   closeAction?: CloseAction;
   /** A version to stop being offered, or `null` to start being offered it again. */
   skippedUpdate?: string | null;
+  agentsSeeAllCredentialNames?: boolean;
 }
 
 /**

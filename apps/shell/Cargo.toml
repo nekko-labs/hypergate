@@ -1,6 +1,6 @@
 [package]
 name = "hypergate-shell"
-version = "1.8.0"
+version = "1.9.0"
 edition = "2024"
 description = "Hypergate desktop shell: tray agent, CLI, and sandbox launcher"
 license = "MIT"
@@ -35,6 +35,15 @@ wry = "0.55.1"
 [target."cfg(unix)".dependencies]
 libc = "0.2.189"
 
+# LocalAuthentication, for the vault's reveal door: Touch ID (or the login
+# password where there is no sensor) is the only thing that can prove a *person*
+# is at the keyboard, which a bearer token cannot. See src/authorize.rs.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.1"
+objc2 = "0.6.4"
+objc2-foundation = "0.3.2"
+objc2-local-authentication = { version = "0.3.2", features = ["LAContext", "LAError", "block2"] }
+
 [target."cfg(windows)".dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_System_JobObjects",
@@ -48,4 +57,7 @@ windows = { version = "0.62.2", features = [
     # The HKCU Run key, read and written in-process (never via reg.exe, which
     # flashes a console window when spawned from the console-less tray).
     "Win32_System_Registry",
+    # Windows Hello, the reveal door's consent prompt (see src/authorize.rs).
+    "Security_Credentials_UI",
+    "Foundation",
 ] }

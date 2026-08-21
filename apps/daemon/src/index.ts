@@ -67,6 +67,7 @@ import {
 import { registryConnections } from '@hypergate/shared';
 import { openStore } from './store.ts';
 import { CredentialVault } from './vault.ts';
+import { CredentialRequestStore } from './requests.ts';
 import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
 import { Updater } from './updater.ts';
@@ -92,10 +93,14 @@ import type {
   AgentConnectInfo,
   ConnectResult,
   SetAgentServerRequest,
+  AgentCredentialListing,
   CreateCredentialRequest,
   CredentialGuideInfo,
   CredentialInfo,
+  CredentialRequestsResponse,
   DeleteCredentialResponse,
+  ResolveCredentialRequestResponse,
+  RevealCredentialResponse,
   ResolveCredentialsRequest,
   RollCredentialRequest,
   SetAgentCredentialRequest,
@@ -151,7 +156,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.8.0';
+const VERSION = '1.9.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -682,6 +687,11 @@ const settingsInfo = (): SettingsInfo => {
     startupVia,
     startupCommand: autostart.startupCommand(),
     skippedUpdate: s.skippedUpdate,
+    agentsSeeAllCredentialNames: s.agentsSeeAllCredentialNames !== false,
+    // Probed rather than assumed: a Mac with no Touch ID sensor and a Linux box
+    // with no polkit both need the reveal button disabled with a reason, and
+    // only the shell binary can tell us which case we are in.
+    authorize: shell.authorizeCapability(),
   };
 };
 
@@ -941,45 +951,143 @@ const vault = new CredentialVault(DATA_DIR, {
 });
 
 /**
+ * Pending access requests. See requests.ts for why this is memory rather than a
+ * file: a request is worth about as much as the retry loop that produced it.
+ */
+const credentialRequests = new CredentialRequestStore();
+
+/** Where a user goes to answer one request. Clickable from a terminal. */
+const requestUrl = (credentialId: string): string =>
+  `http://localhost:${PORT}/#credentials/${encodeURIComponent(credentialId)}/request`;
+
+/**
  * The gateway's own credential tools, built per request with the caller's
  * scope closed over. Master reaches everything; an agent reaches exactly its
  * allow-list (absent = nothing). Calls and refusals are recorded through the
  * normal usage path, so analytics answers "who took which key, when".
+ *
+ * `asker` is the agent behind the call, present only for agent-scoped callers.
+ * It is what lets a refusal become a request: a master caller has nothing to
+ * ask for and nobody to ask.
  */
-const credentialBuiltins = (scope: '*' | string[] | undefined): GatewayBuiltinTool[] => [
-  {
-    name: 'credentials_list',
-    description:
-      'List the vault credentials this caller may fetch — metadata only (id, name, env var), never values.',
-    inputSchema: { type: 'object', properties: {} },
-    call: () =>
-      vault
-        .list()
-        .filter((r) => scope === '*' || isCredentialAllowed(scope, r.id))
-        .map(({ id, name, kind, service, envVar, rotatedAt }) => ({ id, name, kind, service, envVar, rotatedAt })),
-  },
-  {
-    name: 'credential_env',
-    description:
-      'Fetch one allowed credential as environment variables. Returns {env: {VAR: value, …}, value}. Set the env on the process that needs the key (e.g. before re-running a CLI) instead of asking the user to re-authenticate by hand.',
-    inputSchema: {
-      type: 'object',
-      properties: { id: { type: 'string', description: 'Credential id, from credentials_list' } },
-      required: ['id'],
+const credentialBuiltins = (
+  scope: '*' | string[] | undefined,
+  asker?: { id: string; name: string },
+): GatewayBuiltinTool[] => {
+  /**
+   * File a request, if there is anyone to file it as. Returns the URL to hand
+   * the user, or undefined when the caller is master (which cannot be refused,
+   * so never reaches here) or when the credential does not exist.
+   */
+  const fileRequest = (credentialId: string, credentialName: string, reason?: string): string | undefined => {
+    if (!asker) return undefined;
+    credentialRequests.file({
+      credentialId,
+      credentialName,
+      agentId: asker.id,
+      agentName: asker.name,
+      reason,
+    });
+    return requestUrl(credentialId);
+  };
+
+  return [
+    {
+      name: 'credentials_list',
+      description:
+        'List the vault credentials on this machine: metadata only (id, name, env var), never values. Rows with "allowed": true can be fetched with credential_env; rows with "allowed": false need the user to approve access first, via credential_request.',
+      inputSchema: { type: 'object', properties: {} },
+      call: (): AgentCredentialListing[] => {
+        // The opacity switch. On (the default) an agent sees every name so it
+        // can ask for one by id; off restores v1.7.0, where a credential it was
+        // not granted does not exist as far as it can tell.
+        const showAll = loadSettings().agentsSeeAllCredentialNames !== false;
+        const rows: AgentCredentialListing[] = [];
+        for (const r of vault.list()) {
+          const allowed = scope === '*' || isCredentialAllowed(scope, r.id);
+          if (!allowed && (!showAll || !asker)) continue;
+          rows.push({
+            id: r.id,
+            name: r.name,
+            kind: r.kind,
+            service: r.service,
+            envVar: r.envVar,
+            allowed,
+            rotatedAt: r.rotatedAt,
+            // No hint on an unpermitted row: a masked value is still four
+            // characters of a secret the caller was not granted.
+            ...(allowed ? {} : { requestUrl: requestUrl(r.id) }),
+          });
+        }
+        return rows;
+      },
     },
-    call: (args) => {
-      const id = String(args.id ?? '').trim();
-      const row = vault.get(id);
-      if (!row) throw new Error(`Unknown credential "${id}". Use credentials_list to see what exists.`);
-      if (scope !== '*' && !isCredentialAllowed(scope, id))
-        throw new Error(`Not permitted: this client may not fetch credential "${id}". The user can grant it in Hypergate.`);
-      const value = vault.value(id);
-      if (value === undefined) throw new Error(`Credential "${id}" has no stored value — roll it in Hypergate.`);
-      vault.touch(id);
-      return { id, envVar: row.envVar, env: credentialEnv(row, value), value };
+    {
+      name: 'credential_env',
+      description:
+        'Fetch one allowed credential as environment variables. Returns {env: {VAR: value, …}, value}. Set the env on the process that needs the key (e.g. before re-running a CLI) instead of asking the user to re-authenticate by hand. If access has not been granted, this files a request and tells you the URL to give the user.',
+      inputSchema: {
+        type: 'object',
+        properties: { id: { type: 'string', description: 'Credential id, from credentials_list' } },
+        required: ['id'],
+      },
+      call: (args) => {
+        const id = String(args.id ?? '').trim();
+        const row = vault.get(id);
+        if (!row) throw new Error(`Unknown credential "${id}". Use credentials_list to see what exists.`);
+        if (scope !== '*' && !isCredentialAllowed(scope, id)) {
+          // The refusal files the request itself, so an agent that never
+          // thought to call credential_request still ends up with something
+          // the user can act on rather than a dead end.
+          const url = fileRequest(id, row.name);
+          throw new Error(
+            url
+              ? `Not permitted: this client may not fetch credential "${id}". A request has been filed. Ask the user to approve it at ${url}, then try again.`
+              : `Not permitted: this client may not fetch credential "${id}". The user can grant it in Hypergate.`,
+          );
+        }
+        const value = vault.value(id);
+        if (value === undefined) throw new Error(`Credential "${id}" has no stored value. Roll it in Hypergate.`);
+        vault.touch(id);
+        return { id, envVar: row.envVar, env: credentialEnv(row, value), value };
+      },
     },
-  },
-];
+    {
+      name: 'credential_request',
+      description:
+        'Ask the user for access to a credential this client may not fetch. Returns a URL to give the user so they can approve it. Filing a request grants nothing by itself; retry credential_env once the user approves.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Credential id, from credentials_list' },
+          reason: {
+            type: 'string',
+            description: 'One short line on what the key is for. Shown to the user beside the request.',
+          },
+        },
+        required: ['id'],
+      },
+      call: (args) => {
+        const id = String(args.id ?? '').trim();
+        const reason = typeof args.reason === 'string' ? args.reason.slice(0, 200) : undefined;
+        const row = vault.get(id);
+        if (!row) throw new Error(`Unknown credential "${id}". Use credentials_list to see what exists.`);
+        // Already granted: say so rather than filing a request the user would
+        // open to find nothing to decide.
+        if (scope === '*' || isCredentialAllowed(scope, id))
+          return { filed: false, allowed: true, message: `Access to "${id}" is already granted. Call credential_env.` };
+        const url = fileRequest(id, row.name, reason);
+        if (!url) throw new Error('Only a connected agent can request credential access.');
+        return {
+          filed: true,
+          allowed: false,
+          url,
+          message: `Ask the user to approve access to "${row.name}" at ${url}, then call credential_env again.`,
+        };
+      },
+    },
+  ];
+};
 
 /** The identity the stored grant states about itself. No network, always cheap. */
 const accountFromGrant = (cfg: ManagedServerConfig): ServerAccount | undefined => {
@@ -1621,12 +1729,16 @@ if (STDIO_MODE) {
         let caller: string;
         let allowServer: ((id: string) => boolean) | undefined;
         let credScope: '*' | string[] | undefined;
+        // Who to file an access request as. Agent-scoped callers only: a master
+        // caller is never refused, so it has nothing to request.
+        let asker: { id: string; name: string } | undefined;
         if (scope.kind === 'agent') {
           caller = scope.agent.name;
           const allow = scope.agent.servers;
           allowServer = (id) => allow === '*' || allow.includes(id);
           // Credentials are deny-by-default: an agent with no allow-list gets none.
           credScope = scope.agent.credentials;
+          asker = { id: scope.agent.id, name: scope.agent.name };
           scope.agent.lastUsed = new Date().toISOString();
           persistClients();
         } else {
@@ -1637,7 +1749,7 @@ if (STDIO_MODE) {
         const gateway = createGateway(
           supervisor,
           { name: 'hypergate-gateway', version: VERSION },
-          { caller, allowServer, builtins: credentialBuiltins(credScope) },
+          { caller, allowServer, builtins: credentialBuiltins(credScope, asker) },
         );
         res.on('close', () => {
           void transport.close();
@@ -1799,6 +1911,8 @@ if (STDIO_MODE) {
         // always hand back a version the topbar was told to stop offering.
         if (b.skippedUpdate === null) delete cur.skippedUpdate;
         else if (typeof b.skippedUpdate === 'string' && /^[\w.+-]{1,64}$/.test(b.skippedUpdate)) cur.skippedUpdate = b.skippedUpdate;
+        if (typeof b.agentsSeeAllCredentialNames === 'boolean')
+          cur.agentsSeeAllCredentialNames = b.agentsSeeAllCredentialNames;
         if (typeof b.runOnStartup === 'boolean') {
           // Let the OS error surface: "could not write the Run key" is a far
           // better answer than a toggle that silently springs back.
@@ -2040,8 +2154,11 @@ if (STDIO_MODE) {
       const id = decodeURIComponent(credM[1]);
       if (!vault.delete(id)) return json(res, 404, { error: 'not_found' });
       // Delete means deleted (the v0.16.1 rule): the value, the metadata, every
-      // agent grant, and every server reference go together — a dangling ref
-      // would resurrect the key the moment someone re-created the id.
+      // agent grant, every server reference, and every pending request go
+      // together. A dangling ref would resurrect the key the moment someone
+      // re-created the id, and a surviving request would offer to grant access
+      // to something that no longer exists.
+      credentialRequests.forgetCredential(id);
       const prunedAgents: string[] = [];
       for (const c of clients) {
         if (!isCredentialAllowed(c.credentials, id)) continue;
@@ -2060,6 +2177,94 @@ if (STDIO_MODE) {
       }
       if (prunedServers.length) saveConfig(servers);
       const out: DeleteCredentialResponse = { ok: true, servers: prunedServers, agents: prunedAgents };
+      return json(res, 200, out);
+    }
+
+    // ── pending access requests ─────────────────────────────────────────────
+    // What an agent's refusal turns into. Reads are unauthenticated like the
+    // rest of the management GETs (localhost, and a request names no secret);
+    // answering one is a grant, so it needs the master token like every other
+    // vault mutation.
+    if (pathname === '/api/credential-requests' && req.method === 'GET') {
+      const out: CredentialRequestsResponse = { requests: credentialRequests.list() };
+      return json(res, 200, out);
+    }
+
+    const credReqM = /^\/api\/credential-requests\/([^/]+)\/(approve|deny)$/.exec(pathname);
+    if (credReqM && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const request = credentialRequests.get(decodeURIComponent(credReqM[1]));
+      if (!request) return json(res, 404, { error: 'not_found' });
+      const approve = credReqM[2] === 'approve';
+      let granted = false;
+      if (approve) {
+        const agent = clients.find((c) => c.id === request.agentId);
+        // The agent or the credential can disappear between asking and
+        // answering. Resolve the request either way: it is stale, and leaving
+        // it pending would offer a decision that cannot be carried out.
+        if (agent && vault.get(request.credentialId)) {
+          // The same arithmetic the per-agent switch uses. Approving is not a
+          // second kind of permission, it is the ordinary grant.
+          agent.credentials = setCredentialAllowed(agent.credentials, request.credentialId, true, vault.ids());
+          saveClients(clients);
+          granted = true;
+        }
+      }
+      credentialRequests.resolve(request.id);
+      const out: ResolveCredentialRequestResponse = { ok: true, granted };
+      return json(res, 200, out);
+    }
+
+    // ── reveal: the fourth door ─────────────────────────────────────────────
+    // The only door that hands a value back to the *person* rather than to a
+    // process, and the only one that requires proof of who is at the keyboard:
+    // master token, same-origin (the global guard above), and a live OS consent
+    // prompt. `hypergate authorize` is what makes the last one real: the daemon
+    // cannot approve on the user's behalf, it can only ask the OS and be told.
+    const credRevealM = /^\/api\/credentials\/([^/]+)\/reveal$/.exec(pathname);
+    if (credRevealM && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const id = decodeURIComponent(credRevealM[1]);
+      const row = vault.get(id);
+      if (!row) return json(res, 404, { error: 'not_found' });
+      const verdict = await shell.authorize(`reveal ${row.name}`);
+      if (!verdict.authorized) {
+        const out: RevealCredentialResponse = {
+          ok: false,
+          authorized: false,
+          reason: verdict.reason,
+          detail: verdict.detail,
+        };
+        // A refusal is recorded too: "someone tried and was denied" is the more
+        // interesting half of an audit trail.
+        supervisor.record({
+          at: new Date().toISOString(),
+          serverId: BUILTIN_NS,
+          server: 'Hypergate',
+          tool: 'credential_reveal',
+          client: 'manager UI',
+          ok: false,
+          ms: 0,
+          bytesIn: 0,
+          bytesOut: 0,
+          error: verdict.reason,
+        });
+        return json(res, verdict.reason === 'unavailable' ? 501 : 403, out);
+      }
+      const value = vault.value(id);
+      if (value === undefined) return json(res, 404, { error: 'no_value' });
+      supervisor.record({
+        at: new Date().toISOString(),
+        serverId: BUILTIN_NS,
+        server: 'Hypergate',
+        tool: 'credential_reveal',
+        client: 'manager UI',
+        ok: true,
+        ms: 0,
+        bytesIn: 0,
+        bytesOut: 0,
+      });
+      const out: RevealCredentialResponse = { ok: true, authorized: true, value };
       return json(res, 200, out);
     }
 
@@ -2275,6 +2480,9 @@ if (STDIO_MODE) {
     if (clientM && req.method === 'DELETE') {
       clients = clients.filter((c) => c.id !== clientM[1]);
       saveClients(clients);
+      // Its pending requests go with it: approving one would grant access to an
+      // agent whose token was just revoked.
+      credentialRequests.forgetAgent(clientM[1]);
       return json(res, 200, { ok: true });
     }
 

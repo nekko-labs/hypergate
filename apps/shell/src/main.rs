@@ -17,11 +17,13 @@
 //! the web UI calls, so there is exactly one source of truth for behaviour.
 
 mod api;
+mod authorize;
 mod autostart;
 mod commands;
 mod daemon;
 mod icon;
 mod logging;
+mod menu;
 mod paths;
 mod sandbox;
 mod secrets;
@@ -250,6 +252,19 @@ enum Command {
         /// The command to run, after `--`.
         #[arg(last = true, required = true)]
         argv: Vec<String>,
+    },
+    /// Ask the OS to confirm it is you, for the vault's reveal door.
+    ///
+    /// Exits 0 when the person at the keyboard proved themselves, 1 when they
+    /// did not, and 3 when this machine has no way to ask. The daemon reads
+    /// those codes; nothing here ever falls back to a weaker check.
+    Authorize {
+        /// What the prompt says this is for.
+        #[arg(long, default_value = "confirm this action")]
+        reason: String,
+        /// Print which prompt this machine can show, and exit without asking.
+        #[arg(long)]
+        check: bool,
     },
     /// Read and write Hypergate's secrets in the OS keychain.
     Secret {
@@ -1003,6 +1018,23 @@ Click it to turn Hypergate on. `hypergate autostart on` starts it at login inste
                 Ok(ExitCode::SUCCESS)
             }
         },
+
+        // The vault's reveal door. Prints nothing on success: the exit code is
+        // the whole answer, and anything on stdout would invite a caller to
+        // parse a message instead of the code.
+        Command::Authorize { reason, check } => {
+            if check {
+                println!("{}", authorize::method().as_str());
+                return Ok(ExitCode::SUCCESS);
+            }
+            let verdict = authorize::authorize(&reason);
+            if let authorize::Verdict::Unavailable(detail) = &verdict {
+                // stderr, so the daemon can show the user *why* the reveal
+                // button is dead without it looking like a value.
+                eprintln!("{detail}");
+            }
+            Ok(ExitCode::from(verdict.exit_code() as u8))
+        }
 
         Command::Secret { action } => match action {
             SecretAction::Get { key } => match secrets::get(&key)? {
