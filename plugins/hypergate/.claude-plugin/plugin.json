@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "hypergate",
   "displayName": "Hypergate",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Every MCP server Hypergate runs on this machine, through one local gateway.",
   "author": { "name": "Nekko Labs", "url": "https://hypergate.app" },
   "homepage": "https://hypergate.app",
