@@ -190,6 +190,10 @@ pub fn cred_set(key: &str, env_override: Option<&str>) -> Result<ExitCode, Strin
     Ok(ExitCode::SUCCESS)
 }
 
+/// Above this many guides, a bare `cred guide` summarises instead of dumping
+/// every field of every entry. Eight (the v1.7.0 catalog) still prints in full.
+const SUMMARY_THRESHOLD: usize = 12;
+
 pub fn cred_guide_human(service: Option<&str>) -> Result<ExitCode, String> {
     let value = api::credential_guides()?;
     let rows = value.as_array().ok_or("unexpected guide response")?;
@@ -205,6 +209,32 @@ pub fn cred_guide_human(service: Option<&str>) -> Result<ExitCode, String> {
             "no guide for `{}` — store it anyway with `hypergate cred set <name> --env VAR`",
             service.unwrap_or("?")
         ));
+    }
+    // Bare `cred guide` used to print eight entries in full. The catalog is now
+    // 54, and six lines each is a screenful of scrollback for a command someone
+    // ran to look one thing up, so an unfiltered listing is one line per guide
+    // and the detail stays behind naming a service.
+    if service.is_none() && filtered.len() > SUMMARY_THRESHOLD {
+        let width = filtered
+            .iter()
+            .filter_map(|g| g["service"].as_str().map(str::len))
+            .max()
+            .unwrap_or(12);
+        for g in &filtered {
+            println!(
+                "{:<width$}  {:<28}  {}{}",
+                g["service"].as_str().unwrap_or("?"),
+                g["envVar"].as_str().unwrap_or(""),
+                g["name"].as_str().unwrap_or("?"),
+                if g["storedId"].is_string() { "  ✓ stored" } else { "" },
+                width = width,
+            );
+        }
+        println!(
+            "\n{} guides. `hypergate cred guide <service>` shows where to get one.",
+            filtered.len()
+        );
+        return Ok(ExitCode::SUCCESS);
     }
     for g in filtered {
         println!(
