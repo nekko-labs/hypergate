@@ -9,6 +9,8 @@
 //!   • `hypergate sandbox-exec` the resource-limit launcher the supervisor uses
 //!   • `hypergate update`       check for a newer release, and install it
 //!   • `hypergate secret`       OS keychain access, including for the daemon
+//!   • `hypergate cred`         the credential vault: store, roll, delete, grant
+//!   • `hypergate run`          run a command with vault credentials in its env
 //!   • `hypergate mcp-headers`  the credential a connected client fetches
 //!
 //! Nothing here reimplements daemon logic. The CLI is a client of the same API
@@ -221,6 +223,27 @@ enum Command {
         #[command(subcommand)]
         action: AutostartAction,
     },
+    /// Manage the credential vault: API keys and tokens for CLIs and MCP servers.
+    Cred {
+        #[command(subcommand)]
+        action: CredAction,
+    },
+    /// Run a command with stored credentials injected into its environment.
+    ///
+    /// The values ride only in the child's env, never on the command line and
+    /// never printed — so `hypergate run -- flyctl deploy` works without a
+    /// `flyctl auth login`, using the Fly token in the vault.
+    Run {
+        /// Resolve under this agent's allow-list, and attribute the fetch to it.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Inject only this credential id. Repeatable; default is every allowed one.
+        #[arg(long = "with")]
+        with: Vec<String>,
+        /// The command to run, after `--`.
+        #[arg(last = true, required = true)]
+        argv: Vec<String>,
+    },
     /// Read and write Hypergate's secrets in the OS keychain.
     Secret {
         #[command(subcommand)]
@@ -330,6 +353,33 @@ enum AutostartAction {
     Off,
     /// Report whether the login item is present.
     Status,
+}
+
+#[derive(Clone, Subcommand)]
+enum CredAction {
+    /// List stored credentials: metadata and masked hints, never values.
+    Ls,
+    /// Store a value, read from stdin (never argv, which is world-readable).
+    ///
+    /// KEY is a guide service (`fly`, `github`, …) to create from its guide, an
+    /// existing credential id to roll in place, or a name for a new credential.
+    Set {
+        key: String,
+        /// Env var for a new custom credential (e.g. STRIPE_API_KEY).
+        #[arg(long)]
+        env: Option<String>,
+    },
+    /// Delete a credential everywhere: value, agent grants, server references.
+    Rm { id: String },
+    /// Where credentials come from: each service's create link or command.
+    Guide {
+        /// One service (`fly`, `github`, …); omit to list them all.
+        service: Option<String>,
+    },
+    /// Allow one agent to fetch one credential.
+    Allow { agent: String, id: String },
+    /// Revoke one agent's access to one credential.
+    Deny { agent: String, id: String },
 }
 
 #[derive(Clone, Subcommand)]
@@ -450,6 +500,7 @@ fn dispatch_json(command: &Command) -> Result<ExitCode, String> {
             api::connect_agent(&id, target)?
         }
         Command::Cli { action } => commands::cli_json(action)?,
+        Command::Cred { action } => commands::cred_json(action)?,
         Command::Start {
             no_open,
             no_shortcut,
@@ -802,6 +853,31 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
             CliAction::Check { command } => commands::cli_check_human(&command),
             CliAction::Install { id, run, yes } => commands::cli_install_human(&id, run || yes),
         },
+
+        Command::Cred { action } => match action {
+            CredAction::Ls => commands::cred_ls_human(),
+            CredAction::Set { key, env } => commands::cred_set(&key, env.as_deref()),
+            CredAction::Rm { id } => {
+                let v = api::delete_credential(&id)?;
+                let servers = v.get("servers").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+                let agents = v.get("agents").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+                println!("Deleted {id} (cleared {servers} server ref(s), {agents} agent grant(s))");
+                Ok(ExitCode::SUCCESS)
+            }
+            CredAction::Guide { service } => commands::cred_guide_human(service.as_deref()),
+            CredAction::Allow { agent, id } => {
+                api::set_agent_credential(&agent, &id, true)?;
+                println!("Allowed {id} for {agent}");
+                Ok(ExitCode::SUCCESS)
+            }
+            CredAction::Deny { agent, id } => {
+                api::set_agent_credential(&agent, &id, false)?;
+                println!("Denied {id} for {agent}");
+                Ok(ExitCode::SUCCESS)
+            }
+        },
+
+        Command::Run { agent, with, argv } => commands::run_with_credentials(agent.as_deref(), &with, &argv),
 
         Command::Usage => commands::usage_human(),
         Command::Doctor => {

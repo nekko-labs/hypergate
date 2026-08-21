@@ -380,6 +380,15 @@ pub fn remove_agent(id: &str) -> Result<(), String> {
     delete(&format!("/api/clients/{id}"))
 }
 
+pub fn set_agent_credential(id: &str, credential: &str, allowed: bool) -> Result<serde_json::Value, String> {
+    let body = send(
+        &format!("/api/clients/{id}/credentials/{credential}"),
+        Some(&serde_json::json!({ "allowed": allowed })),
+        TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from credential permission update: {e}"))
+}
+
 pub fn set_agent_server(id: &str, server: &str, allowed: bool) -> Result<serde_json::Value, String> {
     let body = send(
         &format!("/api/clients/{id}/servers/{server}"),
@@ -452,6 +461,80 @@ pub fn resolve_client(key: &str, create: bool) -> Result<AgentClient, String> {
         TIMEOUT,
     )?;
     serde_json::from_str(&body).map_err(|e| format!("unexpected response from /api/clients/resolve: {e}"))
+}
+
+// ── the credential vault ─────────────────────────────────────────────────────
+// Every mutation needs the master token, which `send`/`delete` already attach.
+// Reads return metadata + masked hints; values only ever come back through
+// `resolve_credentials`, which exists so `hypergate run` can inject them into
+// a child's env without printing them.
+
+pub fn credentials() -> Result<serde_json::Value, String> {
+    get("/api/credentials")
+}
+
+pub fn credential_guides() -> Result<serde_json::Value, String> {
+    get("/api/credentials/guides")
+}
+
+pub fn add_credential(
+    name: &str,
+    value: &str,
+    service: Option<&str>,
+    env_var: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let body = send(
+        "/api/credentials",
+        Some(&serde_json::json!({ "name": name, "value": value, "service": service, "envVar": env_var })),
+        TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from /api/credentials: {e}"))
+}
+
+pub fn roll_credential(id: &str, value: &str) -> Result<serde_json::Value, String> {
+    let body = send(
+        &format!("/api/credentials/{id}/roll"),
+        Some(&serde_json::json!({ "value": value })),
+        // Rolling restarts every server that references the credential.
+        SLOW_TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from credential roll: {e}"))
+}
+
+pub fn delete_credential(id: &str) -> Result<serde_json::Value, String> {
+    let url = format!("{}/api/credentials/{id}", paths::base_url());
+    let mut req = agent(TIMEOUT).delete(&url);
+    if let Some(token) = crate::secrets::gateway_token() {
+        req = req.header("Authorization", &format!("Bearer {token}"));
+    }
+    let mut res = req.call().map_err(|e| format!("{e}"))?;
+    let status = res.status().as_u16();
+    let text = res.body_mut().read_to_string().map_err(|e| format!("{e}"))?;
+    let body = check(status, text, "/api/credentials", true)?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from credential delete: {e}"))
+}
+
+/// Resolve allowed credentials into env vars. `agent` narrows the master scope
+/// to one agent's allow-list (and attributes the fetch to it); `ids` narrows to
+/// specific credentials. The values are in the reply: hand them straight to a
+/// child process's env and nowhere else.
+pub fn resolve_credentials(agent_key: Option<&str>, ids: &[String]) -> Result<serde_json::Value, String> {
+    let mut body = serde_json::Map::new();
+    if let Some(a) = agent_key {
+        body.insert("agent".into(), serde_json::Value::String(a.into()));
+    }
+    if !ids.is_empty() {
+        body.insert(
+            "ids".into(),
+            serde_json::Value::Array(ids.iter().cloned().map(serde_json::Value::String).collect()),
+        );
+    }
+    let text = send(
+        "/api/credentials/resolve",
+        Some(&serde_json::Value::Object(body)),
+        TIMEOUT,
+    )?;
+    serde_json::from_str(&text).map_err(|e| format!("unexpected response from credential resolve: {e}"))
 }
 
 /// What the daemon last knew about updates. Never hits the network.

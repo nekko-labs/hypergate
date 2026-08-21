@@ -13,7 +13,7 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use crate::api::{self, RegistryEntry};
-use crate::{AutostartAction, Command, SecretAction, ServerAction, ShortcutAction};
+use crate::{AutostartAction, Command, CredAction, SecretAction, ServerAction, ShortcutAction};
 
 /// Parse only the small, safe subset of curated install instructions that can
 /// be executed without invoking a shell. URLs, prose, and shell syntax remain
@@ -96,6 +96,201 @@ pub fn agents_human() -> Result<ExitCode, String> {
         );
     }
     Ok(ExitCode::SUCCESS)
+}
+
+// ── the credential vault ─────────────────────────────────────────────────────
+
+pub fn cred_ls_human() -> Result<ExitCode, String> {
+    let value = api::credentials()?;
+    let rows = value.as_array().ok_or("unexpected credential response")?;
+    if rows.is_empty() {
+        println!("No credentials stored. `hypergate cred guide` shows where to get them.");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let id_w = width(rows.iter().filter_map(|v| v["id"].as_str()).map(str::len), 2);
+    let env_w = width(rows.iter().filter_map(|v| v["envVar"].as_str()).map(str::len), 3);
+    println!(
+        "{:<id_w$}  {:<env_w$}  {:<12}  {:<8}  USED BY",
+        "ID",
+        "ENV",
+        "HINT",
+        "STORAGE",
+        id_w = id_w,
+        env_w = env_w
+    );
+    for row in rows {
+        let servers = row["usedBy"]["servers"].as_array().map(Vec::len).unwrap_or(0);
+        let agents = row["usedBy"]["agents"].as_array().map(Vec::len).unwrap_or(0);
+        println!(
+            "{:<id_w$}  {:<env_w$}  {:<12}  {:<8}  {} server(s), {} agent(s)",
+            row["id"].as_str().unwrap_or("?"),
+            row["envVar"].as_str().unwrap_or("—"),
+            row["hint"].as_str().unwrap_or("—"),
+            row["storage"].as_str().unwrap_or("?"),
+            servers,
+            agents,
+            id_w = id_w,
+            env_w = env_w
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Store a value from stdin. The key resolves in this order: an existing
+/// credential id (roll it in place), a guide service (create it with the
+/// guide's name and env var), else a new custom credential named by the key.
+pub fn cred_set(key: &str, env_override: Option<&str>) -> Result<ExitCode, String> {
+    let mut value = String::new();
+    std::io::stdin()
+        .read_to_string(&mut value)
+        .map_err(|e| format!("could not read the value from stdin: {e}"))?;
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("no value on stdin — pipe the credential in, e.g. `pbpaste | hypergate cred set fly`".into());
+    }
+
+    let existing = api::credentials()?
+        .as_array()
+        .and_then(|rows| rows.iter().find(|r| r["id"].as_str() == Some(key)).cloned());
+    if let Some(row) = existing {
+        let rolled = api::roll_credential(key, value)?;
+        let restarted = rolled["restarted"].as_array().map(Vec::len).unwrap_or(0);
+        println!(
+            "Rolled {} ({} server(s) restarted onto the new value)",
+            row["name"].as_str().unwrap_or(key),
+            restarted
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let guides = api::credential_guides()?;
+    let guide = guides.as_array().and_then(|rows| {
+        rows.iter()
+            .find(|g| g["service"].as_str() == Some(&key.to_lowercase()))
+            .cloned()
+    });
+    let created = match &guide {
+        Some(g) => api::add_credential(
+            g["name"].as_str().unwrap_or(key),
+            value,
+            g["service"].as_str(),
+            env_override.or(g["envVar"].as_str()),
+        )?,
+        None => api::add_credential(key, value, None, env_override)?,
+    };
+    println!(
+        "Stored {} as {} ({})",
+        created["name"].as_str().unwrap_or(key),
+        created["id"].as_str().unwrap_or("?"),
+        created["storage"].as_str().unwrap_or("?"),
+    );
+    if let Some(env) = created["envVar"].as_str() {
+        println!("Injected as {env} by `hypergate run` and credentialRefs.");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn cred_guide_human(service: Option<&str>) -> Result<ExitCode, String> {
+    let value = api::credential_guides()?;
+    let rows = value.as_array().ok_or("unexpected guide response")?;
+    let filtered: Vec<&Value> = match service {
+        Some(s) => rows
+            .iter()
+            .filter(|g| g["service"].as_str() == Some(&s.to_lowercase()))
+            .collect(),
+        None => rows.iter().collect(),
+    };
+    if filtered.is_empty() {
+        return Err(format!(
+            "no guide for `{}` — store it anyway with `hypergate cred set <name> --env VAR`",
+            service.unwrap_or("?")
+        ));
+    }
+    for g in filtered {
+        println!(
+            "{}  ({})",
+            g["name"].as_str().unwrap_or("?"),
+            g["service"].as_str().unwrap_or("?")
+        );
+        if let Some(env) = g["envVar"].as_str() {
+            println!("  env      {env}");
+        }
+        if let Some(url) = g["createUrl"].as_str() {
+            println!("  create   {url}");
+        }
+        if let Some(cmd) = g["createCommand"].as_str() {
+            println!("  command  {cmd}");
+        }
+        if let Some(url) = g["manageUrl"].as_str() {
+            println!("  manage   {url}");
+        }
+        if let Some(id) = g["storedId"].as_str() {
+            println!("  stored   ✓ as {id}");
+        } else {
+            println!(
+                "  store    <paste> | hypergate cred set {}",
+                g["service"].as_str().unwrap_or("?")
+            );
+        }
+        if let Some(note) = g["note"].as_str() {
+            println!("  note     {note}");
+        }
+        println!();
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn cred_json(action: &CredAction) -> Result<Value, String> {
+    Ok(match action {
+        CredAction::Ls => api::credentials()?,
+        CredAction::Guide { service } => {
+            let all = api::credential_guides()?;
+            match service {
+                Some(s) => json!(
+                    all.as_array()
+                        .map(|rows| rows
+                            .iter()
+                            .filter(|g| g["service"].as_str() == Some(&s.to_lowercase()))
+                            .cloned()
+                            .collect::<Vec<_>>())
+                        .unwrap_or_default()
+                ),
+                None => all,
+            }
+        }
+        CredAction::Rm { id } => api::delete_credential(id)?,
+        CredAction::Allow { agent, id } => api::set_agent_credential(agent, id, true)?,
+        CredAction::Deny { agent, id } => api::set_agent_credential(agent, id, false)?,
+        // Set reads stdin and prints its own confirmation; keep it human-only
+        // rather than inventing a JSON stdin protocol nothing consumes yet.
+        CredAction::Set { .. } => return Err("`cred set` does not support --json".into()),
+    })
+}
+
+/// Run a command with vault credentials in its env. The values ride only in
+/// the child's environment: never argv, never printed, never logged.
+pub fn run_with_credentials(agent: Option<&str>, with: &[String], argv: &[String]) -> Result<ExitCode, String> {
+    let resolved = api::resolve_credentials(agent, with)?;
+    let env = resolved["env"].as_object().cloned().unwrap_or_default();
+    let used = resolved["used"].as_array().map(Vec::len).unwrap_or(0);
+    let (program, rest) = argv
+        .split_first()
+        .ok_or("nothing to run — pass the command after `--`")?;
+    // Name the count, never the contents: this line may end up in a CI log.
+    eprintln!("hypergate run: injecting {used} credential(s) into `{program}`");
+    let mut child = std::process::Command::new(program);
+    child.args(rest);
+    for (k, v) in &env {
+        if let Some(val) = v.as_str() {
+            child.env(k, val);
+        }
+    }
+    let status = child.status().map_err(|e| format!("could not run `{program}`: {e}"))?;
+    Ok(match status.code() {
+        Some(0) => ExitCode::SUCCESS,
+        Some(code) => ExitCode::from(u8::try_from(code.clamp(0, 255)).unwrap_or(1)),
+        None => ExitCode::from(1),
+    })
 }
 
 pub fn targets_human() -> Result<ExitCode, String> {
