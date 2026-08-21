@@ -9,6 +9,7 @@ export * from './cli-search.js';
 export * from './advice.js';
 export * from './connect.js';
 export * from './agents.js';
+export * from './credentials.js';
 export * from './oauth.js';
 export * from './account.js';
 export * from './update.js';

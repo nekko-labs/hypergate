@@ -16,6 +16,8 @@ import type {
   CliStatus,
   CliCatalogEntry,
   CliCheckResult,
+  CredentialGuideInfo,
+  CredentialInfo,
   OAuthAppInfo,
   ConnectShell,
   ConnectTargetStatus,
@@ -27,7 +29,7 @@ import type {
   InstallChannel,
   CloseAction,
 } from '@hypergate/shared';
-import { mergeCatalogSearch, registryConnections, resolveRegistryConnection } from '@hypergate/shared';
+import { looksSecret, mergeCatalogSearch, registryConnections, resolveRegistryConnection } from '@hypergate/shared';
 import { api } from './api';
 import { AdviceNote } from './components/AdviceNote';
 import { Dialog } from './components/Dialog';
@@ -42,13 +44,14 @@ import { TokenDialog } from './components/servers/TokenDialog';
 import { useToast } from './toast';
 
 type View = 'servers' | 'analytics' | 'settings';
-type ServerSection = 'agents' | 'mcp-servers' | 'cli';
+type ServerSection = 'agents' | 'mcp-servers' | 'cli' | 'credentials';
 type AnalyticsSection = 'overview' | 'usage-by-server' | 'callers' | 'tools' | 'security' | 'recent-calls';
 
 const SERVER_SECTIONS: { id: ServerSection; label: string }[] = [
   { id: 'agents', label: 'Connected agents' },
   { id: 'mcp-servers', label: 'MCP servers' },
   { id: 'cli', label: 'CLI tools' },
+  { id: 'credentials', label: 'Credentials' },
 ];
 const ANALYTICS_SECTIONS: { id: AnalyticsSection; label: string }[] = [
   { id: 'overview', label: 'Overview' },
@@ -702,6 +705,7 @@ export function App() {
                   {adding && (
                     <AddServer
                       entry={adding === 'custom' ? null : adding}
+                      token={gateway?.token}
                       onClose={() => setAdding(null)}
                       onAdded={() => { setAdding(null); setShowCatalog(false); void refresh(); }}
                     />
@@ -758,6 +762,10 @@ export function App() {
 
                 <section id="cli" className="dashboard-section">
                   <CliSection />
+                </section>
+
+                <section id="credentials" className="dashboard-section">
+                  <CredentialsSection agents={agents} token={gateway?.token} onAgentsChange={refreshAgents} />
                 </section>
                 </>
               ) : view === 'analytics' ? (
@@ -1609,6 +1617,423 @@ function ServerAgents({ server, agents, onChange }: { server: ServerStatus; agen
   );
 }
 
+// ── the credential vault ─────────────────────────────────────────────────────
+
+/**
+ * "Credentials": the vault of API keys and access tokens for the CLIs and MCP
+ * servers agents use. Values live in the OS keychain and never come back over
+ * the API, so every row shows metadata + a masked hint. Rolling and deleting
+ * live here; per-agent grants mirror the per-server switches.
+ */
+function CredentialsSection({ agents, token, onAgentsChange }: {
+  agents: AgentClientInfo[];
+  /** Master gateway token — required for every vault mutation. */
+  token?: string;
+  onAgentsChange: () => void;
+}) {
+  const [creds, setCreds] = useState<CredentialInfo[] | null>(null);
+  const [guides, setGuides] = useState<CredentialGuideInfo[]>([]);
+  const [adding, setAdding] = useState(false);
+  const load = useCallback(() => {
+    void api.credentials().then(setCreds).catch(() => setCreds([]));
+    void api.credentialGuides().then(setGuides).catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <>
+      <div className="section-title">
+        Credentials
+        <span className="rt">
+          {creds && creds.length > 0 && (
+            <span className="small muted" style={{ marginRight: 8 }}>
+              {creds.length} stored · {creds[0].storage === 'keychain' ? 'OS keychain' : 'file store'}
+            </span>
+          )}
+          <button className="btn sm btn-primary" onClick={() => setAdding((v) => !v)}>{adding ? 'Close' : '+ Add credential'}</button>
+        </span>
+      </div>
+      <p className="small muted section-sub">
+        API keys and access tokens for the CLIs and MCP servers your agents use, kept in the OS keychain instead of
+        config files. Grant each agent only the keys it needs; an allowed agent fetches them itself through the
+        gateway's <span className="mono">hypergate__credential_env</span> tool or <span className="mono">hypergate run</span>,
+        instead of stopping to ask you to sign in.
+      </p>
+      {adding && <AddCredentialPanel guides={guides} creds={creds ?? []} token={token} onAdded={() => { setAdding(false); load(); }} />}
+      <div className="list">
+        {!creds ? (
+          <div className="list-row small muted">Loading credentials…</div>
+        ) : creds.length === 0 ? (
+          !adding && (
+            <div className="list-row small muted">
+              No credentials stored yet. Add one and this machine's keys stop living in config files.
+            </div>
+          )
+        ) : (
+          creds.map((c) => (
+            <CredentialRow key={c.id} c={c} guides={guides} agents={agents} token={token} onChange={() => { load(); onAgentsChange(); }} />
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
+/** How to get this credential, shown in the add flow and beside Roll. */
+function GuideHint({ g }: { g: CredentialGuideInfo }) {
+  const [, copy] = useCopy();
+  return (
+    <span className="row wrap-gap" style={{ gap: 8 }}>
+      {g.createUrl && (
+        <a className="btn sm" href={g.createUrl} target="_blank" rel="noreferrer">Get it ↗</a>
+      )}
+      {g.createCommand && (
+        <button className="chip mono" title="Copy the command" onClick={() => copy(`guide-${g.service}`, g.createCommand!)}>
+          $ {g.createCommand} ⧉
+        </button>
+      )}
+    </span>
+  );
+}
+
+function CredentialRow({ c, guides, agents, token, onChange }: {
+  c: CredentialInfo;
+  guides: CredentialGuideInfo[];
+  agents: AgentClientInfo[];
+  token?: string;
+  onChange: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [armed, setArmed] = useState(false);
+  const [rollValue, setRollValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const guide = c.service ? guides.find((g) => g.service === c.service) : undefined;
+  const allowedBy = c.usedBy.agents.length;
+
+  const roll = async () => {
+    if (!token || !rollValue.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api.rollCredential(c.id, rollValue.trim(), token);
+      toast.show(
+        r.restarted.length
+          ? `Rolled ${c.name} — restarted ${r.restarted.join(', ')} onto the new value`
+          : `Rolled ${c.name}`,
+        'success',
+      );
+      setRollValue('');
+      onChange();
+    } catch {
+      toast.show(`Could not roll ${c.name}`, 'error');
+    }
+    setBusy(false);
+  };
+
+  return (
+    <ExpandRow
+      open={open}
+      onToggle={() => setOpen((v) => !v)}
+      label={c.name}
+      head={
+        <>
+          <span className="pill pill-ready" title={c.storage === 'keychain' ? 'Value stored in the OS keychain' : 'No OS keychain available — value stored in a file only this user can read'}>
+            <span className="dot" />{c.storage === 'keychain' ? '🔐 keychain' : 'file'}
+          </span>
+          <span className="server-name">{c.name}</span>
+          {c.envVar && <span className="chip mono">{c.envVar}</span>}
+          {c.service && <span className="chip">{c.service}</span>}
+          {c.hint && <span className="small muted mono" title="Masked hint — the value never leaves the vault">{c.hint}</span>}
+          <span className="row-meta small muted">
+            {agents.length > 0 && (
+              <span title="Connected agents allowed to fetch this credential">
+                {allowedBy === 0 ? 'no agents' : `${allowedBy}/${agents.length} agents`}
+              </span>
+            )}
+            {c.usedBy.servers.length > 0 && (
+              <span title="Managed servers whose env is filled from this credential">
+                {c.usedBy.servers.length} server{c.usedBy.servers.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </span>
+        </>
+      }
+      actions={
+        armed ? (
+          <>
+            <button
+              className="btn sm btn-danger"
+              disabled={!token}
+              onClick={() => {
+                if (!token) return;
+                void api.deleteCredential(c.id, token).then(
+                  (r) => {
+                    const cleaned = [
+                      r.servers.length ? `${r.servers.length} server ref${r.servers.length === 1 ? '' : 's'}` : '',
+                      r.agents.length ? `${r.agents.length} agent grant${r.agents.length === 1 ? '' : 's'}` : '',
+                    ].filter(Boolean).join(' + ');
+                    toast.show(`Deleted ${c.name}${cleaned ? ` and cleaned up ${cleaned}` : ''}`, 'success');
+                    onChange();
+                  },
+                  () => toast.show(`Could not delete ${c.name}`, 'error'),
+                );
+              }}
+              title={`Delete ${c.name}, revoke every agent grant, and clear every server reference`}
+            >
+              Delete everywhere
+            </button>
+            <button className="btn sm" onClick={() => setArmed(false)}>Cancel</button>
+          </>
+        ) : (
+          <>
+            <button className="btn sm" onClick={() => { setOpen(true); }} title={`Replace ${c.name}'s value`}>↻ Roll</button>
+            <IconBtn icon="trash" label={`Delete ${c.name}`} tone="danger" onClick={() => setArmed(true)} />
+          </>
+        )
+      }
+    >
+      <Block label={<>Roll the value {guide && <span className="dl-note">rolling starts at the provider: revoke the old one there too</span>}</>}>
+        <div className="row wrap-gap" style={{ gap: 8, alignItems: 'center' }}>
+          {guide && <GuideHint g={{ ...guide, storedId: c.id }} />}
+          <input
+            type="password"
+            className="mono"
+            style={{ flex: 1, minWidth: 200 }}
+            placeholder="Paste the new value"
+            value={rollValue}
+            onChange={(e) => setRollValue(e.target.value)}
+            autoComplete="off"
+          />
+          <button className="btn sm btn-primary" disabled={!token || !rollValue.trim() || busy} onClick={() => void roll()}>
+            {busy ? 'Rolling…' : 'Roll'}
+          </button>
+        </div>
+        <div className="small muted" style={{ marginTop: 6 }}>
+          Servers referencing this credential restart onto the new value; agents pick it up on their next fetch.
+        </div>
+      </Block>
+      {agents.length > 0 && (
+        <Block label={<>Agents <span className="dl-count">{allowedBy}/{agents.length}</span></>}>
+          <CredentialAgents c={c} agents={agents} token={token} onChange={onChange} />
+        </Block>
+      )}
+      {c.usedBy.servers.length > 0 && (
+        <Block label="Used by servers">
+          <div className="row wrap-gap" style={{ gap: 6 }}>
+            {c.usedBy.servers.map((id) => <span key={id} className="chip mono">{id}</span>)}
+          </div>
+        </Block>
+      )}
+      <div className="small muted" style={{ marginTop: 8 }}>
+        Added {new Date(c.createdAt).toLocaleDateString()}
+        {c.rotatedAt && <> · rolled {new Date(c.rotatedAt).toLocaleDateString()}</>}
+        {c.lastUsedAt && <> · last used {new Date(c.lastUsedAt).toLocaleString()}</>}
+        {c.note && <> · {c.note}</>}
+      </div>
+    </ExpandRow>
+  );
+}
+
+/** Which agents may fetch one credential — deny-by-default, one switch each. */
+function CredentialAgents({ c, agents, token, onChange }: {
+  c: CredentialInfo;
+  agents: AgentClientInfo[];
+  token?: string;
+  onChange: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const flip = async (agent: AgentClientInfo, allowed: boolean) => {
+    if (!token) return;
+    setBusy(agent.id);
+    setErr(null);
+    try {
+      await api.setAgentCredential(agent.id, c.id, allowed, token);
+    } catch {
+      setErr(`Could not change ${agent.name}'s access to ${c.name}.`);
+    }
+    setBusy(null);
+    onChange();
+  };
+  return (
+    <div className="perm-panel">
+      <div className="small muted">
+        Which connected agents may fetch <b>{c.name}</b>. Keys are deny-by-default: a new agent gets none until you
+        flip it on here, and every fetch (and refusal) shows up in Analytics.
+      </div>
+      {agents.map((a) => {
+        const on = a.credentials === '*' || (a.credentials ?? []).includes(c.id);
+        return (
+          <div key={a.id} className="perm-toggle-row">
+            <div className="row" style={{ gap: 8, minWidth: 0 }}>
+              <AgentMark id={a.target} name={a.name} small />
+              <span className="setting-label">{a.name}</span>
+              {a.credentials === '*' && <span className="chip chip-accent">all credentials</span>}
+            </div>
+            <button
+              role="switch"
+              aria-checked={on}
+              aria-label={`${a.name} may fetch ${c.name}`}
+              className={`toggle ${on ? 'on' : ''}`}
+              disabled={busy === a.id || !token}
+              onClick={() => void flip(a, !on)}
+            >
+              <span className="knob" />
+            </button>
+          </div>
+        );
+      })}
+      {err && <div className="small" style={{ color: 'var(--danger)' }}>{err}</div>}
+    </div>
+  );
+}
+
+/**
+ * The add flow: the guides first (each names its env var and links the
+ * provider's own create-token page or command), then a custom credential for
+ * anything without a guide.
+ */
+function AddCredentialPanel({ guides, creds, token, onAdded }: {
+  guides: CredentialGuideInfo[];
+  creds: CredentialInfo[];
+  token?: string;
+  onAdded: () => void;
+}) {
+  const reveal = useRevealOnMount<HTMLDivElement>();
+  const [openService, setOpenService] = useState<string | null>(null);
+  const [value, setValue] = useState('');
+  const [custom, setCustom] = useState(false);
+  const [customName, setCustomName] = useState('');
+  const [customEnv, setCustomEnv] = useState('');
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  const save = async (body: { name: string; service?: string; envVar?: string; kind?: 'api-key' | 'token' | 'other' }) => {
+    if (!token || !value.trim()) return;
+    setBusy(true);
+    try {
+      await api.addCredential({ ...body, value: value.trim() }, token);
+      toast.show(`Stored ${body.name} in the ${'vault'}`, 'success');
+      setValue('');
+      setOpenService(null);
+      setCustom(false);
+      onAdded();
+    } catch (e) {
+      toast.show(e instanceof Error && e.message === '401' ? 'The daemon refused the master token.' : 'Could not store the credential.', 'error');
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="panel" ref={reveal}>
+      <div className="small muted" style={{ marginBottom: 8 }}>
+        Each guide links the provider's own token page or command — create the key there, paste it here, and it goes
+        straight into the {guides.length ? 'OS keychain' : 'vault'}. The value is sent once and never shown again.
+      </div>
+      <div className="list">
+        {guides.map((g) => {
+          const stored = g.storedId ? creds.find((c) => c.id === g.storedId) : undefined;
+          const isOpen = openService === g.service;
+          return (
+            <div key={g.service} className="list-row">
+              <div className="row between wrap-gap">
+                <div className="row wrap-gap" style={{ gap: 8, flex: 1, minWidth: 220 }}>
+                  <span className="server-name">{g.name}</span>
+                  <span className="chip mono">{g.envVar}</span>
+                  {stored && <span className="chip chip-accent" title={`Stored as ${stored.id}`}>✓ stored</span>}
+                </div>
+                <div className="row" style={{ gap: 8 }}>
+                  <GuideHint g={g} />
+                  <button
+                    className={`btn sm ${isOpen ? '' : 'btn-primary'}`}
+                    onClick={() => { setOpenService(isOpen ? null : g.service); setCustom(false); setValue(''); }}
+                  >
+                    {isOpen ? 'Cancel' : stored ? 'Replace' : 'Store'}
+                  </button>
+                </div>
+              </div>
+              {g.note && <div className="small muted" style={{ marginTop: 3 }}>{g.note}</div>}
+              {isOpen && (
+                <div className="row wrap-gap" style={{ gap: 8, marginTop: 8 }}>
+                  <input
+                    type="password"
+                    className="mono"
+                    style={{ flex: 1, minWidth: 220 }}
+                    placeholder={`Paste the ${g.name}`}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    autoComplete="off"
+                    autoFocus
+                  />
+                  <button
+                    className="btn sm btn-primary"
+                    disabled={!token || !value.trim() || busy}
+                    onClick={() => {
+                      // Replacing an already-stored guide credential is a roll,
+                      // so references and grants survive the new value.
+                      if (stored && token) {
+                        setBusy(true);
+                        void api.rollCredential(stored.id, value.trim(), token)
+                          .then(() => { toast.show(`Rolled ${stored.name}`, 'success'); setValue(''); setOpenService(null); onAdded(); })
+                          .catch(() => toast.show(`Could not roll ${stored.name}`, 'error'))
+                          .finally(() => setBusy(false));
+                        return;
+                      }
+                      void save({ name: g.name, service: g.service, envVar: g.envVar, kind: g.kind });
+                    }}
+                  >
+                    {busy ? 'Storing…' : stored ? 'Roll' : 'Store'}
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <div className="list-row">
+          <div className="row between wrap-gap">
+            <div className="row wrap-gap" style={{ gap: 8, flex: 1 }}>
+              <span className="server-name">Custom credential</span>
+              <span className="small muted">any other API key or token</span>
+            </div>
+            <button className={`btn sm ${custom ? '' : 'btn-primary'}`} onClick={() => { setCustom((v) => !v); setOpenService(null); setValue(''); }}>
+              {custom ? 'Cancel' : 'Store'}
+            </button>
+          </div>
+          {custom && (
+            <div className="row wrap-gap" style={{ gap: 8, marginTop: 8 }}>
+              <input style={{ minWidth: 160 }} placeholder="Name (e.g. Stripe secret key)" value={customName} onChange={(e) => setCustomName(e.target.value)} />
+              <input
+                className="mono"
+                style={{ minWidth: 160 }}
+                placeholder="ENV_VAR (optional)"
+                value={customEnv}
+                onChange={(e) => setCustomEnv(e.target.value.toUpperCase())}
+              />
+              <input
+                type="password"
+                className="mono"
+                style={{ flex: 1, minWidth: 200 }}
+                placeholder="Paste the value"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                autoComplete="off"
+              />
+              <button
+                className="btn sm btn-primary"
+                disabled={!token || !customName.trim() || !value.trim() || busy}
+                onClick={() => void save({ name: customName.trim(), envVar: customEnv.trim() || undefined })}
+              >
+                {busy ? 'Storing…' : 'Store'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {!token && <div className="small" style={{ color: 'var(--warning)', marginTop: 6 }}>Waiting for the daemon's master token — storing is disabled until it loads.</div>}
+    </div>
+  );
+}
+
 /** Clickable list of a server's tools; each row expands to its description + parameters. */
 function ToolList({ serverId, tools }: { serverId: string; tools: ToolInfo[] }) {
   const [open, setOpen] = useState<string | null>(null);
@@ -2165,7 +2590,7 @@ function AnalyticsView({ stats, servers, registry }: { stats: AnalyticsSummary |
   );
 }
 
-function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; onClose: () => void; onAdded: () => void }) {
+function AddServer({ entry, token, onClose, onAdded }: { entry: RegistryEntry | null; token?: string; onClose: () => void; onAdded: () => void }) {
   const reveal = useRevealOnMount<HTMLElement>();
   const [runtime, setRuntime] = useState<RuntimeKind>(entry?.runtime ?? 'process');
   const [name, setName] = useState(entry?.name ?? '');
@@ -2176,8 +2601,20 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [advanced, setAdvanced] = useState(!entry);
+  const [creds, setCreds] = useState<CredentialInfo[]>([]);
   const toast = useToast();
-  const missingRequired = (entry?.requires ?? []).some((key) => !env.split('\n').find((line) => line.startsWith(`${key}=`))?.slice(key.length + 1).trim());
+  useEffect(() => {
+    void api.credentials().then(setCreds).catch(() => {});
+  }, []);
+  // A required key with nothing typed is still satisfied when the vault already
+  // holds a credential that answers to that env var — it fills in by reference.
+  const vaultFor = (key: string): CredentialInfo | undefined => creds.find((c) => c.envVar === key);
+  const typedValue = (key: string): string => env.split('\n').find((line) => line.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? '';
+  const missingRequired = (entry?.requires ?? []).some((key) => !typedValue(key) && !vaultFor(key));
+  const willVault = token ? env.split('\n').some((line) => {
+    const i = line.indexOf('=');
+    return i > 0 && line.slice(i + 1).trim() && looksSecret(line.slice(0, i).trim());
+  }) : false;
 
   const submit = async () => {
     setErr(null);
@@ -2188,13 +2625,45 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
       const i = line.indexOf('=');
       if (i > 0 && line.slice(i + 1).trim()) envObj[line.slice(0, i).trim()] = line.slice(i + 1).trim();
     }
+    const displayName = name || entry?.name || command;
+    // Secret-looking values go into the vault and the config carries a
+    // reference; a required key left blank fills from an existing credential
+    // that answers to that env var. Plain settings stay plain env.
+    const plainEnv: Record<string, string> = {};
+    const credentialRefs: Record<string, string> = {};
+    for (const [key, value] of Object.entries(envObj)) {
+      if (token && looksSecret(key)) {
+        const existing = vaultFor(key);
+        try {
+          if (existing) {
+            // Same env var, new value: that is a roll, not a second copy.
+            if (value !== undefined) await api.rollCredential(existing.id, value, token);
+            credentialRefs[key] = existing.id;
+          } else {
+            const made = await api.addCredential({ name: `${displayName} ${key}`, value, envVar: key, service: entry?.id }, token);
+            credentialRefs[key] = made.id;
+          }
+          continue;
+        } catch {
+          /* vault unavailable → fall back to plain env rather than losing the add */
+        }
+      }
+      plainEnv[key] = value;
+    }
+    for (const key of entry?.requires ?? []) {
+      if (envObj[key] === undefined && !credentialRefs[key]) {
+        const existing = vaultFor(key);
+        if (existing) credentialRefs[key] = existing.id;
+      }
+    }
     const cfg: ManagedServerConfig = {
       id,
-      name: name || entry?.name || command,
+      name: displayName,
       runtime,
       command,
       args: args.trim() ? args.trim().split(/\s+/) : [],
-      env: Object.keys(envObj).length ? envObj : undefined,
+      env: Object.keys(plainEnv).length ? plainEnv : undefined,
+      credentialRefs: Object.keys(credentialRefs).length ? credentialRefs : undefined,
       image: runtime === 'docker' ? image.trim() || entry?.image : undefined,
       enabled: true,
     };
@@ -2226,9 +2695,15 @@ function AddServer({ entry, onClose, onAdded }: { entry: RegistryEntry | null; o
                 <input className="mono" value={env.split('\n').find((line) => line.startsWith(`${key}=`))?.slice(key.length + 1) ?? ''} onChange={(e) => setEnv((current) => {
                   const lines = current.split('\n').filter((line) => !line.startsWith(`${key}=`));
                   return [...lines, `${key}=${e.target.value}`].join('\n');
-                })} placeholder="Required value" />
+                })} placeholder={vaultFor(key) ? `Using “${vaultFor(key)!.name}” from the vault` : 'Required value'} />
               </label>
             )) : <div className="small muted">Ready to add with the registry defaults.</div>}
+            {willVault && (
+              <div className="small muted" style={{ marginTop: 6 }}>
+                🔐 Secret-looking values are stored in the credential vault and referenced — never written to
+                servers.json.
+              </div>
+            )}
           </div>
           <div className="row between" style={{ marginTop: 14 }}>
             <span className="small" style={{ color: 'var(--danger)' }}>{err}</span>

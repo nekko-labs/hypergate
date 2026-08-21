@@ -67,6 +67,13 @@ export interface ManagedServerConfig {
   env?: Record<string, string>;
   /** Secret env injected at launch only — never logged or returned by the API. */
   secrets?: Record<string, string>;
+  /**
+   * Env vars filled from the credential vault at launch: `ENV_VAR → credential id`.
+   * The reference is what persists in `servers.json`; the value stays in the OS
+   * keychain and is resolved by the daemon each time the server starts, so
+   * rolling the credential re-keys the server on its next (re)start.
+   */
+  credentialRefs?: Record<string, string>;
   /** Working directory (process runtime). */
   cwd?: string;
   /** Container image (docker runtime). */
@@ -493,6 +500,147 @@ export interface CliCheckResult {
 }
 
 /**
+ * The credential vault — named secret values (API keys, access tokens) for the
+ * CLIs and MCP servers Hypergate manages. Values live in the OS keychain (file
+ * fallback mirrors the OAuth grants); everything here is metadata and **never
+ * contains the value**. A value leaves the daemon through exactly three doors:
+ * launch-time env for a managed server (`credentialRefs`), the gateway's
+ * `hypergate__credential_env` tool for an agent that was granted it, and
+ * `hypergate run`, which injects it into a child process's env.
+ */
+export type CredentialKind = 'api-key' | 'token' | 'other';
+
+/** One stored credential, as metadata. The value itself is never in here. */
+export interface CredentialMeta {
+  id: string;
+  /** Display name, e.g. "Fly.io API token". */
+  name: string;
+  kind: CredentialKind;
+  /** Guide service this was created from (`fly`, `github`, …), when it was. */
+  service?: string;
+  /** Env var this credential is injected as (`FLY_API_TOKEN`), when it maps to one. */
+  envVar?: string;
+  createdAt: string;
+  /** Last time the value was replaced (rolled). */
+  rotatedAt?: string;
+  /** Last time the value was handed out (spawn, gateway fetch, or `hypergate run`). */
+  lastUsedAt?: string;
+  /** Masked recognition hint (`fly_v1…9k2c`) — enough to recognise, never to use. */
+  hint?: string;
+  note?: string;
+}
+
+/** A credential plus where it is stored and what currently depends on it. */
+export interface CredentialInfo extends CredentialMeta {
+  storage: 'keychain' | 'file';
+  usedBy: {
+    /** Managed server ids whose `credentialRefs` point at this credential. */
+    servers: string[];
+    /** Agent ids allowed to fetch this credential. */
+    agents: string[];
+  };
+}
+
+/**
+ * How to obtain one service's credential — the guidance half of the vault.
+ * Curated in `@hypergate/core` under the catalog's trust rules: every URL and
+ * command comes from the vendor's own docs, and a guide only exists when there
+ * is a real first-party page or command to point at.
+ */
+export interface CredentialGuide {
+  /** Stable service id (`github`, `fly`, `vercel`, …). */
+  service: string;
+  /** What the credential is called, e.g. "GitHub personal access token". */
+  name: string;
+  kind: CredentialKind;
+  /** Canonical env var the value is injected as. */
+  envVar: string;
+  /** Other env var names tools read the same value from (injected alongside). */
+  aliases?: string[];
+  /** The provider's create-a-token page. */
+  createUrl?: string;
+  /** A terminal command that creates or prints a token, when the vendor ships one. */
+  createCommand?: string;
+  /** Where existing tokens are listed/revoked — where a roll starts. */
+  manageUrl?: string;
+  docsUrl?: string;
+  /** Curated CLI ids (see `KNOWN_CLIS`) this credential authenticates. */
+  clis?: string[];
+  /** Curated catalog server ids this credential can supply (via `requires`). */
+  servers?: string[];
+  note?: string;
+}
+
+/** A guide plus whether a credential for it is already stored. */
+export interface CredentialGuideInfo extends CredentialGuide {
+  /** Id of the stored credential created from this guide, when one exists. */
+  storedId?: string;
+}
+
+/** Env var shape a credential may declare: `FLY_API_TOKEN`, not `fly token`. */
+export const isValidEnvVar = (name: string): boolean => /^[A-Z][A-Z0-9_]{0,63}$/.test(name);
+
+/**
+ * Does this env key look like a secret? Decides which values the add flow
+ * vaults (a token, a key) versus keeps as plain env (a path, a region).
+ * `DATABASE_URL` is named explicitly because connection strings embed
+ * passwords without saying SECRET anywhere. Shared because the browser bundle
+ * needs the same answer as the daemon without importing core.
+ */
+export const looksSecret = (envKey: string): boolean =>
+  /(TOKEN|SECRET|KEY|PASS|CREDENTIAL|AUTH)/i.test(envKey) || envKey.toUpperCase() === 'DATABASE_URL';
+
+/** Request body to create a credential (`POST /api/credentials`, master token). */
+export interface CreateCredentialRequest {
+  name: string;
+  /** The secret. Sent only in this request; never returned by any API. */
+  value: string;
+  kind?: CredentialKind;
+  service?: string;
+  envVar?: string;
+  note?: string;
+}
+
+/** Replace a credential's value in place (`POST /api/credentials/:id/roll`). */
+export interface RollCredentialRequest {
+  value: string;
+}
+
+/** What deleting a credential touched besides the credential itself. */
+export interface DeleteCredentialResponse {
+  ok: boolean;
+  /** Server ids whose `credentialRefs` entries were pruned. */
+  servers: string[];
+  /** Agent ids whose credential allow-lists were pruned. */
+  agents: string[];
+}
+
+/** Flip one credential for one agent (`POST /api/clients/:id/credentials/:credId`). */
+export interface SetAgentCredentialRequest {
+  allowed: boolean;
+}
+
+/**
+ * Resolve credential values into env (`POST /api/credentials/resolve`) — the
+ * `hypergate run` door. The bearer token decides the scope: the master token
+ * reaches every credential, an agent token only its allow-list. A master caller
+ * may pass `agent` to resolve *as* that agent (same scope, attributed to it).
+ */
+export interface ResolveCredentialsRequest {
+  /** Specific credential ids; absent = every allowed credential that has an env var. */
+  ids?: string[];
+  /** Master only: resolve under this agent's scope and attribute usage to it. */
+  agent?: string;
+}
+
+export interface ResolveCredentialsResponse {
+  /** Env vars to inject (canonical names plus guide aliases). */
+  env: Record<string, string>;
+  /** Ids of the credentials that supplied them. */
+  used: string[];
+}
+
+/**
  * Usage analytics — a first-class perk of routing through Hypergate: local,
  * private visibility into *what* your agents actually call. Every gateway tool
  * call becomes a UsageEvent; the daemon aggregates them per server, per tool,
@@ -610,6 +758,13 @@ export interface AgentClient {
   token: string;
   /** Allowed servers: `'*'` = every server, or an allow-list of server ids. */
   servers: '*' | string[];
+  /**
+   * Vault credentials this agent may fetch: `'*'`, an allow-list of credential
+   * ids, or absent. Absent means **none** — the opposite default from `servers`,
+   * on purpose: a server grants capabilities, a credential *is* the key, so an
+   * agent gets no keys until someone hands them over explicitly.
+   */
+  credentials?: '*' | string[];
   createdAt: string;
   /** Last time a call was attributed to this agent's token. */
   lastUsed?: string;

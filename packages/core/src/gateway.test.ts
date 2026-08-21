@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Supervisor } from './supervisor.js';
-import { createGateway, NS } from './gateway.js';
+import { createGateway, NS, BUILTIN_NS, type GatewayBuiltinTool } from './gateway.js';
 import type { ManagedServerConfig } from '@hypergate/shared';
 
 const echoPath = fileURLToPath(new URL('./fixtures/echo-server.mjs', import.meta.url));
@@ -99,6 +99,68 @@ describe('Supervisor + Gateway (end-to-end via process runtime)', () => {
     expect(started.tools).toContain('echo');
     await supervisor.stop('echo-off');
     expect(supervisor.status('echo-off')?.state).toBe('stopped');
+  });
+
+  it('serves builtin tools under the reserved hypergate namespace, recorded like routed calls', async () => {
+    const builtins: GatewayBuiltinTool[] = [
+      {
+        name: 'credentials_list',
+        description: 'List the credentials this caller may fetch.',
+        inputSchema: { type: 'object', properties: {} },
+        call: () => [{ id: 'fly-token', envVar: 'FLY_API_TOKEN' }],
+      },
+      {
+        name: 'credential_env',
+        description: 'Fetch one credential as env.',
+        inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+        call: (args) => {
+          if (args.id !== 'fly-token') throw new Error('Not permitted: this client may not fetch that credential.');
+          return { env: { FLY_API_TOKEN: 'v' } };
+        },
+      },
+    ];
+    const gateway = createGateway(supervisor, { name: 'gw', version: '0' }, { caller: 'vault-agent', builtins });
+    const [gwSide, clientSide] = InMemoryTransport.createLinkedPair();
+    await gateway.connect(gwSide);
+    const client = new Client({ name: 'test', version: '0' }, { capabilities: {} });
+    await client.connect(clientSide);
+
+    // Builtins appear alongside the aggregated tools, namespaced hypergate__*.
+    const { tools } = await client.listTools();
+    const names = tools.map((t) => t.name);
+    expect(names).toContain(`${BUILTIN_NS}${NS}credentials_list`);
+    expect(names).toContain(`echo${NS}echo`);
+
+    const listed = (await client.callTool({ name: `${BUILTIN_NS}${NS}credentials_list`, arguments: {} })) as {
+      content: { type: string; text: string }[];
+    };
+    expect(JSON.parse(listed.content[0].text)[0].id).toBe('fly-token');
+
+    const env = (await client.callTool({ name: `${BUILTIN_NS}${NS}credential_env`, arguments: { id: 'fly-token' } })) as {
+      content: { type: string; text: string }[];
+    };
+    expect(JSON.parse(env.content[0].text).env.FLY_API_TOKEN).toBe('v');
+
+    // A refusal thrown by the builtin surfaces as a tool error and is recorded.
+    await expect(client.callTool({ name: `${BUILTIN_NS}${NS}credential_env`, arguments: { id: 'nope' } })).rejects.toThrow(/not permitted/i);
+    await client.close();
+
+    const hg = supervisor.analytics().servers.find((s) => s.serverId === BUILTIN_NS);
+    expect(hg?.tools.some((t) => t.tool === 'credential_env')).toBe(true);
+    expect(hg!.errors).toBeGreaterThan(0);
+    expect(hg!.clients).toContain('vault-agent');
+  });
+
+  it('a gateway with no builtins neither lists nor answers hypergate__* tools', async () => {
+    const gateway = createGateway(supervisor);
+    const [gwSide, clientSide] = InMemoryTransport.createLinkedPair();
+    await gateway.connect(gwSide);
+    const client = new Client({ name: 'test', version: '0' }, { capabilities: {} });
+    await client.connect(clientSide);
+    const { tools } = await client.listTools();
+    expect(tools.some((t) => t.name.startsWith(`${BUILTIN_NS}${NS}`))).toBe(false);
+    await expect(client.callTool({ name: `${BUILTIN_NS}${NS}credentials_list`, arguments: {} })).rejects.toThrow(/unknown tool/i);
+    await client.close();
   });
 
   it('does not leak the host env into the sandboxed child', async () => {

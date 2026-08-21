@@ -38,6 +38,13 @@ import {
   HypergateOAuthProvider,
   HYPERGATE_OAUTH_IDENTITY,
   setServerAllowed,
+  BUILTIN_NS,
+  CREDENTIAL_GUIDES,
+  credentialEnv,
+  isCredentialAllowed,
+  isValidEnvVar,
+  setCredentialAllowed,
+  type GatewayBuiltinTool,
   assetsFromGithub,
   assetsFromNpm,
   detectInstallChannel,
@@ -58,6 +65,7 @@ import {
 } from '@hypergate/core';
 import { registryConnections } from '@hypergate/shared';
 import { openStore } from './store.ts';
+import { CredentialVault } from './vault.ts';
 import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
 import { Updater } from './updater.ts';
@@ -83,6 +91,13 @@ import type {
   AgentConnectInfo,
   ConnectResult,
   SetAgentServerRequest,
+  CreateCredentialRequest,
+  CredentialGuideInfo,
+  CredentialInfo,
+  DeleteCredentialResponse,
+  ResolveCredentialsRequest,
+  RollCredentialRequest,
+  SetAgentCredentialRequest,
   ShutdownResponse,
   UpdateInfo,
   UpdateAsset,
@@ -135,7 +150,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -684,6 +699,9 @@ const blobCache = new Map<string, Record<string, string>>();
 /** Whether the keychain is usable. Probed once; false means stay on files. */
 let keychainOk: boolean | undefined;
 const useKeychain = (): boolean => {
+  // Explicit opt-out, mainly so test daemons on developer machines cannot
+  // write scratch secrets into the person's real keychain.
+  if (process.env.HYPERGATE_NO_KEYCHAIN === '1') return false;
   if (keychainOk === undefined) keychainOk = shell.hasShell() && shell.keychainAvailable();
   return keychainOk;
 };
@@ -902,6 +920,60 @@ const deleteOAuth = (id: string): void => {
   }
 };
 
+// ── the credential vault ─────────────────────────────────────────────────────
+// Named secret values (API keys, access tokens) for CLIs and MCP servers.
+// Values live in the OS keychain (`cred:<id>`) with the same file fallback the
+// OAuth grants use; metadata lives in ~/.hypergate/credentials.json and never
+// carries a value. See vault.ts for the storage rules and the three doors a
+// value can leave through.
+const vault = new CredentialVault(DATA_DIR, {
+  available: () => useKeychain(),
+  get: (k) => shell.secretGet(k),
+  set: (k, v) => shell.secretSet(k, v),
+  delete: (k) => shell.secretDelete(k),
+});
+
+/**
+ * The gateway's own credential tools, built per request with the caller's
+ * scope closed over. Master reaches everything; an agent reaches exactly its
+ * allow-list (absent = nothing). Calls and refusals are recorded through the
+ * normal usage path, so analytics answers "who took which key, when".
+ */
+const credentialBuiltins = (scope: '*' | string[] | undefined): GatewayBuiltinTool[] => [
+  {
+    name: 'credentials_list',
+    description:
+      'List the vault credentials this caller may fetch — metadata only (id, name, env var), never values.',
+    inputSchema: { type: 'object', properties: {} },
+    call: () =>
+      vault
+        .list()
+        .filter((r) => scope === '*' || isCredentialAllowed(scope, r.id))
+        .map(({ id, name, kind, service, envVar, rotatedAt }) => ({ id, name, kind, service, envVar, rotatedAt })),
+  },
+  {
+    name: 'credential_env',
+    description:
+      'Fetch one allowed credential as environment variables. Returns {env: {VAR: value, …}, value}. Set the env on the process that needs the key (e.g. before re-running a CLI) instead of asking the user to re-authenticate by hand.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Credential id, from credentials_list' } },
+      required: ['id'],
+    },
+    call: (args) => {
+      const id = String(args.id ?? '').trim();
+      const row = vault.get(id);
+      if (!row) throw new Error(`Unknown credential "${id}". Use credentials_list to see what exists.`);
+      if (scope !== '*' && !isCredentialAllowed(scope, id))
+        throw new Error(`Not permitted: this client may not fetch credential "${id}". The user can grant it in Hypergate.`);
+      const value = vault.value(id);
+      if (value === undefined) throw new Error(`Credential "${id}" has no stored value — roll it in Hypergate.`);
+      vault.touch(id);
+      return { id, envVar: row.envVar, env: credentialEnv(row, value), value };
+    },
+  },
+];
+
 /** The identity the stored grant states about itself. No network, always cheap. */
 const accountFromGrant = (cfg: ManagedServerConfig): ServerAccount | undefined => {
   if (cfg.runtime !== 'remote' || cfg.auth === 'none') return undefined;
@@ -1056,6 +1128,22 @@ const supervisor = new Supervisor({
   // sandbox-exec`. Undefined when the shell is not installed, in which case a
   // limited server starts unsandboxed and says so in its logs.
   launcher: shell.shellBin(),
+  // Resolve a config's credentialRefs (ENV_VAR → credential id) from the vault
+  // at spawn time, so servers.json holds references and rolling a credential
+  // re-keys the server on its next (re)start. A ref whose credential is gone
+  // simply resolves to nothing; the server starts without it and fails with the
+  // provider's own error, which names the missing var better than we could.
+  secretsFor: (cfg) => {
+    const out: Record<string, string> = {};
+    for (const [envName, credId] of Object.entries(cfg.credentialRefs ?? {})) {
+      if (!isValidEnvVar(envName)) continue;
+      const value = vault.value(credId);
+      if (value === undefined) continue;
+      out[envName] = value;
+      vault.touch(credId);
+    }
+    return out;
+  },
 });
 let servers = loadConfig();
 const statusFor = (cfg: ManagedServerConfig): ServerStatus | undefined => {
@@ -1222,7 +1310,12 @@ if (STDIO_MODE) {
   void startStdioProxy().then(async (proxied) => {
     if (proxied) return;
     await startEnabled();
-    const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller: 'stdio (local)' });
+    const gateway = createGateway(
+      supervisor,
+      { name: 'hypergate-gateway', version: VERSION },
+      // A local stdio spawn is the user's own process: master-equivalent scope.
+      { caller: 'stdio (local)', builtins: credentialBuiltins('*') },
+    );
     await gateway.connect(new StdioServerTransport());
     // stdout is the MCP channel now; logs must go to stderr only.
     process.stderr.write(`hypergated gateway (stdio) up — ${supervisor.ids().length} server(s)\n`);
@@ -1520,17 +1613,25 @@ if (STDIO_MODE) {
         const body = JSON.parse(await readBody(req));
         let caller: string;
         let allowServer: ((id: string) => boolean) | undefined;
+        let credScope: '*' | string[] | undefined;
         if (scope.kind === 'agent') {
           caller = scope.agent.name;
           const allow = scope.agent.servers;
           allowServer = (id) => allow === '*' || allow.includes(id);
+          // Credentials are deny-by-default: an agent with no allow-list gets none.
+          credScope = scope.agent.credentials;
           scope.agent.lastUsed = new Date().toISOString();
           persistClients();
         } else {
           caller = callerFor(req, body);
+          credScope = '*';
         }
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-        const gateway = createGateway(supervisor, { name: 'hypergate-gateway', version: VERSION }, { caller, allowServer });
+        const gateway = createGateway(
+          supervisor,
+          { name: 'hypergate-gateway', version: VERSION },
+          { caller, allowServer, builtins: credentialBuiltins(credScope) },
+        );
         res.on('close', () => {
           void transport.close();
           void gateway.close();
@@ -1812,6 +1913,171 @@ if (STDIO_MODE) {
     }
 
     // ── connected agents (scoped gateway tokens) ─────────────────────────────
+    // ── the credential vault ──────────────────────────────────────────────
+    // Reads return metadata + masked hints only. Mutations need the master
+    // token on top of the global same-origin guard (the /api/shutdown and
+    // /api/oauth/app precedent): creating, rolling, deleting, or granting a
+    // key must not be reachable by any local page that guesses the shape.
+    const credentialInfo = (r: ReturnType<CredentialVault['list']>[number]): CredentialInfo => ({
+      ...r,
+      storage: vault.storage(),
+      usedBy: {
+        servers: servers.filter((s) => Object.values(s.credentialRefs ?? {}).includes(r.id)).map((s) => s.id),
+        agents: clients.filter((c) => isCredentialAllowed(c.credentials, r.id)).map((c) => c.id),
+      },
+    });
+
+    if (pathname === '/api/credentials' && req.method === 'GET') return json(res, 200, vault.list().map(credentialInfo));
+
+    // The guides: where each service's credential comes from, plus whether one
+    // is already stored. Static data joined with the vault — never a fetch.
+    if (pathname === '/api/credentials/guides' && req.method === 'GET') {
+      const guides: CredentialGuideInfo[] = CREDENTIAL_GUIDES.map((g) => ({
+        ...g,
+        storedId: vault.forService(g.service)?.id,
+      }));
+      return json(res, 200, guides);
+    }
+
+    if (pathname === '/api/credentials' && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      try {
+        const body = JSON.parse(await readBody(req)) as CreateCredentialRequest;
+        const meta = vault.create(body);
+        return json(res, 200, credentialInfo(meta));
+      } catch (e) {
+        return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
+      }
+    }
+
+    // Resolve credentials into env — the `hypergate run` door. Master reaches
+    // everything (optionally narrowed to one agent's scope for attribution);
+    // an agent token reaches exactly its allow-list. Recorded like a gateway
+    // call so analytics shows CLI fetches beside agent fetches.
+    if (pathname === '/api/credentials/resolve' && req.method === 'POST') {
+      const scope = authScope(req);
+      if (!scope) return json(res, 401, { error: 'unauthorized' });
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}') as ResolveCredentialsRequest;
+        let credScope: '*' | string[] | undefined;
+        let caller: string;
+        if (scope.kind === 'master') {
+          if (body.agent) {
+            const found = matchAgents(clients, body.agent);
+            if (found.length !== 1) return json(res, found.length ? 409 : 404, { error: found.length ? 'ambiguous_agent' : 'unknown_agent' });
+            credScope = found[0].credentials;
+            caller = found[0].name;
+          } else {
+            credScope = '*';
+            caller = 'hypergate run';
+          }
+        } else {
+          if (body.agent) return json(res, 403, { error: 'only the master token may resolve as another agent' });
+          credScope = scope.agent.credentials;
+          caller = scope.agent.name;
+        }
+        const allowedIds = vault.ids().filter((id) => credScope === '*' || isCredentialAllowed(credScope, id));
+        let wanted = allowedIds;
+        if (Array.isArray(body.ids) && body.ids.length) {
+          const denied = body.ids.find((id) => !allowedIds.includes(id));
+          if (denied !== undefined) return json(res, 403, { error: `not permitted: ${denied}` });
+          wanted = body.ids;
+        }
+        const { env, used } = vault.envFor(wanted);
+        if (used.length) {
+          supervisor.record({
+            at: new Date().toISOString(),
+            serverId: BUILTIN_NS,
+            server: 'Hypergate',
+            tool: 'credential_env',
+            client: caller,
+            ok: true,
+            ms: 0,
+            bytesIn: 0,
+            bytesOut: 0,
+          });
+        }
+        return json(res, 200, { env, used });
+      } catch {
+        return json(res, 400, { error: 'invalid_json' });
+      }
+    }
+
+    const credRollM = /^\/api\/credentials\/([^/]+)\/roll$/.exec(pathname);
+    if (credRollM && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      try {
+        const body = JSON.parse(await readBody(req)) as RollCredentialRequest;
+        const meta = vault.roll(decodeURIComponent(credRollM[1]), body.value);
+        if (!meta) return json(res, 404, { error: 'not_found' });
+        // A roll should be complete in one step: every running server that
+        // references this credential restarts onto the new value now, instead
+        // of failing with the revoked one at some later, surprising moment.
+        const restarted: string[] = [];
+        for (const cfg of servers) {
+          if (!Object.values(cfg.credentialRefs ?? {}).includes(meta.id)) continue;
+          if (supervisor.status(cfg.id)?.state === 'ready') {
+            await supervisor.restart(cfg);
+            restarted.push(cfg.id);
+          }
+        }
+        return json(res, 200, { ...credentialInfo(meta), restarted });
+      } catch (e) {
+        return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
+      }
+    }
+
+    const credM = /^\/api\/credentials\/([^/]+)$/.exec(pathname);
+    if (credM && req.method === 'DELETE') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const id = decodeURIComponent(credM[1]);
+      if (!vault.delete(id)) return json(res, 404, { error: 'not_found' });
+      // Delete means deleted (the v0.16.1 rule): the value, the metadata, every
+      // agent grant, and every server reference go together — a dangling ref
+      // would resurrect the key the moment someone re-created the id.
+      const prunedAgents: string[] = [];
+      for (const c of clients) {
+        if (!isCredentialAllowed(c.credentials, id)) continue;
+        c.credentials = setCredentialAllowed(c.credentials, id, false, vault.ids());
+        prunedAgents.push(c.id);
+      }
+      if (prunedAgents.length) saveClients(clients);
+      const prunedServers: string[] = [];
+      for (const cfg of servers) {
+        const refs = cfg.credentialRefs ?? {};
+        const keys = Object.keys(refs).filter((k) => refs[k] === id);
+        if (!keys.length) continue;
+        for (const k of keys) delete refs[k];
+        if (!Object.keys(refs).length) delete cfg.credentialRefs;
+        prunedServers.push(cfg.id);
+      }
+      if (prunedServers.length) saveConfig(servers);
+      const out: DeleteCredentialResponse = { ok: true, servers: prunedServers, agents: prunedAgents };
+      return json(res, 200, out);
+    }
+
+    // Enable or disable ONE credential for ONE agent — the mirror of the
+    // per-server flip below, with the opposite default (absent scope = none).
+    const credPermM = /^\/api\/clients\/([^/]+)\/credentials\/([^/]+)$/.exec(pathname);
+    if (credPermM && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const agent = clients.find((c) => c.id === credPermM[1]);
+      if (!agent) return json(res, 404, { error: 'not_found' });
+      const credId = decodeURIComponent(credPermM[2]);
+      try {
+        const b = JSON.parse(await readBody(req)) as SetAgentCredentialRequest;
+        if (typeof b.allowed !== 'boolean') return json(res, 400, { error: 'allowed must be true or false' });
+        // Granting needs a credential that exists; revoking never does, so a
+        // stale grant to a deleted credential is always clearable.
+        if (b.allowed && !vault.get(credId)) return json(res, 404, { error: 'unknown_credential' });
+        agent.credentials = setCredentialAllowed(agent.credentials, credId, b.allowed, vault.ids());
+        saveClients(clients);
+        return json(res, 200, agentInfo(agent));
+      } catch {
+        return json(res, 400, { error: 'invalid_json' });
+      }
+    }
+
     if (pathname === '/api/clients' && req.method === 'GET') return json(res, 200, clients.map(agentInfo));
     if (pathname === '/api/clients' && req.method === 'POST') {
       try {
@@ -2018,7 +2284,19 @@ if (STDIO_MODE) {
         // needs an image (its entrypoint runs when no command is given).
         if (!cfg.id || !cfg.name || (isRemote ? !cfg.url : !cfg.command && !cfg.image))
           return json(res, 400, { error: isRemote ? 'id, name, and url required' : 'id, name, and a command or image required' });
+        // `hypergate` is the gateway's own builtin namespace (hypergate__*): a
+        // server with that id could shadow or be shadowed by the vault tools.
+        if (cfg.id === BUILTIN_NS) return json(res, 400, { error: `"${BUILTIN_NS}" is a reserved id` });
         if (servers.some((s) => s.id === cfg.id)) return json(res, 409, { error: 'id_exists' });
+        if (cfg.credentialRefs !== undefined) {
+          if (typeof cfg.credentialRefs !== 'object' || Array.isArray(cfg.credentialRefs)) {
+            return json(res, 400, { error: 'credentialRefs must map ENV_VAR to a credential id' });
+          }
+          for (const [envName, credId] of Object.entries(cfg.credentialRefs)) {
+            if (!isValidEnvVar(envName)) return json(res, 400, { error: `credentialRefs key "${envName}" is not a valid env var name` });
+            if (typeof credId !== 'string' || !vault.get(credId)) return json(res, 400, { error: `unknown credential "${String(credId)}"` });
+          }
+        }
         cfg.enabled = cfg.enabled ?? true;
         if (isRemote) {
           cfg.command = cfg.command ?? '';
