@@ -54,6 +54,17 @@ jobs:
       - run: cargo fmt --manifest-path apps/shell/Cargo.toml --check
       - run: cargo clippy --manifest-path apps/shell/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path apps/shell/Cargo.toml
+      # The macOS packaging renderer is a deliberate JS copy of icon.rs with a
+      # literal drift guard. Running it here makes an icon.rs change fail the
+      # PR that makes it, instead of the release job two days later (Epic 48:
+      # v1.6.0 and v1.7.0 both tagged and never published because only the
+      # release workflow ever executed this script).
+      - if: runner.os == 'macOS'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - if: runner.os == 'macOS'
+        run: node scripts/gen-icns.mjs "$RUNNER_TEMP/ci-guard.icns"
 
   standalone:
     name: standalone daemon
