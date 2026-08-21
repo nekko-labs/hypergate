@@ -108,7 +108,7 @@ export function detectInstallChannel(opts: { daemonPath: string; execPath?: stri
     platform === 'win32'
       ? ['/programs/hypergate/', '/appdata/local/hypergate/']
       : platform === 'darwin'
-        ? ['/applications/hypergate.app/', '/usr/local/bin/hypergate']
+        ? ['/applications/hypergate.app/']
         : ['/usr/lib/hypergate', '/opt/hypergate', '/usr/bin/hypergate'];
   if (installerDirs.some((d) => daemon.includes(d) || exec.includes(d))) return 'installer';
 
@@ -118,12 +118,10 @@ export function detectInstallChannel(opts: { daemonPath: string; execPath?: stri
 /**
  * What updating would take on this channel.
  *
- * One-click is deliberately limited to the npm channel. The native installers
- * are not code-signed yet on Windows or macOS (see docs/signing.md), and
- * silently downloading and running an unsigned installer is worse than telling
- * the user where the release is; the Linux packages need root, which a per-user
- * agent does not have. So those channels get the exact command or the release
- * page instead of a button that half-works.
+ * One-click supports npm installs and signed macOS app bundles. A macOS update
+ * replaces the whole bundle from the release DMG so its code signature stays
+ * intact. Windows installers remain manual until they are signed, and Linux
+ * system packages need root, which a per-user agent does not have.
  */
 export function updatePlan(channel: InstallChannel, latest?: string, platform: string = process.platform): UpdatePlan {
   const version = latest ? `@${latest}` : '@latest';
@@ -131,6 +129,12 @@ export function updatePlan(channel: InstallChannel, latest?: string, platform: s
     case 'npm':
       return { canApply: true, command: `npm install -g ${UPDATE_PACKAGE}${version}` };
     case 'installer':
+      if (platform === 'darwin') {
+        return {
+          canApply: true,
+          note: 'Hypergate will verify the signed release, replace the app bundle, and restart. Your servers and settings stay in ~/.hypergate.',
+        };
+      }
       return {
         canApply: false,
         command:
@@ -140,9 +144,7 @@ export function updatePlan(channel: InstallChannel, latest?: string, platform: s
         note:
           platform === 'linux'
             ? 'Installed from a system package, which needs root to replace. Download the release and install it with your package manager.'
-            : platform === 'darwin'
-              ? 'Installed from the macOS disk image, so the in-app npm updater cannot replace this signed app bundle. Quit Hypergate, eject any older Hypergate disk image, download the new .dmg, and drag Hypergate.app over the existing app. Your servers and settings stay in ~/.hypergate; no old installer files need removing.'
-              : 'Installed from the native installer. Download the new one from the release page and run it: it stops the running app, replaces it, and starts it again.',
+            : 'Installed from the native installer. Download the new one from the release page and run it: it stops the running app, replaces it, and starts it again.',
       };
     case 'repo':
       return {
@@ -251,6 +253,27 @@ export function assetsFromGithub(
   const main = pick(`${UPDATE_PACKAGE}-${version}.tgz`);
   if (main) out.push(main);
   return main ? out : [];
+}
+
+export function macosInstallerFromGithub(
+  doc: unknown,
+  version: string,
+  arch: string,
+  checksumsText?: string,
+): UpdateAsset[] {
+  const assets = (doc as { assets?: { name?: string; browser_download_url?: string; size?: number }[] } | null)?.assets;
+  if (!Array.isArray(assets)) return [];
+  const name = `hypergate-${version}-macos-${arch}.dmg`;
+  const asset = assets.find((item) => item.name === name);
+  const sha256 = parseSha256Sums(checksumsText ?? '')[name];
+  if (!downloadableUrl(asset?.browser_download_url) || !sha256) return [];
+  return [{
+    name,
+    url: asset.browser_download_url,
+    size: typeof asset.size === 'number' ? asset.size : undefined,
+    sha256,
+    source: 'github',
+  }];
 }
 
 /** Pull `dist-tags.latest` out of an npm registry document. */

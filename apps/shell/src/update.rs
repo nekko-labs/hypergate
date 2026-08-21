@@ -11,18 +11,18 @@
 //!    temp dir and spawns it detached, then asks the running agent to quit and
 //!    exits. Nothing that gets replaced is still running.
 //! 2. The updater waits for the daemon port and the tray's single-instance lock
-//!    to go quiet, runs the package manager, and starts `hypergate app` again.
+//!    to go quiet, replaces the package or app bundle, and starts Hypergate again.
 //! 3. Everything it does is appended to `~/.hypergate/update.log`, because an
 //!    update that fails after the UI has gone away is otherwise invisible.
 //!
-//! One-click updating is limited to an npm install on purpose. The native
-//! installers are not signed yet on Windows or macOS (docs/signing.md), and
-//! downloading and running an unsigned installer unattended is worse than
-//! pointing the user at the release; the Linux packages need root, which a
-//! per-user agent has no business acquiring. Those channels get told what to run
-//! instead, by the daemon, in the UI.
+//! One-click updating supports npm installs and signed macOS app bundles. The
+//! macOS path replaces the whole bundle from the notarized release DMG so its
+//! signature stays intact. Windows installers remain manual until signing lands;
+//! Linux system packages still need root.
 
 use std::io::Write;
+#[cfg(target_os = "macos")]
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -42,6 +42,50 @@ fn is_npm_install() -> bool {
         .ok()
         .map(|p| p.to_string_lossy().replace('\\', "/").to_lowercase())
         .is_some_and(|p| p.contains("/node_modules/"))
+}
+
+#[cfg(target_os = "macos")]
+fn app_bundle_for_exe(exe: &Path) -> Option<PathBuf> {
+    let macos = exe.parent()?;
+    let contents = macos.parent()?;
+    let app = contents.parent()?;
+    (macos.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && app.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("app")))
+    .then(|| app.to_path_buf())
+}
+
+#[cfg(target_os = "macos")]
+fn current_app_bundle() -> Option<PathBuf> {
+    app_bundle_for_exe(&std::env::current_exe().ok()?)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_asset_name(version: &str) -> Option<String> {
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        _ => return None,
+    };
+    Some(format!("hypergate-{version}-macos-{arch}.dmg"))
+}
+
+#[cfg(target_os = "macos")]
+fn staged_macos_dmg(version: &str) -> Option<(PathBuf, String)> {
+    let dir = paths::data_dir().join("updates").join(version);
+    let body = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
+    let manifest = serde_json::from_str::<serde_json::Value>(&body).ok()?;
+    let files = manifest.get("files")?.as_array()?;
+    let expected = macos_asset_name(version)?;
+    if files.len() != 1 || files[0].as_str()? != expected {
+        return None;
+    }
+    let sha256 = manifest.get("sha256")?.get(&expected)?.as_str()?;
+    if sha256.len() != 64 || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let dmg = dir.join(expected);
+    dmg.is_file().then(|| (dmg, sha256.to_ascii_lowercase()))
 }
 
 /// A version string safe to put on a command line: digits, dots, and the few
@@ -142,75 +186,101 @@ pub fn apply() -> Result<(), String> {
         record_failure(&latest, &error);
         return Err(error);
     }
-    if !is_npm_install() {
-        let mut msg = String::from("this copy wasn't installed with npm, so it can't be replaced in place");
-        if let Some(note) = info.note.as_deref() {
-            msg.push_str(&format!("\n{note}"));
+    if is_npm_install() {
+        let Some(node) = paths::find_on_path("node") else {
+            let msg = "node is not on PATH, so the updater cannot run (an npm install of Hypergate always has one; \
+                       reinstall with `npm install -g hypergated@latest` by hand)";
+            log(msg);
+            record_failure(&latest, msg);
+            return Err(msg.to_string());
+        };
+        // Prefer what the daemon already downloaded: installing from local tarballs
+        // is offline, instant, and installs exactly the bytes that were verified
+        // against the feed's hash. Falling back to the registry keeps
+        // `hypergate update --apply` working with no daemon-side download at all.
+        let staged = staged_files(&latest);
+        if staged.is_empty() {
+            log("no staged download; the updater will fetch from the registry");
+        } else {
+            log(&format!("installing {} staged file(s)", staged.len()));
         }
-        if let Some(cmd) = info.command.as_deref() {
-            msg.push_str(&format!("\nrun: {cmd}"));
-        }
-        log(&msg.replace('\n', " · "));
-        record_failure(&latest, &msg);
-        return Err(msg);
-    }
+        let script = match write_updater(&latest, &staged) {
+            Ok(path) => path,
+            Err(e) => {
+                log(&format!("could not write the updater: {e}"));
+                record_failure(&latest, &e);
+                return Err(e);
+            }
+        };
 
-    let Some(node) = paths::find_on_path("node") else {
-        let msg = "node is not on PATH, so the updater cannot run (an npm install of Hypergate always has one; \
-                   reinstall with `npm install -g hypergated@latest` by hand)";
-        log(msg);
-        record_failure(&latest, msg);
-        return Err(msg.to_string());
-    };
-    // Prefer what the daemon already downloaded: installing from local tarballs
-    // is offline, instant, and installs exactly the bytes that were verified
-    // against the feed's hash. Falling back to the registry keeps
-    // `hypergate update --apply` working with no daemon-side download at all.
-    let staged = staged_files(&latest);
-    if staged.is_empty() {
-        log("no staged download; the updater will fetch from the registry");
+        // Spawn the updater first, so whatever happens next it is already waiting.
+        let mut cmd = Command::new(node);
+        cmd.arg(&script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW: it has
+            // to survive us and must not flash a console at the user.
+            cmd.creation_flags(0x0000_0008 | 0x0000_0200 | 0x0800_0000);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+        }
+        if let Err(e) = cmd.spawn() {
+            let error = format!("could not start the updater: {e}");
+            log(&error);
+            record_failure(&latest, &error);
+            return Err(error);
+        }
+        log(&format!("updater spawned for v{latest} ({})", script.display()));
     } else {
-        log(&format!("installing {} staged file(s)", staged.len()));
-    }
-    let script = match write_updater(&latest, &staged) {
-        Ok(path) => path,
-        Err(e) => {
-            log(&format!("could not write the updater: {e}"));
-            record_failure(&latest, &e);
-            return Err(e);
+        #[cfg(target_os = "macos")]
+        {
+            let app = match current_app_bundle().filter(|_| info.can_apply) {
+                Some(app) => app,
+                None => {
+                    let error = "this copy is not a signed macOS app bundle that Hypergate can replace in place";
+                    log(error);
+                    record_failure(&latest, error);
+                    return Err(error.to_string());
+                }
+            };
+            let (dmg, sha256) = match staged_macos_dmg(&latest) {
+                Some(payload) => payload,
+                None => {
+                    let error = "the signed macOS disk image was not downloaded; retry the update from the manager";
+                    log(error);
+                    record_failure(&latest, error);
+                    return Err(error.to_string());
+                }
+            };
+            spawn_macos_updater(&latest, &sha256, &dmg, &app)?;
+            log(&format!("macOS updater spawned for v{latest} ({})", dmg.display()));
         }
-    };
-
-    // Spawn the updater first, so whatever happens next it is already waiting.
-    let mut cmd = Command::new(node);
-    cmd.arg(&script)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW: it has
-        // to survive us and must not flash a console at the user.
-        cmd.creation_flags(0x0000_0008 | 0x0000_0200 | 0x0800_0000);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut msg = String::from("this copy cannot be replaced in place");
+            if let Some(note) = info.note.as_deref() {
+                msg.push_str(&format!("\n{note}"));
+            }
+            if let Some(cmd) = info.command.as_deref() {
+                msg.push_str(&format!("\nrun: {cmd}"));
+            }
+            log(&msg.replace('\n', " · "));
+            record_failure(&latest, &msg);
+            return Err(msg);
         }
     }
-    if let Err(e) = cmd.spawn() {
-        let error = format!("could not start the updater: {e}");
-        log(&error);
-        record_failure(&latest, &error);
-        return Err(error);
-    }
-    log(&format!("updater spawned for v{latest} ({})", script.display()));
 
     // Now get out of the way. A running tray owns the daemon, so asking it to
     // quit takes both down together; without one, stop the daemon directly.
@@ -234,6 +304,365 @@ pub fn apply() -> Result<(), String> {
         paths::data_dir().join("update.log").display()
     );
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_macos_updater(version: &str, sha256: &str, dmg: &Path, app: &Path) -> Result<(), String> {
+    use std::os::unix::process::CommandExt;
+
+    let source = std::env::current_exe().map_err(|e| format!("could not find the updater binary: {e}"))?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|time| time.as_nanos())
+        .unwrap_or_default();
+    let updater = std::env::temp_dir().join(format!("hypergate-update-{}-{nonce}", std::process::id()));
+    let copied = (|| -> Result<(), std::io::Error> {
+        let mut input = std::fs::File::open(&source)?;
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&updater)?;
+        std::io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        std::fs::set_permissions(&updater, std::fs::metadata(&source)?.permissions())
+    })();
+    if let Err(error) = copied {
+        let _ = std::fs::remove_file(&updater);
+        return Err(format!("could not copy the updater to a temporary path: {error}"));
+    }
+    let mut cmd = Command::new(&updater);
+    cmd.arg("internal-apply-macos")
+        .arg(version)
+        .arg(sha256)
+        .arg(dmg)
+        .arg(app)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    cmd.spawn().map_err(|e| {
+        let _ = std::fs::remove_file(&updater);
+        let error = format!("could not start the macOS updater: {e}");
+        log(&error);
+        record_failure(version, &error);
+        error
+    })?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn port_busy(port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_millis(750),
+    )
+    .is_ok()
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_quiet() -> bool {
+    let port = paths::port();
+    for _ in 0..60 {
+        if !port_busy(port) && !port_busy(port.saturating_add(1)) {
+            std::thread::sleep(Duration::from_millis(1500));
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn checked_output(mut command: Command, label: &str) -> Result<std::process::Output, String> {
+    let output = command.output().map_err(|e| format!("{label}: {e}"))?;
+    if output.status.success() {
+        Ok(output)
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(format!(
+            "{label}: {}",
+            if detail.is_empty() {
+                format!("exited {}", output.status)
+            } else {
+                detail
+            }
+        ))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn verify_sha256(path: &Path, expected: &str) -> Result<(), String> {
+    if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("the staged disk image has no valid expected SHA-256".to_string());
+    }
+    let mut command = Command::new("/usr/bin/shasum");
+    command.arg("-a").arg("256").arg(path);
+    let output = checked_output(command, "could not hash the staged disk image")?;
+    let actual = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| "the SHA-256 tool returned no checksum".to_string())?;
+    if actual != expected.to_ascii_lowercase() {
+        return Err("the staged disk image changed after it was downloaded".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn plist_value(app: &Path, key: &str) -> Result<String, String> {
+    let mut command = Command::new("/usr/libexec/PlistBuddy");
+    command
+        .arg("-c")
+        .arg(format!("Print :{key}"))
+        .arg(app.join("Contents/Info.plist"));
+    let output = checked_output(command, &format!("could not read {key} from the app bundle"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn team_identifier(app: &Path) -> Result<String, String> {
+    let mut command = Command::new("/usr/bin/codesign");
+    command.arg("-dv").arg("--verbose=4").arg(app);
+    let output = command
+        .output()
+        .map_err(|e| format!("could not inspect the app signature: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "could not inspect the app signature: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let detail = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    detail
+        .lines()
+        .find_map(|line| line.strip_prefix("TeamIdentifier="))
+        .filter(|team| !team.is_empty() && *team != "not set")
+        .map(str::to_string)
+        .ok_or_else(|| "the app signature has no TeamIdentifier".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn validate_macos_bundle(app: &Path, version: Option<&str>) -> Result<String, String> {
+    if !app.join("Contents/MacOS/hypergate").is_file() || !app.join("Contents/MacOS/hypergated").is_file() {
+        return Err(format!("{} is not a complete Hypergate app bundle", app.display()));
+    }
+    let mut codesign = Command::new("/usr/bin/codesign");
+    codesign.arg("--verify").arg("--deep").arg("--strict").arg(app);
+    checked_output(codesign, "the app bundle failed code-signature verification")?;
+    let mut spctl = Command::new("/usr/sbin/spctl");
+    spctl.arg("--assess").arg("--type").arg("execute").arg(app);
+    checked_output(spctl, "Gatekeeper rejected the app bundle")?;
+    if plist_value(app, "CFBundleIdentifier")? != "app.hypergate.tray" {
+        return Err("the update has the wrong bundle identifier".to_string());
+    }
+    if let Some(expected) = version
+        && plist_value(app, "CFBundleShortVersionString")? != expected
+    {
+        return Err(format!("the update does not contain Hypergate {expected}"));
+    }
+    team_identifier(app)
+}
+
+#[cfg(target_os = "macos")]
+fn swap_macos_bundle(source: &Path, target: &Path, version: &str) -> Result<(), String> {
+    let expected_team = validate_macos_bundle(target, None)?;
+    let update_team = validate_macos_bundle(source, Some(version))?;
+    if expected_team != update_team {
+        return Err(format!(
+            "the update was signed by a different developer team ({update_team}, expected {expected_team})"
+        ));
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| "the installed app has no parent directory".to_string())?;
+    let name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "the installed app has no valid name".to_string())?;
+    let staged = parent.join(format!(".{name}.update-new-{}", std::process::id()));
+    let backup = parent.join(format!(".{name}.update-backup-{}", std::process::id()));
+    let mut ditto = Command::new("/usr/bin/ditto");
+    ditto.arg(source).arg(&staged);
+    if let Err(error) = checked_output(ditto, "could not copy the new app bundle") {
+        let _ = std::fs::remove_dir_all(&staged);
+        return Err(error);
+    }
+    if let Err(error) = validate_macos_bundle(&staged, Some(version)) {
+        let _ = std::fs::remove_dir_all(&staged);
+        return Err(error);
+    }
+    std::fs::rename(target, &backup).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&staged);
+        format!("could not move the installed app aside: {e}")
+    })?;
+    if let Err(error) = std::fs::rename(&staged, target) {
+        let rollback = std::fs::rename(&backup, target);
+        if rollback.is_ok() {
+            let _ = std::fs::remove_dir_all(&staged);
+        }
+        return Err(format!(
+            "could not put the new app in place: {error}{}",
+            rollback
+                .err()
+                .map(|e| format!("; rollback also failed: {e}"))
+                .unwrap_or_default()
+        ));
+    }
+    let version_output = Command::new(target.join("Contents/MacOS/hypergate"))
+        .arg("--version")
+        .output();
+    let version_ok = version_output.as_ref().is_ok_and(|output| {
+        output.status.success()
+            && String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .any(|part| part == version)
+    });
+    if !version_ok {
+        let detail = version_output
+            .map(|output| String::from_utf8_lossy(&output.stderr).trim().to_string())
+            .unwrap_or_else(|e| e.to_string());
+        let _ = std::fs::remove_dir_all(target);
+        std::fs::rename(&backup, target)
+            .map_err(|e| format!("the new app did not report version {version} ({detail}); rollback failed: {e}"))?;
+        return Err(format!("the new app did not report version {version}: {detail}"));
+    }
+    if let Err(error) = std::fs::remove_dir_all(&backup) {
+        log(&format!(
+            "the app updated, but its backup could not be removed: {error}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn record_success(version: &str) {
+    let path = paths::data_dir().join("updates").join("last-result.json");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let body = serde_json::json!({
+        "ok": true,
+        "version": version,
+        "finishedAt": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_else(|_| "0".to_string()),
+    });
+    let _ = std::fs::write(path, body.to_string());
+}
+
+#[cfg(target_os = "macos")]
+pub fn apply_macos_detached(version: &str, sha256: &str, dmg: &str, app: &str) -> Result<(), String> {
+    let dmg = PathBuf::from(dmg);
+    let app = PathBuf::from(app);
+    log(&format!("macOS update starting: v{version}"));
+    let result = (|| {
+        if !safe_version(version) {
+            return Err("the requested update version is invalid".to_string());
+        }
+        if !wait_for_quiet() {
+            return Err(
+                "Hypergate was still running after 30 seconds, so the app bundle was left untouched".to_string(),
+            );
+        }
+        verify_sha256(&dmg, sha256)?;
+        let mut codesign = Command::new("/usr/bin/codesign");
+        codesign.arg("--verify").arg("--verbose=4").arg(&dmg);
+        checked_output(codesign, "the disk image failed code-signature verification")?;
+        let mut spctl = Command::new("/usr/sbin/spctl");
+        spctl
+            .arg("--assess")
+            .arg("--type")
+            .arg("open")
+            .arg("--context")
+            .arg("context:primary-signature")
+            .arg(&dmg);
+        checked_output(spctl, "Gatekeeper rejected the update disk image")?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|time| time.as_nanos())
+            .unwrap_or_default();
+        let mount = std::env::temp_dir().join(format!("hypergate-update-mount-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&mount).map_err(|e| format!("could not create the disk image mount point: {e}"))?;
+        let mut attach = Command::new("/usr/bin/hdiutil");
+        attach
+            .arg("attach")
+            .arg("-nobrowse")
+            .arg("-readonly")
+            .arg("-mountpoint")
+            .arg(&mount)
+            .arg(&dmg);
+        if let Err(error) = checked_output(attach, "could not mount the update disk image") {
+            let _ = std::fs::remove_dir_all(&mount);
+            return Err(error);
+        }
+        let swap = swap_macos_bundle(&mount.join("Hypergate.app"), &app, version);
+        let mut detach = Command::new("/usr/bin/hdiutil");
+        detach.arg("detach").arg(&mount);
+        let detached = checked_output(detach, "could not detach the update disk image");
+        let _ = std::fs::remove_dir_all(&mount);
+        swap?;
+        if let Err(error) = detached {
+            log(&error);
+        }
+        Ok(())
+    })();
+
+    match &result {
+        Ok(()) => {
+            record_success(version);
+            let expected = paths::data_dir().join("updates").join(version);
+            if dmg.parent() == Some(expected.as_path()) {
+                let _ = std::fs::remove_dir_all(expected);
+            }
+            log(&format!("macOS update finished: v{version}"));
+        }
+        Err(error) => {
+            record_failure(version, error);
+            log(&format!("macOS update failed: {error}"));
+        }
+    }
+
+    if std::env::var("HYPERGATE_UPDATE_RELAUNCH").as_deref() != Ok("0") {
+        let binary = app.join("Contents/MacOS/hypergate");
+        let mut command = Command::new(&binary);
+        command
+            .arg("app")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        match command.spawn() {
+            Ok(_) => log(&format!("relaunched {} app", binary.display())),
+            Err(error) => log(&format!("could not relaunch: {error}")),
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        let temporary = exe.parent() == Some(std::env::temp_dir().as_path())
+            && exe
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("hypergate-update-"));
+        if temporary {
+            let _ = std::fs::remove_file(exe);
+        }
+    }
+    result
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn apply_macos_detached(_version: &str, _sha256: &str, _dmg: &str, _app: &str) -> Result<(), String> {
+    Err("macOS app updates are only available on macOS".to_string())
 }
 
 /// Ask a running tray to quit, over the single-instance lock port. True when the
@@ -466,6 +895,37 @@ mod tests {
         ] {
             assert!(!safe_version(bad), "{bad}");
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn recognises_a_shell_inside_a_macos_app_bundle() {
+        let app = app_bundle_for_exe(Path::new("/Applications/Hypergate.app/Contents/MacOS/hypergate"));
+        assert_eq!(app, Some(PathBuf::from("/Applications/Hypergate.app")));
+        assert_eq!(app_bundle_for_exe(Path::new("/usr/local/bin/hypergate")), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn names_the_disk_image_for_this_architecture() {
+        let name = macos_asset_name("1.8.0").expect("supported Mac architecture");
+        assert!(name == "hypergate-1.8.0-macos-arm64.dmg" || name == "hypergate-1.8.0-macos-x64.dmg");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rechecks_a_staged_disk_images_sha256() {
+        let path = std::env::temp_dir().join(format!("hypergate-sha-test-{}", std::process::id()));
+        std::fs::write(&path, b"hello").expect("write fixture");
+        assert!(
+            verify_sha256(
+                &path,
+                "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            )
+            .is_ok()
+        );
+        assert!(verify_sha256(&path, &"0".repeat(64)).is_err());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

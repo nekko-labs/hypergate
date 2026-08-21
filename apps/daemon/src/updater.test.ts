@@ -105,6 +105,8 @@ describe('Updater', () => {
     // Order matters: the platform shell installs before the package that
     // depends on it.
     expect(u.stagedFiles('1.2.3').map((f) => f.split(/[\\/]/).pop())).toEqual(['shell.tgz', 'pkg.tgz']);
+    const manifest = JSON.parse(readFileSync(join(dir, 'updates', '1.2.3', 'manifest.json'), 'utf8'));
+    expect(manifest.sha256).toEqual({ 'shell.tgz': sha256(bodies['shell.tgz']), 'pkg.tgz': sha256(bodies['pkg.tgz']) });
     for (const [name, body] of Object.entries(bodies)) {
       expect(readFileSync(join(dir, 'updates', '1.2.3', name)).equals(body), name).toBe(true);
     }

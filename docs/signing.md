@@ -16,7 +16,7 @@ that use them are in `.github/workflows/build-artifacts.yml` and `release.yml`.
 | --- | --- | --- | --- |
 | Linux | SHA256SUMS + GPG detached signature | ✅ done, active | nothing, the key is set |
 | Windows | Authenticode via Azure Artifact Signing | ✅ wired, dormant | a signing account (see the geography note) |
-| macOS | Developer ID codesign + notarization | ✅ wired, dormant | Apple Developer Program enrollment |
+| macOS | Developer ID codesign + notarization | ✅ done, active | nothing, tagged releases require every signing secret |
 
 ## Linux: active now
 
@@ -77,7 +77,7 @@ Options, in order of recommendation:
 Until one of these lands, Windows users see the usual SmartScreen "unknown
 publisher" warning; reputation accrues to the certificate once signing starts.
 
-## macOS: wired, needs Apple Developer enrollment
+## macOS: active Developer ID signing and notarization
 
 The workflow signs both binaries with hardened runtime + timestamp, seals the
 `Hypergate.app` bundle, signs the `.dmg`, notarizes it with `notarytool`, and
@@ -103,25 +103,11 @@ image. It needs these secrets:
 | `APPLE_API_KEY_ID` | its Key ID |
 | `APPLE_API_ISSUER` | its Issuer ID |
 
-Steps for Philip (once, ~1 hour + Apple's review time):
-
-1. Enroll in the [Apple Developer Program](https://developer.apple.com/programs/enroll/)
-   ($99/yr). Enrolling as **Nekko Labs** (organization) needs a D-U-N-S number;
-   enrolling as an individual is faster and fine for signing (the publisher
-   string becomes your name rather than the company's).
-2. In Xcode or developer.apple.com, create a **Developer ID Application**
-   certificate.
-3. Export it into a `certs.p12` (Keychain Access → select it → Export),
-   pick a password, then:
-   `base64 -i certs.p12 | gh secret set MACOS_SIGNING_CERTS_P12 -R nekko-labs/hypergate`
-   and set `MACOS_CERT_PASSWORD` and the two identity strings the same way.
-4. In [App Store Connect → Users and Access → Integrations](https://appstoreconnect.apple.com/access/integrations/api),
-   create an API key with the **Developer** role; set `APPLE_API_KEY_P8`
-   (file contents), `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`.
-5. Cut a release. The dmg comes out signed, notarized and stapled.
-
-The workspace `provision-keys` skill automates most of step 3–4's secret
-plumbing if you'd rather run it than click.
+The credentials are configured for **Nekko Labs LLC** with Apple TeamIdentifier
+`3HM5598S99`. Tagged releases require the complete set above and fail before the
+Mac build if any value is absent. The shipped v1.7.2 app and disk image both pass
+Gatekeeper as `Notarized Developer ID`; the in-app updater compares every new
+bundle against that installed TeamIdentifier before replacement.
 
 ## What about npm?
 

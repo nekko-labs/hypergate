@@ -1020,8 +1020,8 @@ function VersionBox({ version, u, onOpenUpdates }: { version: string; u: Updater
         <b className="vb-update-version">v{latest}</b>
       </span>
     );
-    // A channel we must not replace in place (an unsigned installer, a system
-    // package, a checkout) gets pointed at the instructions instead of a button
+    // A channel we must not replace in place (an unsigned Windows installer, a
+    // system package, a checkout) gets instructions instead of a button
     // that would refuse. Offering it here and refusing it in Settings would be
     // the same lie told twice.
     if (!info?.canApply) {
@@ -2265,10 +2265,9 @@ const CHANNEL_LABEL: Record<InstallChannel, string> = {
  * The Updates row: what you're running, what's out there, and the one button
  * that closes the gap when we can do it for you.
  *
- * One-click is limited to an npm install by design (see `updatePlan` in core):
- * the native installers aren't signed yet, and downloading and running an
- * unsigned installer unattended would be worse than pointing you at the release.
- * Every channel still shows the exact command, so nothing is hidden.
+ * One-click covers npm installs and signed macOS app bundles (see `updatePlan`
+ * in core). Windows and system-package installs stay manual, and every channel
+ * still explains what it will do.
  */
 function UpdateRow({ u, version }: { u: Updater; version: string }) {
   const [copied, copy] = useCopy();

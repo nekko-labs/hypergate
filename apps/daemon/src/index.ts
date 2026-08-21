@@ -51,6 +51,7 @@ import {
   isNewerVersion,
   latestFromGithub,
   latestFromNpm,
+  macosInstallerFromGithub,
   releaseUrlFor,
   shellPackageFor,
   updatePlan,
@@ -150,7 +151,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.7.2';
+const VERSION = '1.8.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -418,7 +419,8 @@ const fetchLatest = async (): Promise<UpdateCache> => {
   const timer = setTimeout(() => ctrl.abort(), 8000);
   const checkedAt = new Date().toISOString();
   try {
-    const npmDoc = await fetchJson(NPM_URL, ctrl.signal).catch(() => undefined);
+    const macosApp = installChannel() === 'installer' && process.platform === 'darwin';
+    const npmDoc = macosApp ? undefined : await fetchJson(NPM_URL, ctrl.signal).catch(() => undefined);
     const fromNpm = latestFromNpm(npmDoc);
     if (fromNpm) {
       const assets = isNewerVersion(fromNpm, VERSION)
@@ -434,8 +436,8 @@ const fetchLatest = async (): Promise<UpdateCache> => {
     const ghDoc = await fetchJson(GITHUB_URL, ctrl.signal).catch(() => undefined);
     const fromGithub = latestFromGithub(ghDoc);
     if (fromGithub) {
-      // The release carries the same npm tarballs as attachments, which is what
-      // lets an update install before anything is published to npm at all.
+      // The release carries both the npm tarballs and the signed macOS disk
+      // images, so each install channel downloads the artifact it can replace.
       const sumsAsset = (ghDoc as { assets?: { name?: string; browser_download_url?: string }[] } | undefined)?.assets?.find(
         (a) => a.name === 'SHA256SUMS',
       );
@@ -443,7 +445,9 @@ const fetchLatest = async (): Promise<UpdateCache> => {
         ? await fetchText(sumsAsset.browser_download_url, ctrl.signal).catch(() => undefined)
         : undefined;
       const assets = isNewerVersion(fromGithub, VERSION)
-        ? assetsFromGithub(ghDoc, fromGithub, process.platform, process.arch, sums)
+        ? macosApp
+          ? macosInstallerFromGithub(ghDoc, fromGithub, process.arch, sums)
+          : assetsFromGithub(ghDoc, fromGithub, process.platform, process.arch, sums)
         : [];
       return { checkedAt, latest: fromGithub, source: 'github', releaseUrl: releaseUrlFor(fromGithub), assets };
     }
@@ -484,6 +488,9 @@ const updateInfo = (cache = loadUpdateCache()): UpdateInfo => {
     canDownload: assets.length > 0,
     downloadSize: size || undefined,
     ...plan,
+    ...(available && channel === 'installer' && process.platform === 'darwin' && assets.length === 0
+      ? { canApply: false, note: 'This release does not carry a signed disk image for this Mac.' }
+      : {}),
   };
 };
 

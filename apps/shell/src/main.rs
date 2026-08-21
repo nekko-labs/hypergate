@@ -77,9 +77,16 @@ enum Command {
     Restart,
     /// Check for a newer Hypergate, and optionally install it.
     Update {
-        /// Install the update and restart Hypergate (npm installs only).
+        /// Install the update and restart Hypergate.
         #[arg(long)]
         apply: bool,
+    },
+    #[command(name = "internal-apply-macos", hide = true)]
+    InternalApplyMacos {
+        version: String,
+        sha256: String,
+        dmg: String,
+        app: String,
     },
     /// Show whether the daemon is up, and what it is serving.
     Status,
@@ -599,6 +606,15 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
             } else {
                 update::show()?;
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::InternalApplyMacos {
+            version,
+            sha256,
+            dmg,
+            app,
+        } => {
+            update::apply_macos_detached(&version, &sha256, &dmg, &app)?;
             Ok(ExitCode::SUCCESS)
         }
 

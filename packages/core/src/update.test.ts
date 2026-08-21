@@ -8,6 +8,7 @@ import {
   latestFromGithub,
   downloadableUrl,
   latestFromNpm,
+  macosInstallerFromGithub,
   parseSha256Sums,
   releaseUrlFor,
   shellPackageFor,
@@ -66,6 +67,7 @@ describe('detectInstallChannel', () => {
       }),
     ).toBe('installer');
     expect(detectInstallChannel({ daemonPath: '/Applications/Hypergate.app/Contents/MacOS/hypergated', platform: 'darwin' })).toBe('installer');
+    expect(detectInstallChannel({ daemonPath: '/usr/local/bin/hypergated', platform: 'darwin' })).toBe('unknown');
     expect(detectInstallChannel({ daemonPath: '/usr/lib/hypergate/hypergated', platform: 'linux' })).toBe('installer');
   });
 
@@ -83,19 +85,20 @@ describe('updatePlan', () => {
     expect(updatePlan('npm', undefined, 'linux').command).toBe('npm install -g hypergated@latest');
   });
 
-  it('keeps native installer updates manual, and explains how state survives replacement', () => {
-    for (const platform of ['win32', 'darwin', 'linux']) {
+  it('updates a signed macOS app in place while keeping other native installers manual', () => {
+    const mac = updatePlan('installer', '0.12.0', 'darwin');
+    expect(mac.canApply).toBe(true);
+    expect(mac.note).toContain('signed release');
+    expect(mac.note).toContain('app bundle');
+    expect(mac.note).toContain('settings');
+
+    for (const platform of ['win32', 'linux']) {
       const plan = updatePlan('installer', '0.12.0', platform);
       expect(plan.canApply, platform).toBe(false);
       expect(plan.note, platform).toBeTruthy();
     }
     // Linux additionally needs root, so the command is the package manager's.
     expect(updatePlan('installer', '0.12.0', 'linux').command).toContain('apt install');
-    const mac = updatePlan('installer', '0.12.0', 'darwin');
-    expect(mac.note).toContain('.dmg');
-    expect(mac.note).toContain('Quit Hypergate');
-    expect(mac.note).toContain('eject any older Hypergate disk image');
-    expect(mac.note).toContain('settings');
   });
 
   it('tells a checkout to pull, and an unplaceable install nothing but the truth', () => {
@@ -206,6 +209,32 @@ describe('resolving what an update would download', () => {
     expect(assets[1].sha256).toBe('b'.repeat(64));
     // Another architecture's build is not "close enough".
     expect(assetsFromGithub(doc, '0.15.0', 'darwin', 'arm64').map((a) => a.name)).toEqual(['hypergated-0.15.0.tgz']);
+  });
+
+  it('selects only the signed disk image for this Mac architecture', () => {
+    const doc = {
+      assets: [
+        { name: 'hypergate-0.15.0-macos-arm64.dmg', browser_download_url: 'https://github.com/x/arm64.dmg', size: 41_000_000 },
+        { name: 'hypergate-0.15.0-macos-x64.dmg', browser_download_url: 'https://github.com/x/x64.dmg', size: 43_000_000 },
+        { name: 'hypergate-macos-arm64.dmg', browser_download_url: 'https://github.com/x/latest.dmg', size: 41_000_000 },
+      ],
+    };
+    const assets = macosInstallerFromGithub(
+      doc,
+      '0.15.0',
+      'arm64',
+      `${'d'.repeat(64)}  hypergate-0.15.0-macos-arm64.dmg\n${'e'.repeat(64)}  hypergate-0.15.0-macos-x64.dmg\n`,
+    );
+    expect(assets).toEqual([{
+      name: 'hypergate-0.15.0-macos-arm64.dmg',
+      url: 'https://github.com/x/arm64.dmg',
+      size: 41_000_000,
+      sha256: 'd'.repeat(64),
+      source: 'github',
+    }]);
+    expect(macosInstallerFromGithub(doc, '0.15.0', 'arm64')).toEqual([]);
+    expect(macosInstallerFromGithub(doc, '0.15.0', 'ia32')).toEqual([]);
+    expect(macosInstallerFromGithub({ assets: [] }, '0.15.0', 'arm64')).toEqual([]);
   });
 
   it('matches checksum entries emitted from the release-assets directory', () => {

@@ -52,6 +52,7 @@ interface StagedManifest {
   version: string;
   /** File names, in the order they should be handed to the package manager. */
   files: string[];
+  sha256?: Record<string, string>;
   stagedAt: string;
 }
 
@@ -241,7 +242,12 @@ export class Updater {
         if (typeof a.size !== 'number') done = this.state.received;
       }
 
-      const manifest: StagedManifest = { version, files: assets.map((a) => a.name), stagedAt: new Date().toISOString() };
+      const manifest: StagedManifest = {
+        version,
+        files: assets.map((a) => a.name),
+        sha256: Object.fromEntries(assets.flatMap((a) => a.sha256 ? [[a.name, a.sha256]] : [])),
+        stagedAt: new Date().toISOString(),
+      };
       writeFileSync(join(dir, MANIFEST), JSON.stringify(manifest, null, 2));
       this.state = { stage: 'staged', version, received: this.state.received, total: this.state.total, fraction: 1 };
 

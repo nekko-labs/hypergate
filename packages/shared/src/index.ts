@@ -1061,9 +1061,9 @@ export interface ApplyUpdateResponse {
 }
 
 /**
- * One file the update is made of: the daemon package, plus the native shell
- * build for this platform. Resolved from whichever feed answered (an npm
- * packument's `dist`, or a GitHub release's assets).
+ * One file in an update payload. npm installs use the daemon package plus the
+ * native shell build for this platform; a macOS app install uses its signed DMG.
+ * Assets are resolved from an npm packument or a GitHub release.
  */
 export interface UpdateAsset {
   /** File name it is stored under in the staging directory. */
