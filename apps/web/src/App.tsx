@@ -1899,6 +1899,7 @@ function CredentialRow({ c, guides, agents, token, authorize, highlight, onChang
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const guide = c.service ? guides.find((g) => g.service === c.service) : undefined;
+  const rollUrl = guide?.manageUrl ?? guide?.createUrl;
   const allowedBy = c.usedBy.agents.length;
 
   // A deep link means "this is the one": open it, so the agent switches the
@@ -1983,7 +1984,20 @@ function CredentialRow({ c, guides, agents, token, authorize, highlight, onChang
           </>
         ) : (
           <>
-            <button className="btn sm" onClick={() => { setOpen(true); }} title={`Replace ${c.name}'s value`}>↻ Roll</button>
+            {rollUrl ? (
+              <a
+                className="btn sm"
+                href={rollUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setOpen(true)}
+                title={`Open ${c.name}'s provider page and replace its value`}
+              >
+                ↻ Roll
+              </a>
+            ) : (
+              <button className="btn sm" onClick={() => setOpen(true)} title={`Replace ${c.name}'s value`}>↻ Roll</button>
+            )}
             <IconBtn icon="trash" label={`Delete ${c.name}`} tone="danger" onClick={() => setArmed(true)} />
           </>
         )

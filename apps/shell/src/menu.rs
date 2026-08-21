@@ -29,6 +29,9 @@
 #[cfg(target_os = "macos")]
 use muda::{AboutMetadata, Menu, PredefinedMenuItem, Submenu};
 
+#[cfg(target_os = "macos")]
+use crate::icon;
+
 /// Build and install the application menu.
 ///
 /// Call once, after the event loop exists (which is what creates `NSApp`) and
@@ -47,6 +50,7 @@ pub fn install() -> Result<(), String> {
         version: Some(env!("CARGO_PKG_VERSION").into()),
         copyright: Some("Nekko Labs".into()),
         website: Some("https://hypergate.app".into()),
+        icon: icon::menu_icon().ok(),
         ..Default::default()
     };
     let app_menu = Submenu::new("Hypergate", true);
