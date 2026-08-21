@@ -215,7 +215,6 @@ describe('resolving what an update would download', () => {
     const doc = {
       assets: [
         { name: 'hypergate-0.15.0-macos-arm64.dmg', browser_download_url: 'https://github.com/x/arm64.dmg', size: 41_000_000 },
-        { name: 'hypergate-0.15.0-macos-x64.dmg', browser_download_url: 'https://github.com/x/x64.dmg', size: 43_000_000 },
         { name: 'hypergate-macos-arm64.dmg', browser_download_url: 'https://github.com/x/latest.dmg', size: 41_000_000 },
       ],
     };
@@ -223,7 +222,7 @@ describe('resolving what an update would download', () => {
       doc,
       '0.15.0',
       'arm64',
-      `${'d'.repeat(64)}  hypergate-0.15.0-macos-arm64.dmg\n${'e'.repeat(64)}  hypergate-0.15.0-macos-x64.dmg\n`,
+      `${'d'.repeat(64)}  hypergate-0.15.0-macos-arm64.dmg\n`,
     );
     expect(assets).toEqual([{
       name: 'hypergate-0.15.0-macos-arm64.dmg',
@@ -233,6 +232,9 @@ describe('resolving what an update would download', () => {
       source: 'github',
     }]);
     expect(macosInstallerFromGithub(doc, '0.15.0', 'arm64')).toEqual([]);
+    // Apple silicon only, so an Intel Mac is offered nothing rather than a
+    // disk image it cannot run.
+    expect(macosInstallerFromGithub(doc, '0.15.0', 'x64')).toEqual([]);
     expect(macosInstallerFromGithub(doc, '0.15.0', 'ia32')).toEqual([]);
     expect(macosInstallerFromGithub({ assets: [] }, '0.15.0', 'arm64')).toEqual([]);
   });

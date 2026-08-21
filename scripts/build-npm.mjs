@@ -8,7 +8,7 @@
 //
 // The split exists because the daemon is portable JavaScript and the shell is
 // a native binary: npm's `os`/`cpu` fields let a user's install pull exactly
-// one platform build instead of all six. `hypergated` lists them as *optional*
+// one platform build instead of all five. `hypergated` lists them as *optional*
 // dependencies, so an unsupported platform still gets a working daemon.
 //
 //   node scripts/build-npm.mjs                  # main package + this host's shell
@@ -29,12 +29,12 @@ const TEMPLATE = join(ROOT, 'packaging', 'npm');
  *  unrelated project, so the daemon's own name carries the whole thing; the
  *  installed CLI is still called `hypergate`. */
 const PKG = 'hypergated';
-/** Every platform we ship a native shell for. `target` is the Rust triple. */
+/** Every platform we ship a native shell for. `target` is the Rust triple.
+ *  macOS is Apple silicon only. */
 export const PLATFORMS = [
   { os: 'win32', cpu: 'x64', target: 'x86_64-pc-windows-msvc' },
   { os: 'win32', cpu: 'arm64', target: 'aarch64-pc-windows-msvc' },
   { os: 'darwin', cpu: 'arm64', target: 'aarch64-apple-darwin' },
-  { os: 'darwin', cpu: 'x64', target: 'x86_64-apple-darwin' },
   { os: 'linux', cpu: 'x64', target: 'x86_64-unknown-linux-gnu' },
   { os: 'linux', cpu: 'arm64', target: 'aarch64-unknown-linux-gnu' },
 ];
@@ -171,7 +171,7 @@ function buildShell({ os, cpu, binary }) {
         license: 'MIT',
         author: 'Nekko Labs',
         // npm refuses to install this package on any other platform, which is
-        // what makes it safe for `hypergated` to depend on all six at once.
+        // what makes it safe for `hypergated` to depend on all five at once.
         os: [os],
         cpu: [cpu],
         files: ['bin'],
