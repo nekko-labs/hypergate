@@ -2746,7 +2746,7 @@ function UpdateRow({ u, version }: { u: Updater; version: string }) {
         : info.updateAvailable
           ? `Hypergate ${info.latest} is available`
           : info.latest
-            ? "You're on the latest version"
+            ? `You're on the latest version, v${info.current || version}`
             : 'Update check';
 
   return (
@@ -4284,10 +4284,13 @@ function CliSection({ token, requests, onRequestsChange }: {
 
   const refreshClis = useCallback(() => {
     void api.clis().then(setClis).catch(() => setClis([]));
+    // Managers ride along on every refresh: a single failed fetch must never
+    // freeze the answer, because "which managers exist" gates the Install
+    // buttons and a stale empty answer would gray them all out for good.
+    void api.cliManagers().then(setManagers).catch(() => {});
   }, []);
   useEffect(() => {
     refreshClis();
-    void api.cliManagers().then(setManagers).catch(() => setManagers([]));
   }, [refreshClis]);
 
   // A finished install/uninstall changes both lists; the catalog only reloads
@@ -4533,13 +4536,13 @@ function guessManager(path: string | undefined, routes: CliInstallOption[], mana
  * One tool you could install: what it is, whether it's the one its provider
  * recommends, and the ways to get it on *this* machine.
  *
- * Install routes are genuinely of three kinds — a command, a download page, or a
- * sentence like "Comes with Node.js" — because that is how these tools are
- * actually obtained, so each gets the control it deserves. A tool with several
- * commands shows them all: `npm install -g` and `winget install` are not the same
- * choice, and choosing for the user is how you end up offering Homebrew on Windows.
- * Routes Hypergate can run itself (a known package manager, no shell tricks) get
- * an Install button beside the Copy; script routes stay copy-only on purpose.
+ * The install routes are one horizontal choice (npm / pnpm / Homebrew / …) and
+ * one action button that runs whatever is selected, because a button per route
+ * made the row a wall of buttons and hid which one would actually run. Routes
+ * Hypergate can run itself (a known package manager, no shell tricks) install
+ * in-app with a live log; a vendor script or download page stays copy-only on
+ * purpose, and says so instead of graying out. A route whose manager is missing
+ * from this machine says that too, in text, not just a disabled button.
  */
 function CliInstallRow({ c, token, managers, onJobDone }: {
   c: CliCatalogEntry;
@@ -4548,15 +4551,32 @@ function CliInstallRow({ c, token, managers, onJobDone }: {
   onJobDone: () => void;
 }) {
   const [copied, copy] = useCopy();
-  const [armed, setArmed] = useState<string | null>(null);
+  const [sel, setSel] = useState<string | null>(null);
+  const [armed, setArmed] = useState(false);
   const { job, starting, start, kill, dismiss } = useCliJob(token, onJobDone);
   const routes = (c.installs ?? []).filter((option) => !/^https?:\/\//i.test(option.command));
   const download = (c.installs ?? []).find((option) => /^https?:\/\//i.test(option.command));
   // Neither a command nor a link: "Comes with Node.js" is the whole answer.
   const prose = routes.length === 0 && !download ? c.install?.trim() : undefined;
-  const foundManagers = new Set((managers ?? []).filter((m) => m.found).map((m) => m.id));
+  const found = new Set((managers ?? []).filter((m) => m.found).map((m) => m.id));
+  // No managers answer yet (still loading, or the fetch failed) means unknown,
+  // not unavailable: the button stays live and the daemon is the judge, so a
+  // hiccup on one request can never permanently dead-end every Install button.
+  const managersKnown = (managers?.length ?? 0) > 0;
+  const pick =
+    routes.find((o) => o.label === sel) ??
+    routes.find((o) => o.manager && found.has(o.manager)) ??
+    routes.find((o) => o.manager) ??
+    routes[0];
+  const runnable = !!pick?.manager;
+  const missing = runnable && managersKnown && !found.has(pick!.manager!);
+  const busy = starting || job?.status === 'running';
   const body: Omit<StartCliJobRequest, 'action' | 'manager'> =
     c.channel === 'curated' ? { cliId: c.id } : { channel: c.channel, package: c.package ?? c.id };
+  const run = (action: CliJobAction): void => {
+    setArmed(false);
+    void start({ action, manager: pick?.manager, ...body }, c.name);
+  };
 
   return (
     <div className="list-row">
@@ -4577,64 +4597,66 @@ function CliInstallRow({ c, token, managers, onJobDone }: {
           {c.description && <div className="small muted" style={{ marginTop: 3 }}>{c.description}</div>}
           <AdviceNote advice={c.advice} onPrefer={(advice) => advice.prefer?.install && copy(`pref-${c.id}`, advice.prefer.install)} />
           {prose && <div className="small muted" style={{ marginTop: 3 }}>{prose}</div>}
-          {routes.length > 0 && (
+          {pick && (
             <div className="cli-installs">
-              {routes.map((option) => {
-                const runnable = !!option.manager;
-                const managerHere = !option.manager || foundManagers.has(option.manager);
-                const busy = starting || job?.status === 'running';
-                return (
-                  <span key={`${option.label}-${option.command}`} className="cli-install">
-                    <span className="small muted">{option.label}</span>
-                    <code className="mono">{option.command}</code>
-                    {runnable && !c.installed && (
-                      <button
-                        className="btn sm btn-accent"
-                        disabled={busy || !managerHere}
-                        title={managerHere ? `Run this install in Hypergate` : `${option.label} is not installed on this machine`}
-                        onClick={() => void start({ action: 'install', manager: option.manager, ...body }, c.name)}
-                      >
-                        Install
-                      </button>
-                    )}
-                    {runnable && c.installed && managerHere && (
-                      <>
-                        <button
-                          className="btn sm"
-                          disabled={busy}
-                          title="Reinstall over the same route"
-                          onClick={() => void start({ action: 'repair', manager: option.manager, ...body }, c.name)}
-                        >
-                          Repair
-                        </button>
-                        {option.uninstall &&
-                          (armed === option.label ? (
-                            <>
-                              <button
-                                className="btn sm btn-danger"
-                                disabled={busy}
-                                onClick={() => {
-                                  setArmed(null);
-                                  void start({ action: 'uninstall', manager: option.manager, ...body }, c.name);
-                                }}
-                              >
-                                Uninstall {c.name}
-                              </button>
-                              <button className="btn sm btn-ghost" onClick={() => setArmed(null)}>Cancel</button>
-                            </>
-                          ) : (
-                            <button className="btn sm btn-warn" disabled={busy} onClick={() => setArmed(option.label)}>
-                              Uninstall…
-                            </button>
-                          ))}
-                      </>
-                    )}
-                    <button className="btn sm btn-ghost" onClick={() => copy(`cli-${c.id}-${option.label}`, option.command)}>
-                      {copied === `cli-${c.id}-${option.label}` ? 'Copied!' : 'Copy'}
+              {routes.length > 1 && (
+                <span className="seg" role="tablist" aria-label="Install with">
+                  {routes.map((o) => (
+                    <button
+                      key={o.label}
+                      className={pick.label === o.label ? 'active' : ''}
+                      onClick={() => {
+                        setSel(o.label);
+                        setArmed(false);
+                      }}
+                    >
+                      {o.label}
                     </button>
-                  </span>
-                );
-              })}
+                  ))}
+                </span>
+              )}
+              <span className="cli-install">
+                {routes.length === 1 && <span className="small muted">{pick.label}</span>}
+                <code className="mono">{pick.command}</code>
+                {runnable && !c.installed && (
+                  <button
+                    className="btn sm btn-accent"
+                    disabled={busy || missing}
+                    onClick={() => run('install')}
+                  >
+                    Install
+                  </button>
+                )}
+                {runnable && c.installed && (
+                  <>
+                    <button className="btn sm" disabled={busy || missing} title="Reinstall over the same route" onClick={() => run('repair')}>
+                      Repair
+                    </button>
+                    {pick.uninstall &&
+                      (armed ? (
+                        <>
+                          <button className="btn sm btn-danger" disabled={busy} onClick={() => run('uninstall')}>
+                            Uninstall {c.name}
+                          </button>
+                          <button className="btn sm btn-ghost" onClick={() => setArmed(false)}>Cancel</button>
+                        </>
+                      ) : (
+                        <button className="btn sm btn-warn" disabled={busy || missing} onClick={() => setArmed(true)}>
+                          Uninstall…
+                        </button>
+                      ))}
+                  </>
+                )}
+                <button className="btn sm btn-ghost" onClick={() => copy(`cli-${c.id}`, pick.command)}>
+                  {copied === `cli-${c.id}` ? 'Copied!' : 'Copy'}
+                </button>
+              </span>
+              {!runnable && (
+                <div className="small muted">Run this one in your terminal: Hypergate only runs plain package-manager commands itself.</div>
+              )}
+              {missing && (
+                <div className="small muted">{pick.label} isn't installed on this machine, so Hypergate can't run this route; copy it or pick another.</div>
+              )}
             </div>
           )}
           {job && <CliJobPane job={job} onKill={kill} onDismiss={dismiss} />}

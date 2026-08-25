@@ -107,6 +107,17 @@ pub fn install() -> Result<(), String> {
     // Tells AppKit which submenu owns the window list, so "Bring All to Front"
     // and the window roster work the way they do in every other Mac app.
     window_menu.set_as_windows_menu_for_nsapp();
+
+    // The menu bar must outlive this function. NSApp retains the *native*
+    // NSMenu, but every NSMenuItem holds a raw pointer back into muda's own
+    // item data, which lives only as long as these Rust handles: `Menu` even
+    // has a Drop impl that detaches that bookkeeping. Dropping `menu` here
+    // therefore left the About item pointing at freed memory, and clicking it
+    // crashed the app whenever the allocator had reused that memory (the Edit
+    // items never noticed, because their standard AppKit selectors never call
+    // back into Rust). The menu is installed once and lives as long as the
+    // process, so leaking the handle is the correct lifetime, not a shortcut.
+    std::mem::forget(menu);
     Ok(())
 }
 

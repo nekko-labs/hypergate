@@ -566,7 +566,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 /* ── install routes on a CLI row ─────────────────────────────────────────────
    Several ways to get one tool, each its own copyable unit. They wrap rather
    than scroll: a command you can only half see is not a command you can trust. */
-.cli-installs { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
+.cli-installs { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 7px; }
 .cli-install { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .cli-install .small { min-width: 62px; }
 .cli-install code {
