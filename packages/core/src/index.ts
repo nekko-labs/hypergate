@@ -6,6 +6,7 @@ export * from './registry.js';
 export * from './registry-search.js';
 export * from './clis.js';
 export * from './cli-search.js';
+export * from './cli-actions.js';
 export * from './advice.js';
 export * from './connect.js';
 export * from './agents.js';

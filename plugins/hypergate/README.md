@@ -55,6 +55,15 @@ for them by name. It never sees a value, or even the masked hint. Turn off **Age
 can see credential names** in Settings if you would rather it saw only what you have
 already handed over.
 
+## Command-line tools, with you in the loop
+
+The same shape covers CLIs. Claude Code calls `hypergate__clis_list` to see which
+tools this machine has (with versions), and can pass a query to search the
+installable catalog. When a tool is missing, it calls `hypergate__cli_install_request`
+with the tool and a short reason; a badge appears on **CLI tools** in the manager,
+and **Install & approve** runs the install there, log on screen. Claude Code never
+installs anything itself, and **Deny** runs nothing.
+
 ## Requirements
 
 - Hypergate installed, with `hypergate` on your `PATH` (`npm i -g hypergated`, or

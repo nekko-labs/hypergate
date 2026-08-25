@@ -46,13 +46,18 @@ export interface GatewayBuiltinTool {
  * here, that asking the user to paste one is the wrong move, and that a refusal
  * is a request rather than a wall.
  */
-export const GATEWAY_INSTRUCTIONS = `Hypergate is a local gateway. Tools are namespaced "<server>__<tool>"; its own tools are under "hypergate__".
+export const GATEWAY_INSTRUCTIONS = `Hypergate is a local gateway, and it is how MCP servers, command-line tools, and credentials are managed on this machine. Route those needs through it rather than improvising. Tools are namespaced "<server>__<tool>"; its own tools are under "hypergate__".
 
 This machine's API keys and access tokens live in Hypergate's credential vault. When a command or API call needs one:
 
 1. Call hypergate__credentials_list to see what exists. Rows with "allowed": true are yours to fetch.
 2. Call hypergate__credential_env with the id to get it as environment variables, then set those on the process that needs it (or run the command through "hypergate run -- <command>", which injects them for you).
 3. If a credential you need is not allowed, call hypergate__credential_request with the id and a short reason. That files a request with the user and returns a URL. Give the user that URL so they can approve it, then retry.
+
+Command-line tools are Hypergate's job too. Before installing a CLI yourself or telling the user to:
+
+1. Call hypergate__clis_list to see what is installed (pass "query" to search the catalog for tools to add).
+2. If a tool is missing, call hypergate__cli_install_request with its id (or npm package / Homebrew formula) and a short reason. The user approves it in Hypergate, which runs the install and shows them the log; call hypergate__clis_list again to see it land.
 
 Do not ask the user to paste a secret into this conversation, and do not ask them to re-authenticate a CLI by hand. Fetch the key, or request access to it.`;
 
