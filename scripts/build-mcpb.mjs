@@ -29,9 +29,14 @@ const runNode = (script, scriptArgs, cwd = ROOT) => run(process.execPath, [scrip
 /** npm's own entry script, so a build needs no shell. Same trick as build-npm. */
 function npmCli() {
   const candidates = [
+    // npm sets this when it is the one invoking us, and it is right even when
+    // the layout below is not (Homebrew keeps npm under the *prefix*, not under
+    // the versioned Cellar directory that `node` itself lives in).
+    process.env.npm_execpath,
     join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
     join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-  ];
+    join(dirname(process.execPath), '..', '..', '..', '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ].filter(Boolean);
   const found = candidates.find((p) => existsSync(p));
   if (!found) throw new Error(`could not find npm-cli.js near ${process.execPath}`);
   return found;
