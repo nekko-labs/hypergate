@@ -52,11 +52,19 @@ const quiet = (cmd, cmdArgs) => {
   }
 };
 
+// npm's own entry script, so `npm run build` needs no shell. `npm_execpath` is
+// checked first because it is set by whichever npm invoked us and is correct
+// even where the layouts below are not: Homebrew keeps npm under the *prefix*,
+// not under the versioned Cellar directory `node` itself lives in.
 const npmCli = () =>
   [
+    process.env.npm_execpath,
     join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
     join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-  ].find(existsSync);
+    join(dirname(process.execPath), '..', '..', '..', '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ]
+    .filter(Boolean)
+    .find(existsSync);
 
 // ── 1. bundle the daemon as CommonJS ─────────────────────────────────────────
 

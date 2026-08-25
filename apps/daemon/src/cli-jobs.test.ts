@@ -121,3 +121,38 @@ describe('CliJobRunner', () => {
     expect(runner.list().map((j) => j.id)).toEqual([b.id, a.id]);
   });
 });
+
+describe('vendor install scripts', () => {
+  // The script path is the only one that reaches a shell, so prove both halves:
+  // a pipeline really does run, and nothing takes that path without asking.
+  it.skipIf(process.platform === 'win32')('runs a pipeline through the shell when the job is a script', async () => {
+    const runner = new CliJobRunner();
+    const job = runner.start({
+      cliId: 'demo',
+      name: 'Demo',
+      action: 'install',
+      command: "echo 'piped output' | tr -d ' '",
+      argv: [],
+      script: { shell: 'posix' },
+    });
+    const done = await finished(runner, job.id);
+    expect(done.status).toBe('succeeded');
+    expect(done.lines).toContain('pipedoutput');
+  });
+
+  it.skipIf(process.platform === 'win32')('spawns argv jobs with no shell, so a pipeline is argv and not a pipe', async () => {
+    const runner = new CliJobRunner();
+    const job = runner.start({
+      cliId: 'demo',
+      name: 'Demo',
+      action: 'install',
+      command: 'demo',
+      argv: [node, '-e', 'console.log(process.argv.slice(1).join("|"))', '|', 'tr'],
+    });
+    const done = await finished(runner, job.id);
+    expect(done.status).toBe('succeeded');
+    // `|` arrived as a literal argument; had a shell been involved it would
+    // have been an operator and this output could not exist.
+    expect(done.lines.join('\n')).toContain('|');
+  });
+});

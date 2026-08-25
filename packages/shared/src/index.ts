@@ -467,8 +467,19 @@ export interface CliInstallOption {
   /** The exact command to run, or a URL when there is no command. */
   command: string;
   platforms?: string[];
-  /** Canonical package-manager id (`npm`, `brew`, `winget`, …) when the command is one of theirs. */
+  /** Canonical package-manager id (`npm`, `brew`, `winget`, …), or `script` for a vendor install script. */
   manager?: string;
+  /**
+   * How the daemon runs it: `argv` spawns a package manager shell-free, `script`
+   * runs a curated vendor install script through a shell. Absent means Hypergate
+   * will not run it at all (a download page). Set by `enrichCliInstalls`, never
+   * by catalog data, so a route cannot claim its own way of being executed.
+   */
+  runner?: 'argv' | 'script';
+  /** The executable this route needs on PATH: `brew`, `npm`, `curl`, `powershell`. */
+  requires?: string;
+  /** Whether `requires` was on PATH when the daemon assembled this result. */
+  available?: boolean;
   /** The matching uninstall command, when the manager makes it mechanical. */
   uninstall?: string;
   /** The matching reinstall/repair command, when the manager has a better verb than install. */

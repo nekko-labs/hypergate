@@ -21,7 +21,6 @@ import type {
   ServerInstallRequest,
   CliJob,
   CliJobAction,
-  CliManagerInfo,
   StartCliJobRequest,
   AuthorizeCapability,
   CredentialGuideInfo,
@@ -4300,7 +4299,6 @@ function CliSection({ token, requests, onRequestsChange }: {
   const [open, setOpen] = useState(true);
   const [offering, setOffering] = useState(false);
   const [catalog, setCatalog] = useState<CliCatalogEntry[] | null>(null);
-  const [managers, setManagers] = useState<CliManagerInfo[] | null>(null);
   const [q, setQ] = useState('');
   const [results, setResults] = useState<CliCatalogEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -4311,11 +4309,10 @@ function CliSection({ token, requests, onRequestsChange }: {
   const seq = useRef(0);
 
   const refreshClis = useCallback(() => {
+    // Which managers this machine has is no longer asked for separately: the
+    // daemon answers it per install route, so the catalog carries the answer
+    // and the two can never disagree about whether a route can run here.
     void api.clis().then(setClis).catch(() => setClis([]));
-    // Managers ride along on every refresh: a single failed fetch must never
-    // freeze the answer, because "which managers exist" gates the Install
-    // buttons and a stale empty answer would gray them all out for good.
-    void api.cliManagers().then(setManagers).catch(() => {});
   }, []);
   useEffect(() => {
     refreshClis();
@@ -4420,7 +4417,7 @@ function CliSection({ token, requests, onRequestsChange }: {
               <>
                 {showAdhoc && <CliCheckRow name={q.trim()} result={check} checking={false} />}
                 {filtered.map((c) => (
-                  <CliRow key={c.id} c={c} token={token} managers={managers} entry={entryFor(c.id)} onOpenManage={loadCatalog} onJobDone={onJobDone} />
+                  <CliRow key={c.id} c={c} token={token} entry={entryFor(c.id)} onOpenManage={loadCatalog} onJobDone={onJobDone} />
                 ))}
                 {!query && filtered.length === 0 && <div className="list-row small muted">No known tools detected on your PATH yet.</div>}
               </>
@@ -4429,7 +4426,7 @@ function CliSection({ token, requests, onRequestsChange }: {
           {query && (
             <div style={{ marginTop: 12 }}>
               <div className="small muted" style={{ marginBottom: 6 }}>
-                Available to install — the curated set first, then the npm registry and Homebrew core.
+                Available to install: the curated set first, then Homebrew core, then the npm registry.
               </div>
               <div className="list">
                 {results === null ? (
@@ -4440,7 +4437,7 @@ function CliSection({ token, requests, onRequestsChange }: {
                     {check && !check.found && <> It isn’t on your PATH either.</>}
                   </div>
                 ) : (
-                  results.map((c) => <CliInstallRow key={c.id} c={c} token={token} managers={managers} onJobDone={onJobDone} />)
+                  results.map((c) => <CliInstallRow key={c.id} c={c} token={token} onJobDone={onJobDone} />)
                 )}
               </div>
             </div>
@@ -4458,7 +4455,7 @@ function CliSection({ token, requests, onRequestsChange }: {
               ) : available.length === 0 ? (
                 <div className="list-row small muted">You already have every tool in the curated set.</div>
               ) : (
-                available.map((c) => <CliInstallRow key={c.id} c={c} token={token} managers={managers} onJobDone={onJobDone} />)
+                available.map((c) => <CliInstallRow key={c.id} c={c} token={token} onJobDone={onJobDone} />)
               )}
             </div>
           )}
@@ -4545,8 +4542,13 @@ function CliJobPane({ job, onKill, onDismiss }: { job: CliJob; onKill: () => voi
   );
 }
 
-/** Prefer the manager whose footprint the resolved path shows, else the first found. */
-function guessManager(path: string | undefined, routes: CliInstallOption[], managers: CliManagerInfo[] | null): string | undefined {
+/**
+ * Prefer the manager whose footprint the installed path shows, since managing a
+ * tool the way it was installed is the only route that will actually find it.
+ * Otherwise take the daemon's ranking, which already puts a system package
+ * manager this machine has ahead of a language one.
+ */
+function guessManager(path: string | undefined, routes: CliInstallOption[]): string | undefined {
   const p = (path ?? '').toLowerCase();
   const hints: [string, string][] = [
     ['homebrew', 'brew'], ['cellar', 'brew'], ['linuxbrew', 'brew'],
@@ -4556,8 +4558,7 @@ function guessManager(path: string | undefined, routes: CliInstallOption[], mana
   for (const [needle, manager] of hints) {
     if (p.includes(needle) && routes.some((r) => r.manager === manager)) return manager;
   }
-  const found = new Set((managers ?? []).filter((m) => m.found).map((m) => m.id));
-  return (routes.find((r) => r.manager && found.has(r.manager)) ?? routes[0])?.manager;
+  return (routes.find((r) => r.available !== false) ?? routes[0])?.manager;
 }
 
 /**
@@ -4572,10 +4573,9 @@ function guessManager(path: string | undefined, routes: CliInstallOption[], mana
  * purpose, and says so instead of graying out. A route whose manager is missing
  * from this machine says that too, in text, not just a disabled button.
  */
-function CliInstallRow({ c, token, managers, onJobDone }: {
+function CliInstallRow({ c, token, onJobDone }: {
   c: CliCatalogEntry;
   token?: string;
-  managers: CliManagerInfo[] | null;
   onJobDone: () => void;
 }) {
   const [copied, copy] = useCopy();
@@ -4586,18 +4586,18 @@ function CliInstallRow({ c, token, managers, onJobDone }: {
   const download = (c.installs ?? []).find((option) => /^https?:\/\//i.test(option.command));
   // Neither a command nor a link: "Comes with Node.js" is the whole answer.
   const prose = routes.length === 0 && !download ? c.install?.trim() : undefined;
-  const found = new Set((managers ?? []).filter((m) => m.found).map((m) => m.id));
-  // No managers answer yet (still loading, or the fetch failed) means unknown,
-  // not unavailable: the button stays live and the daemon is the judge, so a
-  // hiccup on one request can never permanently dead-end every Install button.
-  const managersKnown = (managers?.length ?? 0) > 0;
+  // Routes arrive ranked best-first with `available` already answered by the
+  // daemon (see rankInstall + annotateCli), so the row picks the first runnable
+  // one rather than re-deriving a preference the daemon has already applied.
+  // An unprobed route reads as available, not missing: the daemon is the judge,
+  // so a hiccup on one request can never dead-end every Install button.
   const pick =
     routes.find((o) => o.label === sel) ??
-    routes.find((o) => o.manager && found.has(o.manager)) ??
-    routes.find((o) => o.manager) ??
+    routes.find((o) => o.runner && o.available !== false) ??
+    routes.find((o) => o.runner) ??
     routes[0];
-  const runnable = !!pick?.manager;
-  const missing = runnable && managersKnown && !found.has(pick!.manager!);
+  const runnable = !!pick?.runner;
+  const missing = runnable && pick!.available === false;
   const busy = starting || job?.status === 'running';
   const body: Omit<StartCliJobRequest, 'action' | 'manager'> =
     c.channel === 'curated' ? { cliId: c.id } : { channel: c.channel, package: c.package ?? c.id };
@@ -4680,10 +4680,12 @@ function CliInstallRow({ c, token, managers, onJobDone }: {
                 </button>
               </span>
               {!runnable && (
-                <div className="small muted">Run this one in your terminal: Hypergate only runs plain package-manager commands itself.</div>
+                <div className="small muted">Run this one in your terminal: Hypergate runs package-manager commands and the vendor's own install script, and this is neither.</div>
               )}
               {missing && (
-                <div className="small muted">{pick.label} isn't installed on this machine, so Hypergate can't run this route; copy it or pick another.</div>
+                <div className="small muted">
+                  {pick.requires ?? pick.label} isn't on this machine, so Hypergate can't run this route; copy it or pick another.
+                </div>
               )}
             </div>
           )}
@@ -4705,10 +4707,9 @@ function CliInstallRow({ c, token, managers, onJobDone }: {
  * is a shortcut rather than a black box. With several install routes the route
  * choice is explicit, defaulting to the one the resolved path suggests.
  */
-function CliRow({ c, token, managers, entry, onOpenManage, onJobDone }: {
+function CliRow({ c, token, entry, onOpenManage, onJobDone }: {
   c: CliStatus;
   token?: string;
-  managers: CliManagerInfo[] | null;
   entry?: CliCatalogEntry;
   onOpenManage: () => void;
   onJobDone: () => void;
@@ -4720,7 +4721,7 @@ function CliRow({ c, token, managers, entry, onOpenManage, onJobDone }: {
   const { job, starting, start, kill, dismiss } = useCliJob(token, onJobDone);
 
   const routes = (entry?.installs ?? []).filter((o) => o.manager);
-  const chosen = routes.find((o) => o.manager === (manager ?? guessManager(c.path, routes, managers))) ?? routes[0];
+  const chosen = routes.find((o) => o.manager === (manager ?? guessManager(c.path, routes))) ?? routes[0];
   const busy = starting || job?.status === 'running';
   const runAction = (action: CliJobAction): void => {
     void start({ action, cliId: c.id, manager: chosen?.manager }, c.name);

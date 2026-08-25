@@ -38,8 +38,8 @@ export const KNOWN_CLIS: CliTool[] = [
     command: 'claude',
     category: 'mcp',
     description: "Anthropic's Claude Code CLI — a first-class Hypergate gateway client.",
-    homepage: 'https://docs.anthropic.com/en/docs/claude-code',
-    install: 'npm install -g @anthropic-ai/claude-code',
+    homepage: 'https://code.claude.com/docs/en/setup',
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
     official: true,
     recommended: true,
     publisher: 'Anthropic',
@@ -106,12 +106,23 @@ export const knownCli = (id: string): CliTool | undefined => KNOWN_CLIS.find((c)
  * Only commands taken from the vendor's own install docs belong here.
  */
 const EXTRA_INSTALLS: Record<string, CliInstallOption[]> = {
+  // Anthropic documents four routes and leads with the native script; Homebrew
+  // and WinGet are the system-manager ones, and npm installs the same binary.
+  claude: [
+    { label: 'PowerShell', command: 'powershell -c "irm https://claude.ai/install.ps1 | iex"', platforms: ['win32'] },
+    { label: 'Homebrew', command: 'brew install --cask claude-code', platforms: ['darwin'] },
+    { label: 'winget', command: 'winget install Anthropic.ClaudeCode', platforms: ['win32'] },
+    { label: 'npm', command: 'npm install -g @anthropic-ai/claude-code' },
+  ],
   node: [
     { label: 'winget', command: 'winget install OpenJS.NodeJS.LTS', platforms: ['win32'] },
     { label: 'Homebrew', command: 'brew install node', platforms: ['darwin', 'linux'] },
   ],
   bun: [
-    { label: 'PowerShell', command: 'powershell -c "irm bun.sh/install.ps1 | iex"', platforms: ['win32'] },
+    // Bun's docs write this without a scheme; `irm` would then resolve it over
+    // http and follow the redirect. Naming https explicitly is the same install
+    // and is what lets the host be verified before anything is executed.
+    { label: 'PowerShell', command: 'powershell -c "irm https://bun.sh/install.ps1 | iex"', platforms: ['win32'] },
     { label: 'shell', command: 'curl -fsSL https://bun.sh/install | bash', platforms: ['darwin', 'linux'] },
   ],
   deno: [
@@ -161,6 +172,23 @@ const EXTRA_INSTALLS: Record<string, CliInstallOption[]> = {
   ],
 };
 
+/**
+ * Every install command in this file that is a vendor script rather than an
+ * argv list, frozen at module load.
+ *
+ * This is the outer gate on running one: `parseCuratedScript` executes a script
+ * only when the string is byte-identical to a member of this set, so nothing
+ * from a registry lookup, an agent's request body, or a user's search can reach
+ * a shell however well it imitates the grammar. Adding a route here is a
+ * reviewable diff in the curated data, which is the only place it belongs.
+ */
+export const CURATED_SCRIPT_COMMANDS: ReadonlySet<string> = new Set(
+  [...KNOWN_CLIS.map((t) => t.install), ...Object.values(EXTRA_INSTALLS).flat().map((o) => o.command)]
+    .filter((c): c is string => !!c)
+    .map((c) => c.trim())
+    .filter((c) => c.includes('|')),
+);
+
 /** npm packages the curated commands come from, so a lookup can de-duplicate them. */
 const CURATED_PACKAGES: Record<string, string> = {
   'playwright-cli': '@playwright/cli',
@@ -187,8 +215,16 @@ export function cliCatalogEntry(tool: CliTool, platform?: string): CliCatalogEnt
   const isUrl = !!primary && /^https?:\/\//i.test(primary);
   const isCommand = !!primary && !isUrl && /^(npm|npx|pnpm|yarn|bun|brew|pipx|pip|winget|scoop|choco|apt|cargo|go|curl|powershell) /i.test(primary);
   const extras = (EXTRA_INSTALLS[tool.id] ?? []).filter((option) => !platform || !option.platforms || option.platforms.includes(platform));
+  // A piped primary is a vendor script; label it the way the extras do
+  // (`shell` / `PowerShell`) rather than after whichever fetcher it happens to
+  // use, so one tool's toggle does not read `curl` where every other says `shell`.
+  const primaryLabel = !primary?.includes('|')
+    ? primary?.split(' ')[0]
+    : /^powershell/i.test(primary)
+      ? 'PowerShell'
+      : 'shell';
   const installs: CliInstallOption[] = [
-    ...(isCommand ? [{ label: primary!.split(' ')[0], command: primary! }] : []),
+    ...(isCommand ? [{ label: primaryLabel!, command: primary! }] : []),
     ...extras,
     ...(isUrl ? [{ label: 'download', command: primary! }] : []),
   ];
@@ -205,8 +241,11 @@ export const RECOMMENDED_CLI_IDS: readonly string[] = KNOWN_CLIS.filter((c) => c
 
 /**
  * Order CLI results the way the UI shows them: recommended curated tools first,
- * then the rest of the curated set, then looked-up channels in the order the
- * source returned them (npm relevance, then Homebrew). Anything the maintainer
+ * then the rest of the curated set, then looked-up channels, **Homebrew before
+ * npm**, matching the same preference the install routes use (see `rankInstall`).
+ * A Homebrew hit is an exact formula match against a curated native catalog,
+ * where an npm hit is one of several relevance-ranked guesses, so it is both the
+ * more native answer and usually the more precise one. Anything the maintainer
  * has deprecated sinks to the bottom whatever channel it came from — it is still
  * worth showing, since the user searched for it by name, but never as the answer.
  * Pure + unit-tested.
@@ -215,7 +254,7 @@ export function sortCliCatalog(entries: CliCatalogEntry[]): CliCatalogEntry[] {
   const rank = (e: CliCatalogEntry): number => {
     if (e.deprecated) return 4;
     if (e.channel === 'curated') return e.recommended ? 0 : 1;
-    return e.channel === 'npm' ? 2 : 3;
+    return e.channel === 'brew' ? 2 : 3;
   };
   return entries
     .map((entry, index) => ({ entry, index }))

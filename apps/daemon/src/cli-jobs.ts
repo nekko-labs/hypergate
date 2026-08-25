@@ -15,6 +15,13 @@ import type { CliJob, CliJobAction } from '@hypergate/shared';
  *   fails fast with its own message instead of hanging on a prompt nobody can
  *   answer), and a hard timeout plus a kill route bound the damage of a hang.
  * - one job per tool at a time, and a bounded history so memory cannot grow.
+ *
+ * The single exception to "shell-free" is a curated **vendor install script**,
+ * which is a pipeline and so cannot be argv. It arrives here only via
+ * `parseCuratedScript`, which requires the string to be byte-identical to a
+ * command in Hypergate's own catalog, to match the documented `curl … | sh`
+ * grammar, and to fetch over https from an allowlisted vendor host. Everything
+ * else about the job (closed stdin, timeout, capture, kill) is unchanged.
  */
 
 const LINE_CAP = 2000;
@@ -63,7 +70,7 @@ export class CliJobRunner {
    * Spawn one lifecycle command. Throws when a job for this tool is already
    * running: the caller turns that into a 409.
    */
-  start(opts: { cliId: string; name: string; action: CliJobAction; argv: string[]; command: string }): CliJob {
+  start(opts: { cliId: string; name: string; action: CliJobAction; argv: string[]; command: string; script?: { shell: 'posix' | 'powershell' } }): CliJob {
     if (this.running(opts.cliId)) throw new Error(`a job for ${opts.cliId} is already running`);
     const job: CliJob = {
       id: randomUUID(),
@@ -80,8 +87,16 @@ export class CliJobRunner {
     this.prune();
 
     const [file, ...args] = opts.argv;
-    // Windows package managers are .cmd shims Node refuses to spawn directly.
-    const resolved = WIN ? { file: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', file, ...args] } : { file, args };
+    // A curated vendor script is a pipeline, so it needs an interpreter; every
+    // other job is an argv list spawned with no shell at all.
+    const resolved = opts.script
+      ? WIN
+        ? { file: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', opts.command] }
+        : { file: '/bin/sh', args: ['-c', opts.command] }
+      : WIN
+        ? // Windows package managers are .cmd shims Node refuses to spawn directly.
+          { file: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', file, ...args] }
+        : { file, args };
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(resolved.file, resolved.args, {
