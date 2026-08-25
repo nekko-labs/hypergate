@@ -4,6 +4,8 @@ export * from './gateway.js';
 export * from './proxy.js';
 export * from './registry.js';
 export * from './registry-search.js';
+export * from './resolve.js';
+export * from './setup-plan.js';
 export * from './clis.js';
 export * from './cli-search.js';
 export * from './cli-actions.js';

@@ -20,6 +20,8 @@ import {
   matchAgents,
   REGISTRY,
   searchRegistry,
+  resolveServer,
+  planSetup,
   KNOWN_CLIS,
   adviceForCli,
   adviceForServer,
@@ -2012,6 +2014,41 @@ if (STDIO_MODE) {
         clearTimeout(timer);
       }
     }
+    // Resolve one name to one pinned, ready-to-add server, plus everything
+    // standing between it and running. Two outbound calls (the name lookup and
+    // that server's version history), on an explicit request only. This is what
+    // lets an agent or the CLI say "set up com.microsoft/azure" and get back a
+    // concrete plan instead of a catalog page.
+    if (pathname === '/api/registry/resolve' && req.method === 'GET') {
+      const q = url.searchParams.get('q') ?? '';
+      if (!q.trim()) return json(res, 400, { error: 'q required' });
+      const allowPrerelease = url.searchParams.get('prerelease') === '1';
+      const ctrl = new AbortController();
+      // Longer than the 8s the catalog search gets, because this is a different
+      // kind of request: it is an explicit "set this one up", not a keystroke,
+      // and failing it is worse than making it wait. The registry's `?search=`
+      // was measured between 0.9s and 24s for the *same* query, and the fallback
+      // path spends one of those before it even asks for the version history.
+      const timer = setTimeout(() => ctrl.abort(), 30_000);
+      try {
+        const resolved = await resolveServer(q, { signal: ctrl.signal, allowPrerelease });
+        if (!resolved.ok) return json(res, 404, resolved);
+        // What this machine already has, so the plan only asks for what is missing.
+        const installedCommands = (await detectClisCached()).filter((c) => c.found).map((c) => c.command);
+        const storedCredentials = vault
+          .list()
+          .filter((c) => c.envVar)
+          .map((c) => ({ envVar: c.envVar as string, id: c.id }));
+        const entry = { ...resolved.entry, advice: adviceForServer(resolved.entry) };
+        return json(res, 200, { ...resolved, entry, plan: planSetup(entry, { installedCommands, storedCredentials }) });
+      } catch (e) {
+        process.stderr.write(`[registry] resolve failed: ${e instanceof Error ? e.message : String(e)}\n`);
+        return json(res, 502, { error: 'resolve_failed' });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     // Popularity scores for ordering the catalog (recommended set first, then by
     // this). Lazy + cached: served from disk while fresh (24h), otherwise fetched
     // now (npm + GitHub, 8s budget) and cached. Only ever hit when the UI opens
