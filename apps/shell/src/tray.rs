@@ -257,7 +257,12 @@ pub fn run(with_window: bool) -> Result<(), String> {
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut event_loop = EventLoopBuilder::<Wake>::with_user_event().build();
 
-    // macOS: a menu-bar-only agent, with no Dock icon and no app switcher entry.
+    // macOS: start as a menu-bar-only agent, with no Dock icon and no app
+    // switcher entry. This is the *resting* state, not a constant: while the
+    // manager window is on screen the process is promoted to a regular app
+    // (`mac_presence`), because an accessory app's minimized window has no Dock
+    // tile to come back from and its menu bar is unreachable: minimizing the
+    // manager made it unrecoverable.
     #[cfg(target_os = "macos")]
     {
         use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
@@ -467,25 +472,26 @@ pub fn run(with_window: bool) -> Result<(), String> {
                 }
             }
 
+            // macOS Dock icon clicked (the icon only exists while the manager
+            // window does, see `mac_presence`): reopen or un-minimize it, which
+            // is the one thing a Dock click can mean here.
+            Event::Reopen { .. } => {
+                open_manager(&mut window, target, &window_proxy, startup_waiting);
+            }
+
             // Closing the manager is a real choice, not a foregone conclusion:
             // Hypergate is a resident agent, but it is also what is running the
             // user's servers. Whichever way it goes the window is *hidden*, not
             // destroyed, so reopening is instant and the page keeps its state.
             Event::UserEvent(Wake::Window(WindowCommand::Close)) => {
                 match close_action {
-                    CloseAction::Tray => {
-                        if let Some(w) = &window {
-                            w.hide();
-                        }
-                    }
+                    CloseAction::Tray => hide_manager(&window, target),
                     CloseAction::Quit => quit(&mut tray, &stop_tx, control_flow, true),
                     CloseAction::Ask => {
                         if awaiting_close {
                             // The prompt is already up and the user clicked
                             // the X again — take that as "yes, go away".
-                            if let Some(w) = &window {
-                                w.hide();
-                            }
+                            hide_manager(&window, target);
                             awaiting_close = false;
                         } else if let Some(w) = &window {
                             awaiting_close = true;
@@ -525,9 +531,7 @@ pub fn run(with_window: bool) -> Result<(), String> {
                     crate::diagnostic!(
                         "[hypergate] the manager page did not answer the close prompt; hiding to the tray"
                     );
-                    if let Some(w) = &window {
-                        w.hide();
-                    }
+                    hide_manager(&window, target);
                 }
             }
 
@@ -535,11 +539,7 @@ pub fn run(with_window: bool) -> Result<(), String> {
                 if awaiting_close {
                     awaiting_close = false;
                     match decision {
-                        CloseDecision::Tray => {
-                            if let Some(w) = &window {
-                                w.hide();
-                            }
-                        }
+                        CloseDecision::Tray => hide_manager(&window, target),
                         CloseDecision::Quit => quit(&mut tray, &stop_tx, control_flow, true),
                         CloseDecision::Cancel => {}
                     }
@@ -680,6 +680,7 @@ fn open_manager(
     starting: bool,
 ) {
     if let Some(w) = window.as_ref() {
+        mac_presence(target, true);
         w.focus();
         return;
     }
@@ -689,13 +690,47 @@ fn open_manager(
         ManagerWindow::open(target, proxy.clone())
     };
     match result {
-        Ok(w) => *window = Some(w),
+        Ok(w) => {
+            mac_presence(target, true);
+            *window = Some(w);
+        }
         Err(e) => {
             crate::diagnostic!("[hypergate] {e}; opening the manager in the browser instead");
             let _ = open::that_detached(api::ui_url());
         }
     }
 }
+
+/// Hide the manager window to the tray, and return the process to its resting
+/// menu-bar-only presence on macOS.
+fn hide_manager(window: &Option<ManagerWindow>, target: &tao::event_loop::EventLoopWindowTarget<Wake>) {
+    if let Some(w) = window {
+        w.hide();
+    }
+    mac_presence(target, false);
+}
+
+/// macOS only: how much of an app this process currently is.
+///
+/// While the manager window is on screen it is a regular app (Dock tile,
+/// Cmd-Tab entry, reachable menu bar), because those are what let a minimized
+/// or backgrounded window be found again. Hidden to the tray, it drops back to
+/// an accessory so a resident agent doesn't occupy the Dock all day. The
+/// startup `set_activation_policy(Accessory)` covers launch; this covers every
+/// change after it.
+#[cfg(target_os = "macos")]
+fn mac_presence(target: &tao::event_loop::EventLoopWindowTarget<Wake>, regular: bool) {
+    use tao::platform::macos::{ActivationPolicy, EventLoopWindowTargetExtMacOS};
+    target.set_activation_policy_at_runtime(if regular {
+        ActivationPolicy::Regular
+    } else {
+        ActivationPolicy::Accessory
+    });
+    target.set_dock_visibility(regular);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mac_presence(_target: &tao::event_loop::EventLoopWindowTarget<Wake>, _regular: bool) {}
 
 fn start_readiness(proxy: EventLoopProxy<Wake>, pid: u32) {
     std::thread::spawn(move || {
