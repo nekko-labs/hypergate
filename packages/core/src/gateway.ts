@@ -59,6 +59,11 @@ Command-line tools are Hypergate's job too. Before installing a CLI yourself or 
 1. Call hypergate__clis_list to see what is installed (pass "query" to search the catalog for tools to add).
 2. If a tool is missing, call hypergate__cli_install_request with its id (or npm package / Homebrew formula) and a short reason. The user approves it in Hypergate, which runs the install and shows them the log; call hypergate__clis_list again to see it land.
 
+MCP servers are Hypergate's job too. Before telling the user to edit a config file or install a server themselves:
+
+1. Call hypergate__server_resolve with a registry name (ideally fully qualified, like "com.microsoft/azure") to see exactly what would run, pinned to a version, and what setting it up would take on this machine. It adds nothing.
+2. If it is not configured yet, call hypergate__server_install_request with the name and a short reason. The user approves it in Hypergate, which adds and starts the server; call hypergate__server_resolve again to confirm.
+
 Do not ask the user to paste a secret into this conversation, and do not ask them to re-authenticate a CLI by hand. Fetch the key, or request access to it.`;
 
 /**

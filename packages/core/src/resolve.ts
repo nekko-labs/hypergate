@@ -25,6 +25,7 @@
  * Everything here is pure and unit-tested — no network, no filesystem.
  */
 
+import type { ManagedServerConfig, RegistryEntry } from '@hypergate/shared';
 import { compareVersions } from './update.js';
 
 /** A registry package, in the shape the registry actually serves it. */
@@ -172,4 +173,34 @@ export function selectPackage(packages: ResolvablePackage[], ctx: SelectContext 
     }
   }
   return undefined;
+}
+
+/**
+ * Turn a resolved catalog entry into a server the supervisor can manage.
+ *
+ * Keys the entry does not set are left out entirely rather than written as
+ * `undefined`: this config is persisted to `servers.json`, and a file full of
+ * explicit nulls is both noisier to read and harder to diff than one that only
+ * states what applies.
+ */
+export function serverConfigFromEntry(
+  entry: RegistryEntry,
+  opts: { credentialRefs?: Record<string, string>; enabled?: boolean } = {},
+): ManagedServerConfig {
+  const cfg: ManagedServerConfig = {
+    id: entry.id,
+    name: entry.name,
+    runtime: entry.runtime,
+    command: entry.command ?? '',
+    enabled: opts.enabled ?? true,
+  };
+  if (entry.args?.length) cfg.args = [...entry.args];
+  if (entry.image) cfg.image = entry.image;
+  if (entry.url) cfg.url = entry.url;
+  if (entry.transport) cfg.transport = entry.transport;
+  if (entry.auth) cfg.auth = entry.auth;
+  if (entry.clientId) cfg.clientId = entry.clientId;
+  if (entry.scope) cfg.scope = entry.scope;
+  if (opts.credentialRefs && Object.keys(opts.credentialRefs).length) cfg.credentialRefs = { ...opts.credentialRefs };
+  return cfg;
 }

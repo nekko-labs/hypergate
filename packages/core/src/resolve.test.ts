@@ -6,6 +6,7 @@ import {
   resolveServerName,
   selectPackage,
   platformTargets,
+  serverConfigFromEntry,
 } from './resolve.js';
 
 describe('isPrerelease', () => {
@@ -144,5 +145,55 @@ describe('platformTargets', () => {
     expect(platformTargets('darwin', 'arm64')).toContain('darwin-arm64');
     expect(platformTargets('win32', 'x64')).toContain('win-x64');
     expect(platformTargets('linux', 'x64')).toContain('linux-x64');
+  });
+});
+
+describe('serverConfigFromEntry', () => {
+  it('carries a process entry through with its pinned args', () => {
+    const cfg = serverConfigFromEntry({
+      id: 'com-microsoft-azure',
+      name: 'Azure',
+      description: '',
+      runtime: 'process',
+      command: 'npx',
+      args: ['-y', '@azure/mcp@2.0.2', 'server', 'start'],
+    });
+    expect(cfg).toMatchObject({ id: 'com-microsoft-azure', name: 'Azure', runtime: 'process', command: 'npx', enabled: true });
+    expect(cfg.args).toEqual(['-y', '@azure/mcp@2.0.2', 'server', 'start']);
+  });
+
+  it('carries a remote entry’s endpoint, transport and auth', () => {
+    const cfg = serverConfigFromEntry({
+      id: 'linear',
+      name: 'Linear',
+      description: '',
+      runtime: 'remote',
+      command: '',
+      url: 'https://mcp.linear.app/mcp',
+      transport: 'http',
+      auth: 'oauth',
+      scope: 'read',
+    });
+    expect(cfg).toMatchObject({ runtime: 'remote', url: 'https://mcp.linear.app/mcp', transport: 'http', auth: 'oauth', scope: 'read', command: '' });
+  });
+
+  it('carries a docker image and leaves the command empty', () => {
+    const cfg = serverConfigFromEntry({ id: 'g', name: 'G', description: '', runtime: 'docker', command: '', image: 'ghcr.io/x/y:1' });
+    expect(cfg).toMatchObject({ runtime: 'docker', image: 'ghcr.io/x/y:1', command: '' });
+  });
+
+  it('attaches vault references for the env vars it was given', () => {
+    const cfg = serverConfigFromEntry(
+      { id: 'x', name: 'X', description: '', runtime: 'process', command: 'npx', args: ['-y', '@x/y'], requires: ['TOKEN'] },
+      { credentialRefs: { TOKEN: 'cred-1' } },
+    );
+    expect(cfg.credentialRefs).toEqual({ TOKEN: 'cred-1' });
+  });
+
+  it('omits keys the entry does not set rather than writing undefined into the config', () => {
+    const cfg = serverConfigFromEntry({ id: 'x', name: 'X', description: '', runtime: 'process', command: 'npx' });
+    expect('image' in cfg).toBe(false);
+    expect('url' in cfg).toBe(false);
+    expect('credentialRefs' in cfg).toBe(false);
   });
 });

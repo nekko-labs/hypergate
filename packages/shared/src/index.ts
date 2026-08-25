@@ -595,6 +595,42 @@ export interface CliInstallRequest {
 }
 
 /**
+ * An agent's request that the user add an MCP server.
+ *
+ * The server half of `CliInstallRequest`, and deliberately the same shape: an
+ * agent may resolve and ask, only the user approves, and approving is what
+ * actually adds the server. It carries the *resolved* server rather than the
+ * name the agent typed, so what the user approves is exactly what gets added —
+ * a pinned version and a launch command, not a name that could resolve
+ * differently a second time.
+ */
+export interface ServerInstallRequest {
+  id: string;
+  agentId: string;
+  agentName: string;
+  /** What the agent asked for, verbatim. */
+  query: string;
+  /** The canonical registry name it resolved to (`com.microsoft/azure`). */
+  serverName: string;
+  /** The catalog id it would be added under. */
+  serverId: string;
+  /** Display name. */
+  displayName: string;
+  /** The version pinned when the request was filed. */
+  version?: string;
+  /** How it would run, in one line the user can read before approving. */
+  summary: string;
+  /** The resolved server, so approving adds exactly what was shown. */
+  entry: RegistryEntry;
+  /** What the user will still have to do afterwards, from the setup plan. */
+  outstanding: string[];
+  reason?: string;
+  /** When the agent first asked (retries dedupe into one row and bump attempts). */
+  askedAt: string;
+  attempts: number;
+}
+
+/**
  * The credential vault: named secret values (API keys, access tokens) for the
  * CLIs and MCP servers Hypergate manages. Values live in the OS keychain (file
  * fallback mirrors the OAuth grants); everything here is metadata and **never
