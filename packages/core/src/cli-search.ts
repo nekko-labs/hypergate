@@ -249,9 +249,16 @@ export function searchCuratedClis(query: string, platform?: string): CliCatalogE
 
 /**
  * The whole lookup: curated first (hand-verified, and the only source that can
- * say "recommended"), then npm, then the Homebrew formula of that exact name.
+ * say "recommended"), then the Homebrew formula of that exact name, then npm.
  * De-duplicated by package and by command, so the official `@playwright/cli` row
  * doesn't appear twice because it is both curated and on npm.
+ *
+ * Homebrew is de-duplicated *ahead of* npm for the same reason it outranks npm
+ * in `sortCliCatalog`: where both channels ship the same command, Homebrew's is
+ * built from the project's own release and npm's is usually a third-party
+ * wrapper that downloads that same binary. Searching `ripgrep` used to return
+ * only the npm wrapper, because it claimed the command name first and dropped
+ * the real formula before the ranking could ever see it.
  */
 export async function searchCliCatalog(
   query: string,
@@ -270,7 +277,7 @@ export async function searchCliCatalog(
   const packages = new Set<string>();
   const commands = new Set<string>();
   const out: CliCatalogEntry[] = [];
-  for (const entry of [...curated, ...npm, ...(brew ? [brew] : [])]) {
+  for (const entry of [...curated, ...(brew ? [brew] : []), ...npm]) {
     const pkg = entry.package?.toLowerCase();
     const command = entry.command.toLowerCase();
     if ((pkg && packages.has(pkg)) || commands.has(command)) continue;

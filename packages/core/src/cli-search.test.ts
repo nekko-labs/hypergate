@@ -232,7 +232,7 @@ describe('curated CLI catalog', () => {
 });
 
 describe('sortCliCatalog', () => {
-  it('orders recommended curated, curated, npm, brew, then anything deprecated', () => {
+  it('orders recommended curated, curated, brew, npm, then anything deprecated', () => {
     const entry = (id: string, over: Partial<CliCatalogEntry>): CliCatalogEntry => ({
       id, name: id, command: id, description: '', category: 'other', channel: 'curated', ...over,
     });
@@ -243,7 +243,7 @@ describe('sortCliCatalog', () => {
       entry('plain'),
       entry('star', { recommended: true }),
     ]);
-    expect(sorted.map((e) => e.id)).toEqual(['star', 'plain', 'npm-one', 'brew-one', 'dead']);
+    expect(sorted.map((e) => e.id)).toEqual(['star', 'plain', 'brew-one', 'npm-one', 'dead']);
   });
 });
 
@@ -256,5 +256,28 @@ describe('publisherOf', () => {
     expect(publisherOf({}, 'sindresorhus')).toBe('sindresorhus');
     expect(publisherOf({ author: 'A Human' }, 'github-actions')).toBe('A Human');
     expect(publisherOf({}, 'GitHub Actions')).toBeUndefined();
+  });
+});
+
+describe('searchCliCatalog channel precedence', () => {
+  // A tool that exists in both channels under the same command name: Homebrew
+  // builds it from the project's own release, npm's is a wrapper that downloads
+  // that binary. The formula must claim the row, not be deduped away by it.
+  it('keeps the Homebrew formula when npm ships a wrapper of the same command', async () => {
+    const { impl } = stubFetch({
+      '/-/v1/search': { objects: [{ package: { name: 'ripgrep', description: 'wrapper' } }] },
+      '/ripgrep/latest': { name: 'ripgrep', version: '13.0.0', description: 'npm wrapper', bin: { ripgrep: 'cli.js' } },
+      '/formula/ripgrep.json': {
+        name: 'ripgrep',
+        desc: 'Search tool like grep and The Silver Searcher',
+        versions: { stable: '14.1.1' },
+        analytics: { install: { '30d': { ripgrep: 90000 } } },
+      },
+    });
+    const results = await searchCliCatalog('ripgrep', { fetchImpl: impl });
+    const ripgrep = results.filter((e) => e.command === 'ripgrep');
+    expect(ripgrep).toHaveLength(1);
+    expect(ripgrep[0].channel).toBe('brew');
+    expect(ripgrep[0].installs?.[0].command).toBe('brew install ripgrep');
   });
 });

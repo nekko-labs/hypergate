@@ -33,6 +33,8 @@ import {
   CLI_MANAGERS,
   chooseInstall,
   enrichCliInstalls,
+  orderInstalls,
+  parseCuratedScript,
   parseCuratedCommand,
   CONNECT_TARGETS,
   ENTRY_NAME,
@@ -83,6 +85,7 @@ import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
 import { Updater } from './updater.ts';
 import { isAllowedHost, isAllowedMutationRequest } from './security.ts';
+import type { CuratedScript } from '@hypergate/core';
 import type {
   ManagedServerConfig,
   GatewayInfo,
@@ -170,7 +173,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.16.0';
+const VERSION = '1.17.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -599,6 +602,21 @@ const detectClisCached = async (): Promise<CliStatus[]> => {
  * installing `rg` would otherwise be reported as missing. Curated and npm entries
  * carry a real command, so those can answer both ways.
  */
+/**
+ * Which install launchers this machine has. Ranking a route needs to know
+ * whether its manager exists here, and the catalog asks about the same dozen
+ * names for every tool, so the answer is probed once and memoed rather than
+ * rescanning PATH ~80 times per catalog build.
+ */
+const LAUNCHER_NAMES = [...new Set([...CLI_MANAGERS.map((m) => m.command), 'npx', 'pip', 'curl', 'wget', 'powershell'])];
+let launcherMemo: { at: number; found: Set<string> } | undefined;
+const availableLaunchers = (): Set<string> => {
+  if (launcherMemo && Date.now() - launcherMemo.at < 10_000) return launcherMemo.found;
+  const found = new Set(LAUNCHER_NAMES.filter((name) => !!resolveOnPath(name)));
+  launcherMemo = { at: Date.now(), found };
+  return found;
+};
+
 const annotateCli = async (entry: CliCatalogEntry): Promise<CliCatalogEntry> => {
   const path = resolveOnPath(entry.command);
   const known = path
@@ -608,8 +626,16 @@ const annotateCli = async (entry: CliCatalogEntry): Promise<CliCatalogEntry> => 
       : { installed: false };
   // Lifecycle enrichment: manager ids, mechanical uninstall/repair commands,
   // and the pnpm/yarn/bun equivalents of an npm route (see cli-actions.ts).
-  const annotated = { ...enrichCliInstalls(entry), ...known };
-  return { ...annotated, advice: adviceForCli(annotated) };
+  const enriched = enrichCliInstalls(entry);
+  // Only the daemon can say what this machine has, so it answers `available`
+  // and re-ranks with it; core stays pure and every surface reads one order.
+  const here = availableLaunchers();
+  const installs = enriched.installs && orderInstalls(enriched.installs.map((o) => ({ ...o, available: o.requires ? here.has(o.requires) : undefined })));
+  const annotated = { ...enriched, installs, ...known };
+  // `install` is what the CLI prints and what `hypergate cli install` runs, so
+  // it names the route that actually won rather than the catalog's first guess.
+  const best = chooseInstall(annotated);
+  return { ...annotated, install: best?.command ?? annotated.install, advice: adviceForCli(annotated) };
 };
 
 const searchClis = async (query: string, limit: number, signal: AbortSignal): Promise<CliCatalogEntry[]> => {
@@ -1136,7 +1162,10 @@ const SAFE_CLI_PACKAGE = /^[@a-zA-Z0-9._/-]{1,214}$/;
  */
 const deriveCliJob = async (
   input: StartCliJobRequest,
-): Promise<{ cliId: string; name: string; action: CliJobAction; argv: string[]; command: string } | { error: string; status: number }> => {
+): Promise<
+  | { cliId: string; name: string; action: CliJobAction; argv: string[]; command: string; script?: CuratedScript }
+  | { error: string; status: number }
+> => {
   const action = input.action;
   if (!['install', 'uninstall', 'repair', 'reauth'].includes(action)) return { error: 'unknown action', status: 400 };
 
@@ -1192,6 +1221,14 @@ const deriveCliJob = async (
   }
   const command = action === 'uninstall' ? route.uninstall : action === 'repair' ? (route.repair ?? route.command) : route.command;
   if (!command) return { error: `no ${action} command for the ${route.label} route`, status: 409 };
+  // A vendor install script is the one command that needs a shell. It is
+  // re-validated here from scratch rather than trusted because the route said
+  // so: the string has to be a curated one, in the documented grammar, from an
+  // allowlisted host (see parseCuratedScript). `repair` re-runs the installer,
+  // which is how these vendors document upgrading in place; `uninstall` never
+  // reaches here, since a script route has no derived uninstall to run.
+  const script = parseCuratedScript(command);
+  if (script) return { cliId: entry.id, name: entry.name, action, argv: [], script, command };
   const argv = parseCuratedCommand(command);
   if (!argv) return { error: `the ${route.label} route is not runnable in-app`, status: 409 };
   return { cliId: entry.id, name: entry.name, action, argv, command };
