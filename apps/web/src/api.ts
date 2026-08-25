@@ -13,6 +13,7 @@ import type {
   CliCatalogEntry,
   CliCheckResult,
   CliInstallRequest,
+  ServerInstallRequest,
   CliJob,
   CliManagerInfo,
   StartCliJobRequest,
@@ -93,6 +94,12 @@ export const api = {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     }),
+  serverRequests: () => j<{ requests: ServerInstallRequest[] }>('/api/server-requests'),
+  answerServerRequest: (id: string, verdict: 'approve' | 'deny', token: string) =>
+    j<{ request: ServerInstallRequest; approved: boolean; status?: ServerStatus; alreadyConfigured?: boolean }>(
+      `/api/server-requests/${encodeURIComponent(id)}/${verdict}`,
+      { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+    ),
   cliRequests: () => j<{ requests: CliInstallRequest[] }>('/api/cli-requests'),
   answerCliRequest: (id: string, verdict: 'approve' | 'deny', token: string) =>
     j<{ request: CliInstallRequest; approved: boolean; job?: CliJob }>(
