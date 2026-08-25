@@ -24,8 +24,13 @@ import {
   adviceForCli,
   adviceForServer,
   cliCatalogEntry,
+  knownCli,
   matchesCli,
   searchCliCatalog,
+  CLI_MANAGERS,
+  chooseInstall,
+  enrichCliInstalls,
+  parseCuratedCommand,
   CONNECT_TARGETS,
   ENTRY_NAME,
   agentConnectTarget,
@@ -68,6 +73,8 @@ import { registryConnections } from '@hypergate/shared';
 import { openStore } from './store.ts';
 import { CredentialVault } from './vault.ts';
 import { CredentialRequestStore } from './requests.ts';
+import { CliInstallRequestStore } from './cli-requests.ts';
+import { CliJobRunner } from './cli-jobs.ts';
 import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
 import { Updater } from './updater.ts';
@@ -87,6 +94,9 @@ import type {
   CliStatus,
   CliCatalogEntry,
   CliCheckResult,
+  CliJobAction,
+  CliManagerInfo,
+  StartCliJobRequest,
   OAuthAppInfo,
   ConnectTargetStatus,
   ConnectTargetsInfo,
@@ -156,7 +166,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.10.0';
+const VERSION = '1.11.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -592,7 +602,9 @@ const annotateCli = async (entry: CliCatalogEntry): Promise<CliCatalogEntry> => 
     : entry.channel === 'brew'
       ? {}
       : { installed: false };
-  const annotated = { ...entry, ...known };
+  // Lifecycle enrichment: manager ids, mechanical uninstall/repair commands,
+  // and the pnpm/yarn/bun equivalents of an npm route (see cli-actions.ts).
+  const annotated = { ...enrichCliInstalls(entry), ...known };
   return { ...annotated, advice: adviceForCli(annotated) };
 };
 
@@ -1089,6 +1101,195 @@ const credentialBuiltins = (
   ];
 };
 
+// ── CLI lifecycle: jobs the daemon runs, and installs agents may request ─────
+
+/**
+ * Lifecycle jobs (install / uninstall / repair / reauth). Finishing one clears
+ * the detection memo, so the installed list reflects the change on its next
+ * poll instead of ten seconds later.
+ */
+const cliJobs = new CliJobRunner(() => {
+  cliMemo = undefined;
+  connectMemo = undefined;
+});
+
+/** Pending agent install requests: same memory-not-file reasoning as requests.ts. */
+const cliInstallRequests = new CliInstallRequestStore();
+
+/** Where a user goes to answer CLI install requests. Clickable from a terminal. */
+const cliRequestUrl = (): string => `http://localhost:${PORT}/#cli/requests`;
+
+/** A safe npm package / Homebrew formula name (the same shape cli-search accepts). */
+const SAFE_CLI_PACKAGE = /^[@a-zA-Z0-9._/-]{1,214}$/;
+
+/**
+ * Turn a job request into the argv the runner may spawn. The command is always
+ * assembled here from catalog data (curated entries, or a validated package
+ * name in a fixed template) and re-checked against the curated-launcher
+ * grammar; nothing from the request body ever reaches a command line as text.
+ */
+const deriveCliJob = async (
+  input: StartCliJobRequest,
+): Promise<{ cliId: string; name: string; action: CliJobAction; argv: string[]; command: string } | { error: string; status: number }> => {
+  const action = input.action;
+  if (!['install', 'uninstall', 'repair', 'reauth'].includes(action)) return { error: 'unknown action', status: 400 };
+
+  let entry: CliCatalogEntry | undefined;
+  if (input.cliId) {
+    const tool = knownCli(String(input.cliId));
+    if (tool) entry = enrichCliInstalls(cliCatalogEntry(tool, process.platform));
+  }
+  if (!entry && input.package && (input.channel === 'npm' || input.channel === 'brew')) {
+    const pkg = String(input.package);
+    if (!SAFE_CLI_PACKAGE.test(pkg)) return { error: 'invalid package name', status: 400 };
+    const install =
+      input.channel === 'npm'
+        ? { label: 'npm', command: `npm install -g ${pkg}@latest` }
+        : { label: 'Homebrew', command: `brew install ${pkg}` };
+    entry = enrichCliInstalls({
+      id: pkg,
+      name: pkg,
+      command: pkg,
+      description: '',
+      category: 'other',
+      channel: input.channel,
+      package: pkg,
+      installs: [install],
+    });
+  }
+  if (!entry) return { error: 'unknown tool: pass a curated cliId, or channel + package', status: 404 };
+
+  if (action === 'reauth') {
+    const auth = entry.auth;
+    if (!auth) return { error: `${entry.name} has no known sign-in command`, status: 400 };
+    if (!auth.runnable) {
+      return { error: auth.note ?? `${auth.command} needs an interactive terminal; run it yourself`, status: 409 };
+    }
+    const argv = auth.command.trim().split(/\s+/);
+    // The command is curated data, but hold it to its own grammar anyway: it
+    // must invoke this tool's binary with plain word arguments.
+    if (argv[0] !== entry.command || argv.some((w) => !/^[a-zA-Z0-9._=-]+$/.test(w)))
+      return { error: 'malformed auth command', status: 500 };
+    const file = resolveOnPath(entry.command);
+    if (!file) return { error: `${entry.command} is not installed`, status: 409 };
+    return { cliId: entry.id, name: entry.name, action, argv: [file, ...argv.slice(1)], command: auth.command };
+  }
+
+  const route = chooseInstall(entry, input.manager);
+  if (!route) {
+    return {
+      error: input.manager
+        ? `no runnable ${input.manager} route for ${entry.name} on this platform`
+        : `${entry.name} has no install route Hypergate can run; use the copyable command instead`,
+      status: 409,
+    };
+  }
+  const command = action === 'uninstall' ? route.uninstall : action === 'repair' ? (route.repair ?? route.command) : route.command;
+  if (!command) return { error: `no ${action} command for the ${route.label} route`, status: 409 };
+  const argv = parseCuratedCommand(command);
+  if (!argv) return { error: `the ${route.label} route is not runnable in-app`, status: 409 };
+  return { cliId: entry.id, name: entry.name, action, argv, command };
+};
+
+/**
+ * The gateway's own CLI tools: every caller may look, and any *agent* may ask
+ * for an install; only the user, in the manager, approves and runs one. The
+ * master token's owner is the user, who has the UI and `hypergate cli install`,
+ * so master callers are told to use those rather than given a request queue to
+ * talk to themselves through.
+ */
+const cliBuiltins = (asker?: { id: string; name: string }): GatewayBuiltinTool[] => [
+  {
+    name: 'clis_list',
+    description:
+      'List the command-line tools Hypergate manages on this machine, with version and path when installed. Pass "query" to also search the installable catalog (npm registry + Homebrew formulae) for tools to add. Check here before installing a CLI some other way or asking the user to.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Optional: search the catalog for tools to install.' } },
+    },
+    call: async (args) => {
+      const query = typeof args.query === 'string' ? args.query.trim() : '';
+      const installed = (await detectClisCached()).map((c) => ({
+        id: c.id,
+        name: c.name,
+        command: c.command,
+        installed: c.found,
+        version: c.version,
+        path: c.path,
+        description: c.description,
+      }));
+      if (!query) return { clis: installed };
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        const found = await searchClis(query, 8, ctrl.signal);
+        return {
+          clis: installed,
+          catalog: found.map((e) => ({
+            id: e.id,
+            name: e.name,
+            command: e.command,
+            channel: e.channel,
+            package: e.package,
+            installed: e.installed ?? false,
+            official: e.official,
+            description: e.description,
+          })),
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  },
+  {
+    name: 'cli_install_request',
+    description:
+      'Ask the user to install a command-line tool through Hypergate. Pass a curated id from clis_list, or channel ("npm" | "brew") plus package for anything else, and a short reason. Returns a URL to give the user; approving runs the install in Hypergate with a visible log. Filing installs nothing by itself; call clis_list again after approval to see the tool land.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Curated tool id, from clis_list' },
+        channel: { type: 'string', enum: ['npm', 'brew'], description: 'For non-curated tools: which catalog the package lives in' },
+        package: { type: 'string', description: 'For non-curated tools: the npm package or Homebrew formula' },
+        reason: { type: 'string', description: 'One short line on why the tool is needed. Shown to the user.' },
+      },
+    },
+    call: async (args) => {
+      if (!asker) throw new Error('Only a connected agent can request a CLI install. You hold the master token: run the install from the manager, or with `hypergate cli install <id>`.');
+      const reason = typeof args.reason === 'string' ? args.reason.slice(0, 200) : undefined;
+      const id = typeof args.id === 'string' ? args.id.trim() : '';
+      const pkg = typeof args.package === 'string' ? args.package.trim() : '';
+      const channel = args.channel === 'npm' || args.channel === 'brew' ? args.channel : undefined;
+      const tool = id ? knownCli(id) : undefined;
+      if (!tool && !(pkg && channel)) {
+        throw new Error('Name the tool: a curated id from clis_list, or channel ("npm" | "brew") plus package.');
+      }
+      if (!tool && !SAFE_CLI_PACKAGE.test(pkg)) throw new Error(`"${pkg}" is not a valid package name.`);
+      if (tool) {
+        const status = (await detectClisCached()).find((c) => c.id === tool.id);
+        if (status?.found)
+          return { filed: false, installed: true, message: `${tool.name} is already installed (${status.version ?? 'version unknown'}).` };
+      }
+      const row = cliInstallRequests.file({
+        cliId: tool?.id ?? pkg,
+        cliName: tool?.name ?? pkg,
+        channel: tool ? undefined : channel,
+        package: tool ? undefined : pkg,
+        agentId: asker.id,
+        agentName: asker.name,
+        reason,
+      });
+      const url = cliRequestUrl();
+      return {
+        filed: true,
+        id: row.id,
+        url,
+        message: `Ask the user to approve installing ${row.cliName} at ${url}. Hypergate will run the install and show them the log; call clis_list afterwards to confirm.`,
+      };
+    },
+  },
+];
+
 /** The identity the stored grant states about itself. No network, always cheap. */
 const accountFromGrant = (cfg: ManagedServerConfig): ServerAccount | undefined => {
   if (cfg.runtime !== 'remote' || cfg.auth === 'none') return undefined;
@@ -1429,7 +1630,7 @@ if (STDIO_MODE) {
       supervisor,
       { name: 'hypergate-gateway', version: VERSION },
       // A local stdio spawn is the user's own process: master-equivalent scope.
-      { caller: 'stdio (local)', builtins: credentialBuiltins('*') },
+      { caller: 'stdio (local)', builtins: [...credentialBuiltins('*'), ...cliBuiltins()] },
     );
     await gateway.connect(new StdioServerTransport());
     // stdout is the MCP channel now; logs must go to stderr only.
@@ -1749,7 +1950,7 @@ if (STDIO_MODE) {
         const gateway = createGateway(
           supervisor,
           { name: 'hypergate-gateway', version: VERSION },
-          { caller, allowServer, builtins: credentialBuiltins(credScope, asker) },
+          { caller, allowServer, builtins: [...credentialBuiltins(credScope, asker), ...cliBuiltins(asker)] },
         );
         res.on('close', () => {
           void transport.close();
@@ -1867,6 +2068,75 @@ if (STDIO_MODE) {
         ? { command: name, found: true, path, version: await probeVersion(path, ['--version']) }
         : { command: name, found: false };
       return json(res, 200, result);
+    }
+    // Which package managers this machine has, so the UI can offer real choices
+    // (an install picker showing brew on a machine without brew is a dead end).
+    if (pathname === '/api/clis/managers' && req.method === 'GET') {
+      const managers: CliManagerInfo[] = CLI_MANAGERS.filter(
+        (m) => !m.platforms || m.platforms.includes(process.platform),
+      ).map((m) => ({ id: m.id, label: m.label, command: m.command, found: !!resolveOnPath(m.command) }));
+      return json(res, 200, managers);
+    }
+    // CLI lifecycle jobs: install / uninstall / repair / reauth, run by the
+    // daemon with output captured for the UI. Reads are open like the rest of
+    // /api/clis; starting or killing one is master-only, like the updater.
+    if (pathname === '/api/clis/jobs' && req.method === 'GET') return json(res, 200, cliJobs.list());
+    if (pathname === '/api/clis/jobs' && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      let body: StartCliJobRequest;
+      try {
+        body = JSON.parse(await readBody(req)) as StartCliJobRequest;
+      } catch {
+        return json(res, 400, { error: 'invalid JSON' });
+      }
+      const derived = await deriveCliJob(body);
+      if ('error' in derived) return json(res, derived.status, { error: derived.error });
+      try {
+        return json(res, 202, cliJobs.start(derived));
+      } catch (e) {
+        return json(res, 409, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    const cliJobM = /^\/api\/clis\/jobs\/([^/]+)$/.exec(pathname);
+    if (cliJobM && req.method === 'GET') {
+      const job = cliJobs.get(decodeURIComponent(cliJobM[1]));
+      return job ? json(res, 200, job) : json(res, 404, { error: 'no such job' });
+    }
+    const cliJobKillM = /^\/api\/clis\/jobs\/([^/]+)\/kill$/.exec(pathname);
+    if (cliJobKillM && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const stopped = cliJobs.kill(decodeURIComponent(cliJobKillM[1]));
+      return stopped ? json(res, 200, { stopped: true }) : json(res, 404, { error: 'no running job by that id' });
+    }
+    // Agent install requests. Reading is open (it names tools, not secrets);
+    // answering is master-only, and approving is what actually runs the install.
+    if (pathname === '/api/cli-requests' && req.method === 'GET')
+      return json(res, 200, { requests: cliInstallRequests.list() });
+    const cliReqM = /^\/api\/cli-requests\/([^/]+)\/(approve|deny)$/.exec(pathname);
+    if (cliReqM && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const request = cliInstallRequests.get(decodeURIComponent(cliReqM[1]));
+      if (!request) return json(res, 404, { error: 'no such request (it may have expired)' });
+      if (cliReqM[2] === 'deny') {
+        cliInstallRequests.resolve(request.id);
+        return json(res, 200, { request, approved: false });
+      }
+      const derived = await deriveCliJob({
+        action: 'install',
+        cliId: request.channel ? undefined : request.cliId,
+        channel: request.channel,
+        package: request.package,
+      });
+      if ('error' in derived) return json(res, derived.status, { error: derived.error });
+      try {
+        const job = cliJobs.start(derived);
+        // Resolved only once the job actually started, so a 409 (another job
+        // running) leaves the request answerable rather than silently eaten.
+        cliInstallRequests.resolve(request.id);
+        return json(res, 202, { request, approved: true, job });
+      } catch (e) {
+        return json(res, 409, { error: e instanceof Error ? e.message : String(e) });
+      }
     }
 
     if (pathname === '/api/gateway') return json(res, 200, gatewayInfo());
@@ -2483,6 +2753,7 @@ if (STDIO_MODE) {
       // Its pending requests go with it: approving one would grant access to an
       // agent whose token was just revoked.
       credentialRequests.forgetAgent(clientM[1]);
+      cliInstallRequests.forgetAgent(clientM[1]);
       return json(res, 200, { ok: true });
     }
 

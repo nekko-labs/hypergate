@@ -239,6 +239,46 @@ const emptySearch = await (await fetch(`${BASE}/api/clis/search?q=`)).json();
 if (!Array.isArray(emptySearch) || emptySearch.length !== 0) fail('an empty CLI query must not search anything');
 ok(`CLI catalog serves ${cliCatalog.length} tools with verdicts and install routes; an empty query stays local`);
 
+// ── CLI lifecycle: managers, enriched routes, jobs guards, agent requests ────
+const cliManagers = await (await fetch(`${BASE}/api/clis/managers`)).json();
+const npmManager = cliManagers.find((m) => m.id === 'npm');
+if (!npmManager || typeof npmManager.found !== 'boolean') fail(`managers must include npm with a found flag: ${JSON.stringify(cliManagers)}`);
+if (cliManagers.some((m) => m.id === 'winget') && process.platform !== 'win32') fail('winget offered off Windows');
+const pwNpm = (playwrightCli.installs ?? []).find((i) => i.manager === 'npm');
+if (pwNpm?.uninstall !== 'npm uninstall -g @playwright/cli') fail(`the npm route must carry its uninstall: ${JSON.stringify(playwrightCli.installs)}`);
+if (!(playwrightCli.installs ?? []).some((i) => i.manager === 'pnpm' && i.command.startsWith('pnpm add -g')))
+  fail('an npm route should be extended to a pnpm equivalent');
+ok(`CLI managers detected (${cliManagers.filter((m) => m.found).length}/${cliManagers.length} present) and routes carry lifecycle commands`);
+
+// Jobs: the guards, without installing anything real on this machine.
+const noTokenJob = await fetch(`${BASE}/api/clis/jobs`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', origin: BASE },
+  body: JSON.stringify({ action: 'install', cliId: 'playwright-cli' }),
+});
+if (noTokenJob.status !== 401) fail(`starting a job without the master token must 401, got ${noTokenJob.status}`);
+const master0 = await gwToken();
+const badAction = await fetch(`${BASE}/api/clis/jobs`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', origin: BASE, authorization: `Bearer ${master0}` },
+  body: JSON.stringify({ action: 'format-disk', cliId: 'playwright-cli' }),
+});
+if (badAction.status !== 400) fail(`an unknown action must 400, got ${badAction.status}`);
+const unknownTool = await fetch(`${BASE}/api/clis/jobs`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', origin: BASE, authorization: `Bearer ${master0}` },
+  body: JSON.stringify({ action: 'install', cliId: 'no-such-tool' }),
+});
+if (unknownTool.status !== 404) fail(`an unknown tool must 404, got ${unknownTool.status}`);
+const evilPackage = await fetch(`${BASE}/api/clis/jobs`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', origin: BASE, authorization: `Bearer ${master0}` },
+  body: JSON.stringify({ action: 'install', channel: 'npm', package: 'x; rm -rf /' }),
+});
+if (evilPackage.status !== 400) fail(`a hostile package name must 400, got ${evilPackage.status}`);
+if ((await (await fetch(`${BASE}/api/clis/jobs`)).json()).length !== 0) fail('no job should have started');
+ok('CLI jobs are master-only and refuse unknown actions, unknown tools, and hostile package names');
+
 // ── the one-time OAuth app (read + the guards) ───────────────────────────────
 // Deliberately no *successful* POST here: a stored app goes into the real OS
 // keychain under `oauth-app:github`, which a smoke run has no business writing to
@@ -368,6 +408,48 @@ if (deduped[0].attempts < 2) fail(`the deduped request should count attempts, go
 if (deduped[0].reason !== 'smoke test needs the token') fail(`the later reason should stick: ${JSON.stringify(deduped[0])}`);
 ok('credential_request files once, counts attempts, and keeps the supplied reason');
 
+// ── the CLI tools, from an agent's side ──────────────────────────────────────
+// clis_list answers with what is installed; cli_install_request files a request
+// only a human can approve. The whole loop runs against a fake npm package so
+// the smoke never actually installs software on this machine.
+const agentClis = await mcp(allowed.token, 'tools/call', { name: 'hypergate__clis_list', arguments: {} });
+const agentCliRows = JSON.parse(agentClis.body?.result?.content?.[0]?.text ?? '{}');
+const nodeRow = agentCliRows.clis?.find((c) => c.id === 'node');
+if (!nodeRow || typeof nodeRow.installed !== 'boolean') fail(`clis_list should report node with an installed flag: ${JSON.stringify(agentCliRows).slice(0, 300)}`);
+const cliAsk = await mcp(allowed.token, 'tools/call', {
+  name: 'hypergate__cli_install_request',
+  arguments: { channel: 'npm', package: 'left-pad', reason: 'smoke test wants a tool' },
+});
+const cliAskPayload = JSON.parse(cliAsk.body?.result?.content?.[0]?.text ?? '{}');
+if (!cliAskPayload.filed || !cliAskPayload.url) fail(`cli_install_request should file and return a URL: ${JSON.stringify(cliAsk.body)}`);
+const cliAskAgain = await mcp(allowed.token, 'tools/call', {
+  name: 'hypergate__cli_install_request',
+  arguments: { channel: 'npm', package: 'left-pad' },
+});
+if (!(cliAskAgain.body?.result)) fail('re-asking for the same tool should still answer');
+const cliReqList = await (await fetch(`${BASE}/api/cli-requests`)).json();
+const cliReqRows = cliReqList.requests?.filter((r) => r.cliId === 'left-pad' && r.agentId === allowed.id) ?? [];
+if (cliReqRows.length !== 1) fail(`asking twice must dedupe to one install request, got ${cliReqRows.length}`);
+if (cliReqRows[0].attempts < 2) fail(`the deduped install request should count attempts, got ${cliReqRows[0].attempts}`);
+if (cliReqRows[0].reason !== 'smoke test wants a tool') fail(`the reason should survive a bare retry: ${JSON.stringify(cliReqRows[0])}`);
+const masterAsk = await mcp(master, 'tools/call', { name: 'hypergate__cli_install_request', arguments: { channel: 'npm', package: 'left-pad' } });
+if (!(masterAsk.body?.error || masterAsk.body?.result?.isError)) fail('the master caller should be pointed at the manager, not the request queue');
+const agentDeny = await fetch(`${BASE}/api/cli-requests/${cliReqRows[0].id}/deny`, {
+  method: 'POST',
+  headers: { origin: BASE, authorization: `Bearer ${allowed.token}` },
+});
+if (agentDeny.status !== 401) fail(`an agent token must not answer install requests, got ${agentDeny.status}`);
+const denyRes = await fetch(`${BASE}/api/cli-requests/${cliReqRows[0].id}/deny`, {
+  method: 'POST',
+  headers: { origin: BASE, authorization: `Bearer ${master}` },
+});
+const denyBody = await denyRes.json();
+if (denyRes.status !== 200 || denyBody.approved !== false) fail(`deny should resolve the request: ${denyRes.status} ${JSON.stringify(denyBody)}`);
+if (((await (await fetch(`${BASE}/api/cli-requests`)).json()).requests ?? []).some((r) => r.id === cliReqRows[0].id))
+  fail('a denied request should leave the queue');
+if ((await (await fetch(`${BASE}/api/clis/jobs`)).json()).length !== 0) fail('deny must not have started an install');
+ok('agents can list CLIs and request installs; requests dedupe, only the user answers, deny runs nothing');
+
 // Answering a request is a grant, so it needs the master token + same origin.
 const answerNoToken = await fetch(`${BASE}/api/credential-requests/${deduped[0].id}/approve`, { method: 'POST' });
 if (answerNoToken.status !== 401) fail(`approving without the master token should 401, got ${answerNoToken.status}`);
@@ -421,6 +503,8 @@ const initialized = await mcp(allowed.token, 'initialize', {
 const instructions = initialized.body?.result?.instructions ?? '';
 if (!instructions.includes('credentials_list') || !instructions.includes('credential_request'))
   fail(`initialize should carry instructions naming the credential tools: ${JSON.stringify(initialized.body?.result)}`);
+if (!instructions.includes('clis_list') || !instructions.includes('cli_install_request'))
+  fail('initialize should carry instructions naming the CLI tools');
 ok('the gateway advertises the vault in its MCP instructions');
 
 // The reveal door. No consent prompt is available in CI, and the smoke daemon

@@ -79,20 +79,20 @@ export const KNOWN_CLIS: CliTool[] = [
   { id: 'pipx', name: 'pipx', command: 'pipx', category: 'package', description: 'Install/run Python CLI apps in isolated envs.', homepage: 'https://pipx.pypa.io', install: 'https://pipx.pypa.io/stable/installation/', official: true, publisher: 'PyPA' },
 
   // Container engine (the Docker runtime)
-  { id: 'docker', name: 'Docker', command: 'docker', category: 'container', description: "Container engine — powers Hypergate's opt-in Docker isolation and the GCP Toolbox entry.", homepage: 'https://www.docker.com', install: 'https://docs.docker.com/get-docker/', official: true, publisher: 'Docker' },
+  { id: 'docker', name: 'Docker', command: 'docker', category: 'container', description: "Container engine — powers Hypergate's opt-in Docker isolation and the GCP Toolbox entry.", homepage: 'https://www.docker.com', install: 'https://docs.docker.com/get-docker/', official: true, publisher: 'Docker', auth: { command: 'docker login', note: 'Interactive: it reads credentials or a device code confirmation from the terminal.' } },
 
   // Version control
   { id: 'git', name: 'Git', command: 'git', category: 'vcs', description: 'Version control — needed to clone/build servers from source.', homepage: 'https://git-scm.com', install: 'https://git-scm.com/downloads', official: true, publisher: 'Git' },
-  { id: 'gh', name: 'GitHub CLI', command: 'gh', category: 'vcs', description: 'GitHub from the terminal (auth, PRs, issues).', homepage: 'https://cli.github.com', install: 'https://cli.github.com', official: true, publisher: 'GitHub' },
+  { id: 'gh', name: 'GitHub CLI', command: 'gh', category: 'vcs', description: 'GitHub from the terminal (auth, PRs, issues).', homepage: 'https://cli.github.com', install: 'https://cli.github.com', official: true, publisher: 'GitHub', auth: { command: 'gh auth login', note: 'Interactive: it asks which account and protocol before opening the browser.' } },
 
   // Cloud CLIs used by catalog servers
-  { id: 'flyctl', name: 'Fly CLI', command: 'flyctl', category: 'cloud', description: 'Fly.io CLI — required by the Fly.io catalog server.', homepage: 'https://fly.io/docs/flyctl/', install: 'https://fly.io/docs/flyctl/install/', official: true, publisher: 'Fly.io' },
-  { id: 'wrangler', name: 'Wrangler', command: 'wrangler', category: 'cloud', description: 'Cloudflare Workers CLI.', homepage: 'https://developers.cloudflare.com/workers/wrangler/', install: 'npm install -g wrangler', official: true, publisher: 'Cloudflare' },
-  { id: 'vercel', name: 'Vercel CLI', command: 'vercel', category: 'cloud', description: 'Deploy and manage Vercel projects.', homepage: 'https://vercel.com/docs/cli', install: 'npm install -g vercel', official: true, publisher: 'Vercel' },
-  { id: 'supabase', name: 'Supabase CLI', command: 'supabase', category: 'cloud', description: 'Local Supabase dev + project management.', homepage: 'https://supabase.com/docs/guides/local-development', install: 'https://supabase.com/docs/guides/local-development', official: true, publisher: 'Supabase' },
-  { id: 'aws', name: 'AWS CLI', command: 'aws', category: 'cloud', description: 'Amazon Web Services CLI (auth/profiles for AWS servers).', homepage: 'https://aws.amazon.com/cli/', install: 'https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html', official: true, publisher: 'AWS' },
-  { id: 'az', name: 'Azure CLI', command: 'az', category: 'cloud', description: 'Microsoft Azure CLI — `az login` authenticates the Azure server.', homepage: 'https://learn.microsoft.com/cli/azure/', install: 'https://learn.microsoft.com/cli/azure/install-azure-cli', official: true, publisher: 'Microsoft' },
-  { id: 'gcloud', name: 'Google Cloud CLI', command: 'gcloud', category: 'cloud', description: 'Google Cloud CLI (auth/config for GCP servers).', homepage: 'https://cloud.google.com/sdk/gcloud', install: 'https://cloud.google.com/sdk/docs/install', official: true, publisher: 'Google' },
+  { id: 'flyctl', name: 'Fly CLI', command: 'flyctl', category: 'cloud', description: 'Fly.io CLI — required by the Fly.io catalog server.', homepage: 'https://fly.io/docs/flyctl/', install: 'https://fly.io/docs/flyctl/install/', official: true, publisher: 'Fly.io', auth: { command: 'flyctl auth login', runnable: true } },
+  { id: 'wrangler', name: 'Wrangler', command: 'wrangler', category: 'cloud', description: 'Cloudflare Workers CLI.', homepage: 'https://developers.cloudflare.com/workers/wrangler/', install: 'npm install -g wrangler', official: true, publisher: 'Cloudflare', auth: { command: 'wrangler login', runnable: true } },
+  { id: 'vercel', name: 'Vercel CLI', command: 'vercel', category: 'cloud', description: 'Deploy and manage Vercel projects.', homepage: 'https://vercel.com/docs/cli', install: 'npm install -g vercel', official: true, publisher: 'Vercel', auth: { command: 'vercel login', note: 'Interactive: it asks how you want to sign in.' } },
+  { id: 'supabase', name: 'Supabase CLI', command: 'supabase', category: 'cloud', description: 'Local Supabase dev + project management.', homepage: 'https://supabase.com/docs/guides/local-development', install: 'https://supabase.com/docs/guides/local-development', official: true, publisher: 'Supabase', auth: { command: 'supabase login', note: 'Interactive: it waits for a keypress and can ask for a token.' } },
+  { id: 'aws', name: 'AWS CLI', command: 'aws', category: 'cloud', description: 'Amazon Web Services CLI (auth/profiles for AWS servers).', homepage: 'https://aws.amazon.com/cli/', install: 'https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html', official: true, publisher: 'AWS', auth: { command: 'aws configure', note: 'Interactive: it prompts for the key pair and region.' } },
+  { id: 'az', name: 'Azure CLI', command: 'az', category: 'cloud', description: 'Microsoft Azure CLI — `az login` authenticates the Azure server.', homepage: 'https://learn.microsoft.com/cli/azure/', install: 'https://learn.microsoft.com/cli/azure/install-azure-cli', official: true, publisher: 'Microsoft', auth: { command: 'az login', runnable: true } },
+  { id: 'gcloud', name: 'Google Cloud CLI', command: 'gcloud', category: 'cloud', description: 'Google Cloud CLI (auth/config for GCP servers).', homepage: 'https://cloud.google.com/sdk/gcloud', install: 'https://cloud.google.com/sdk/docs/install', official: true, publisher: 'Google', auth: { command: 'gcloud auth login', note: 'Opens the browser, but wants an interactive terminal to confirm.' } },
 ];
 
 export const knownCli = (id: string): CliTool | undefined => KNOWN_CLIS.find((c) => c.id === id);
@@ -138,6 +138,7 @@ const EXTRA_INSTALLS: Record<string, CliInstallOption[]> = {
   ],
   gh: [
     { label: 'winget', command: 'winget install GitHub.cli', platforms: ['win32'] },
+    { label: 'Scoop', command: 'scoop install gh', platforms: ['win32'] },
     { label: 'Homebrew', command: 'brew install gh', platforms: ['darwin', 'linux'] },
   ],
   flyctl: [

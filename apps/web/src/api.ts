@@ -12,6 +12,10 @@ import type {
   CliStatus,
   CliCatalogEntry,
   CliCheckResult,
+  CliInstallRequest,
+  CliJob,
+  CliManagerInfo,
+  StartCliJobRequest,
   OAuthAppInfo,
   CreateCredentialRequest,
   CredentialGuideInfo,
@@ -71,6 +75,30 @@ export const api = {
   // against npm + Homebrew that the MCP registry search is modelled on.
   cliCatalog: () => j<CliCatalogEntry[]>('/api/clis/catalog'),
   searchClis: (q: string) => j<CliCatalogEntry[]>(`/api/clis/search?q=${encodeURIComponent(q)}`),
+  // CLI lifecycle: the package managers this machine has, the jobs the daemon
+  // is running (install / uninstall / repair / reauth), and agents' pending
+  // install requests. Starting, killing, or answering carries the master token,
+  // like the updater — this is the daemon running commands on the machine.
+  cliManagers: () => j<CliManagerInfo[]>('/api/clis/managers'),
+  cliJobs: () => j<CliJob[]>('/api/clis/jobs'),
+  cliJob: (id: string) => j<CliJob>(`/api/clis/jobs/${encodeURIComponent(id)}`),
+  startCliJob: (body: StartCliJobRequest, token: string) =>
+    j<CliJob>('/api/clis/jobs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    }),
+  killCliJob: (id: string, token: string) =>
+    j<{ stopped: boolean }>(`/api/clis/jobs/${encodeURIComponent(id)}/kill`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  cliRequests: () => j<{ requests: CliInstallRequest[] }>('/api/cli-requests'),
+  answerCliRequest: (id: string, verdict: 'approve' | 'deny', token: string) =>
+    j<{ request: CliInstallRequest; approved: boolean; job?: CliJob }>(
+      `/api/cli-requests/${encodeURIComponent(id)}/${verdict}`,
+      { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+    ),
   // The credential vault. Reads are metadata + masked hints only; every
   // mutation carries the master token on top of the same-origin guard, because
   // creating, rolling, deleting, or granting a key must not be reachable by a

@@ -440,6 +440,21 @@ export interface CliTool {
   recommended?: boolean;
   /** Who publishes it: an npm scope/owner, a Homebrew tap, or a vendor name. */
   publisher?: string;
+  /** How to sign in again, when the tool has an account to sign in to. */
+  auth?: CliAuthHint;
+}
+
+/**
+ * The vendor's own re-authentication command. `runnable` marks the ones that
+ * complete with stdin closed and a browser available (they open the provider's
+ * sign-in page and poll); everything else needs an interactive terminal, so the
+ * UI offers copy instead of a run button.
+ */
+export interface CliAuthHint {
+  command: string;
+  /** Why it can't be run in-app, when it can't (shown beside the copy button). */
+  note?: string;
+  runnable?: boolean;
 }
 
 /** Which catalog an installable CLI was found in. */
@@ -452,6 +467,12 @@ export interface CliInstallOption {
   /** The exact command to run, or a URL when there is no command. */
   command: string;
   platforms?: string[];
+  /** Canonical package-manager id (`npm`, `brew`, `winget`, …) when the command is one of theirs. */
+  manager?: string;
+  /** The matching uninstall command, when the manager makes it mechanical. */
+  uninstall?: string;
+  /** The matching reinstall/repair command, when the manager has a better verb than install. */
+  repair?: string;
 }
 
 /**
@@ -497,6 +518,80 @@ export interface CliCheckResult {
   found: boolean;
   path?: string;
   version?: string;
+}
+
+/** A package manager this machine could install CLIs with. */
+export interface CliManagerInfo {
+  /** Canonical id: `npm`, `pnpm`, `yarn`, `bun`, `brew`, `winget`, `scoop`, `choco`, `pipx`, `cargo`, `uv`. */
+  id: string;
+  /** Display label: `npm`, `Homebrew`, `winget`, … */
+  label: string;
+  /** The executable probed on PATH. */
+  command: string;
+  found: boolean;
+}
+
+/** What a CLI job is doing to the tool. */
+export type CliJobAction = 'install' | 'uninstall' | 'repair' | 'reauth';
+
+export type CliJobStatus = 'running' | 'succeeded' | 'failed' | 'killed';
+
+/**
+ * One command the daemon is running (or ran) against a CLI on the user's
+ * behalf: an install, uninstall, repair, or re-authentication. The command is
+ * always derived server-side from catalog data and validated against the
+ * curated-launcher grammar; it is never taken from the request. Output is
+ * captured line by line so the UI can show a live log.
+ */
+export interface CliJob {
+  id: string;
+  /** Catalog id when curated, else the package/formula name. */
+  cliId: string;
+  /** Display name of the tool the job is about. */
+  name: string;
+  action: CliJobAction;
+  /** The exact command being run, for display. */
+  command: string;
+  status: CliJobStatus;
+  /** Captured stdout+stderr, line-buffered, capped (oldest dropped). */
+  lines: string[];
+  exitCode?: number;
+  /** Why it failed, when the failure wasn't the command's own exit code. */
+  error?: string;
+  startedAt: number;
+  endedAt?: number;
+}
+
+/** Body of `POST /api/clis/jobs`: what to do, never how (the command is derived server-side). */
+export interface StartCliJobRequest {
+  action: CliJobAction;
+  /** Curated catalog id, when the tool is curated. */
+  cliId?: string;
+  /** Channel + package for looked-up tools (npm package or Homebrew formula). */
+  channel?: CliChannel;
+  package?: string;
+  /** Preferred package manager (an id from `/api/clis/managers`); defaults to the first available route. */
+  manager?: string;
+}
+
+/**
+ * An agent's pending request to install a CLI, filed through the gateway's
+ * `hypergate__cli_install_request` tool. Approving it starts the install job;
+ * agents never run installs directly.
+ */
+export interface CliInstallRequest {
+  id: string;
+  agentId: string;
+  agentName: string;
+  /** Curated id, or the package/formula name for npm/brew requests. */
+  cliId: string;
+  cliName: string;
+  channel?: CliChannel;
+  package?: string;
+  reason?: string;
+  /** When the agent first asked (retries dedupe into one row and bump attempts). */
+  askedAt: string;
+  attempts: number;
 }
 
 /**

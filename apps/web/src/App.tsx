@@ -16,6 +16,12 @@ import type {
   CliStatus,
   CliCatalogEntry,
   CliCheckResult,
+  CliInstallOption,
+  CliInstallRequest,
+  CliJob,
+  CliJobAction,
+  CliManagerInfo,
+  StartCliJobRequest,
   AuthorizeCapability,
   CredentialGuideInfo,
   CredentialInfo,
@@ -417,14 +423,23 @@ export function App() {
   const refreshCredRequests = useCallback(() => {
     void api.credentialRequests().then((r) => setCredRequests(r.requests)).catch(() => {});
   }, []);
+  // Pending CLI install requests, held here for the same reasons.
+  const [cliRequests, setCliRequests] = useState<CliInstallRequest[]>([]);
+  const refreshCliRequests = useCallback(() => {
+    void api.cliRequests().then((r) => setCliRequests(r.requests)).catch(() => {});
+  }, []);
   useEffect(() => {
     refreshCredRequests();
+    refreshCliRequests();
     // Polled, not pushed: the daemon has no channel to the page, and a request
     // is only interesting on a human timescale. 10s is well inside the window
     // where an agent is still waiting to retry.
-    const t = setInterval(refreshCredRequests, 10_000);
+    const t = setInterval(() => {
+      refreshCredRequests();
+      refreshCliRequests();
+    }, 10_000);
     return () => clearInterval(t);
-  }, [refreshCredRequests]);
+  }, [refreshCredRequests, refreshCliRequests]);
 
   // The OS's answer about proving who is at the keyboard, which decides whether
   // Reveal is offered at all. Fetched once: it cannot change while we run.
@@ -653,6 +668,11 @@ export function App() {
                             {credRequests.length}
                           </span>
                         )}
+                        {section.id === 'cli' && cliRequests.length > 0 && (
+                          <span className="n-badge" title="Agents waiting for a tool to be installed">
+                            {cliRequests.length}
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -800,7 +820,7 @@ export function App() {
                 </section>
 
                 <section id="cli" className="dashboard-section">
-                  <CliSection />
+                  <CliSection token={gateway?.token} requests={cliRequests} onRequestsChange={refreshCliRequests} />
                 </section>
 
                 <section id="credentials" className="dashboard-section">
@@ -4243,20 +4263,39 @@ function AgentEditor({
  * suggestion, so they live behind "Install a tool", where they are an offer
  * rather than a complaint.
  */
-function CliSection() {
+function CliSection({ token, requests, onRequestsChange }: {
+  token?: string;
+  requests: CliInstallRequest[];
+  onRequestsChange: () => void;
+}) {
   const [clis, setClis] = useState<CliStatus[] | null>(null);
   const [open, setOpen] = useState(true);
   const [offering, setOffering] = useState(false);
   const [catalog, setCatalog] = useState<CliCatalogEntry[] | null>(null);
+  const [managers, setManagers] = useState<CliManagerInfo[] | null>(null);
   const [q, setQ] = useState('');
   const [results, setResults] = useState<CliCatalogEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [check, setCheck] = useState<CliCheckResult | null>(null);
   const seq = useRef(0);
 
-  useEffect(() => {
+  const refreshClis = useCallback(() => {
     void api.clis().then(setClis).catch(() => setClis([]));
   }, []);
+  useEffect(() => {
+    refreshClis();
+    void api.cliManagers().then(setManagers).catch(() => setManagers([]));
+  }, [refreshClis]);
+
+  // A finished install/uninstall changes both lists; the catalog only reloads
+  // if it was ever opened.
+  const onJobDone = useCallback(() => {
+    refreshClis();
+    setCatalog((was) => {
+      if (was) void api.cliCatalog().then(setCatalog).catch(() => {});
+      return was;
+    });
+  }, [refreshClis]);
 
   // The lookup: what could I install that answers to this? Two things happen per
   // query and they answer different questions — the catalogs say what the tool
@@ -4304,6 +4343,11 @@ function CliSection() {
   // the honest answer to "have I got this?" for anything at all, catalogued or not.
   const covered = (results ?? []).some((r) => r.command.toLowerCase() === query) || installed.some((c) => c.command.toLowerCase() === query);
   const showAdhoc = !!check?.found && !covered;
+  const entryFor = (id: string): CliCatalogEntry | undefined =>
+    (catalog ?? []).find((e) => e.id === id) ?? (results ?? []).find((e) => e.id === id);
+  const loadCatalog = useCallback(() => {
+    if (!catalog) void api.cliCatalog().then(setCatalog).catch(() => setCatalog([]));
+  }, [catalog]);
 
   return (
     <>
@@ -4316,6 +4360,13 @@ function CliSection() {
       </div>
       {open && (
         <div className="panel">
+          {requests.length > 0 && (
+            <div className="list" style={{ marginBottom: 10 }}>
+              {requests.map((r) => (
+                <CliRequestRow key={r.id} r={r} token={token} onAnswered={onRequestsChange} onJobDone={onJobDone} />
+              ))}
+            </div>
+          )}
           <div className="catalog-search">
             <span className="cs-ic">🔎</span>
             <input
@@ -4332,7 +4383,9 @@ function CliSection() {
             ) : (
               <>
                 {showAdhoc && <CliCheckRow name={q.trim()} result={check} checking={false} />}
-                {filtered.map((c) => <CliRow key={c.id} c={c} />)}
+                {filtered.map((c) => (
+                  <CliRow key={c.id} c={c} token={token} managers={managers} entry={entryFor(c.id)} onOpenManage={loadCatalog} onJobDone={onJobDone} />
+                ))}
                 {!query && filtered.length === 0 && <div className="list-row small muted">No known tools detected on your PATH yet.</div>}
               </>
             )}
@@ -4351,7 +4404,7 @@ function CliSection() {
                     {check && !check.found && <> It isn’t on your PATH either.</>}
                   </div>
                 ) : (
-                  results.map((c) => <CliInstallRow key={c.id} c={c} />)
+                  results.map((c) => <CliInstallRow key={c.id} c={c} token={token} managers={managers} onJobDone={onJobDone} />)
                 )}
               </div>
             </div>
@@ -4369,7 +4422,7 @@ function CliSection() {
               ) : available.length === 0 ? (
                 <div className="list-row small muted">You already have every tool in the curated set.</div>
               ) : (
-                available.map((c) => <CliInstallRow key={c.id} c={c} />)
+                available.map((c) => <CliInstallRow key={c.id} c={c} token={token} managers={managers} onJobDone={onJobDone} />)
               )}
             </div>
           )}
@@ -4382,6 +4435,96 @@ function CliSection() {
 const CLI_CHANNEL_CHIP: Record<string, string> = { curated: 'curated', npm: 'npm', brew: 'Homebrew' };
 
 /**
+ * Run one CLI lifecycle job and follow it to the end. Polls at the update
+ * cadence (400ms) only while a job is live; the returned `job` snapshot drives
+ * the status line and the log pane.
+ */
+function useCliJob(token: string | undefined, onDone?: () => void) {
+  const toast = useToast();
+  const [job, setJob] = useState<CliJob | null>(null);
+  const [starting, setStarting] = useState(false);
+  const doneFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!job || job.status !== 'running') return;
+    let live = true;
+    const t = setInterval(() => {
+      void api.cliJob(job.id).then((j) => { if (live) setJob(j); }).catch(() => {});
+    }, 400);
+    return () => { live = false; clearInterval(t); };
+  }, [job?.id, job?.status]);
+
+  useEffect(() => {
+    if (!job || job.status === 'running' || doneFor.current === job.id) return;
+    doneFor.current = job.id;
+    if (job.status === 'succeeded') toast.show(`${job.name}: ${job.action} finished`, 'success');
+    else if (job.status === 'failed') toast.show(`${job.name}: ${job.action} failed${job.error ? `: ${job.error}` : ''}`, 'error');
+    onDone?.();
+  }, [job, onDone, toast]);
+
+  const start = useCallback(async (body: StartCliJobRequest, name: string) => {
+    if (!token) { toast.show('The daemon is not reachable yet.', 'error'); return; }
+    setStarting(true);
+    try {
+      setJob(await api.startCliJob(body, token));
+    } catch {
+      toast.show(`Could not start the ${body.action} for ${name}. Is another job for it running?`, 'error');
+    } finally {
+      setStarting(false);
+    }
+  }, [token, toast]);
+
+  const kill = useCallback(() => {
+    if (job && token) void api.killCliJob(job.id, token).catch(() => {});
+  }, [job, token]);
+
+  const dismiss = useCallback(() => setJob(null), []);
+  return { job, starting, start, kill, dismiss };
+}
+
+/** The live (or finished) job under a row: status, the exact command, the log, and Stop. */
+function CliJobPane({ job, onKill, onDismiss }: { job: CliJob; onKill: () => void; onDismiss: () => void }) {
+  const running = job.status === 'running';
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div className="row between wrap-gap" style={{ marginBottom: 6 }}>
+        <span className="row" style={{ gap: 8 }}>
+          {running ? (
+            <span className="pill pill-starting"><span className="dot" />{job.action}ing…</span>
+          ) : job.status === 'succeeded' ? (
+            <span className="pill pill-ready"><span className="dot" />done</span>
+          ) : (
+            <span className="pill pill-errored"><span className="dot" />{job.status}</span>
+          )}
+          <code className="mono small">{job.command}</code>
+        </span>
+        <span className="row" style={{ gap: 6 }}>
+          {running && <button className="btn sm btn-warn" onClick={onKill}>Stop</button>}
+          {!running && <button className="btn sm btn-ghost" onClick={onDismiss}>Dismiss</button>}
+        </span>
+      </div>
+      {job.error && !running && <div className="small" style={{ color: 'var(--danger)', marginBottom: 6 }}>{job.error}</div>}
+      {job.lines.length > 0 ? <LogConsole lines={job.lines} /> : running ? <div className="small muted">Waiting for output…</div> : null}
+    </div>
+  );
+}
+
+/** Prefer the manager whose footprint the resolved path shows, else the first found. */
+function guessManager(path: string | undefined, routes: CliInstallOption[], managers: CliManagerInfo[] | null): string | undefined {
+  const p = (path ?? '').toLowerCase();
+  const hints: [string, string][] = [
+    ['homebrew', 'brew'], ['cellar', 'brew'], ['linuxbrew', 'brew'],
+    ['pnpm', 'pnpm'], ['.bun', 'bun'], ['scoop', 'scoop'], ['chocolatey', 'choco'],
+    ['.cargo', 'cargo'], ['pipx', 'pipx'], ['npm', 'npm'],
+  ];
+  for (const [needle, manager] of hints) {
+    if (p.includes(needle) && routes.some((r) => r.manager === manager)) return manager;
+  }
+  const found = new Set((managers ?? []).filter((m) => m.found).map((m) => m.id));
+  return (routes.find((r) => r.manager && found.has(r.manager)) ?? routes[0])?.manager;
+}
+
+/**
  * One tool you could install: what it is, whether it's the one its provider
  * recommends, and the ways to get it on *this* machine.
  *
@@ -4390,13 +4533,24 @@ const CLI_CHANNEL_CHIP: Record<string, string> = { curated: 'curated', npm: 'npm
  * actually obtained, so each gets the control it deserves. A tool with several
  * commands shows them all: `npm install -g` and `winget install` are not the same
  * choice, and choosing for the user is how you end up offering Homebrew on Windows.
+ * Routes Hypergate can run itself (a known package manager, no shell tricks) get
+ * an Install button beside the Copy; script routes stay copy-only on purpose.
  */
-function CliInstallRow({ c }: { c: CliCatalogEntry }) {
+function CliInstallRow({ c, token, managers, onJobDone }: {
+  c: CliCatalogEntry;
+  token?: string;
+  managers: CliManagerInfo[] | null;
+  onJobDone: () => void;
+}) {
   const [copied, copy] = useCopy();
+  const { job, starting, start, kill, dismiss } = useCliJob(token, onJobDone);
   const routes = (c.installs ?? []).filter((option) => !/^https?:\/\//i.test(option.command));
   const download = (c.installs ?? []).find((option) => /^https?:\/\//i.test(option.command));
   // Neither a command nor a link: "Comes with Node.js" is the whole answer.
   const prose = routes.length === 0 && !download ? c.install?.trim() : undefined;
+  const foundManagers = new Set((managers ?? []).filter((m) => m.found).map((m) => m.id));
+  const body: Omit<StartCliJobRequest, 'action' | 'manager'> =
+    c.channel === 'curated' ? { cliId: c.id } : { channel: c.channel, package: c.package ?? c.id };
 
   return (
     <div className="list-row">
@@ -4419,17 +4573,33 @@ function CliInstallRow({ c }: { c: CliCatalogEntry }) {
           {prose && <div className="small muted" style={{ marginTop: 3 }}>{prose}</div>}
           {routes.length > 0 && (
             <div className="cli-installs">
-              {routes.map((option) => (
-                <span key={`${option.label}-${option.command}`} className="cli-install">
-                  <span className="small muted">{option.label}</span>
-                  <code className="mono">{option.command}</code>
-                  <button className="btn sm btn-ghost" onClick={() => copy(`cli-${c.id}-${option.label}`, option.command)}>
-                    {copied === `cli-${c.id}-${option.label}` ? 'Copied!' : 'Copy'}
-                  </button>
-                </span>
-              ))}
+              {routes.map((option) => {
+                const runnable = !!option.manager;
+                const managerHere = !option.manager || foundManagers.has(option.manager);
+                const busy = starting || job?.status === 'running';
+                return (
+                  <span key={`${option.label}-${option.command}`} className="cli-install">
+                    <span className="small muted">{option.label}</span>
+                    <code className="mono">{option.command}</code>
+                    {runnable && !c.installed && (
+                      <button
+                        className="btn sm btn-accent"
+                        disabled={busy || !managerHere}
+                        title={managerHere ? `Run this install in Hypergate` : `${option.label} is not installed on this machine`}
+                        onClick={() => void start({ action: 'install', manager: option.manager, ...body }, c.name)}
+                      >
+                        Install
+                      </button>
+                    )}
+                    <button className="btn sm btn-ghost" onClick={() => copy(`cli-${c.id}-${option.label}`, option.command)}>
+                      {copied === `cli-${c.id}-${option.label}` ? 'Copied!' : 'Copy'}
+                    </button>
+                  </span>
+                );
+              })}
             </div>
           )}
+          {job && <CliJobPane job={job} onKill={kill} onDismiss={dismiss} />}
         </div>
         <div className="row">
           {download && <a className="btn sm" href={download.command} target="_blank" rel="noreferrer">Get it ↗</a>}
@@ -4440,8 +4610,35 @@ function CliInstallRow({ c }: { c: CliCatalogEntry }) {
   );
 }
 
-/** One tool you have. Only ever rendered for a detected CLI. */
-function CliRow({ c }: { c: CliStatus }) {
+/**
+ * One tool you have. Manage opens the lifecycle controls: sign in again (the
+ * vendor's own command), repair (reinstall over the same route), and an armed
+ * uninstall — each showing its exact command with Run and Copy, so the button
+ * is a shortcut rather than a black box. With several install routes the route
+ * choice is explicit, defaulting to the one the resolved path suggests.
+ */
+function CliRow({ c, token, managers, entry, onOpenManage, onJobDone }: {
+  c: CliStatus;
+  token?: string;
+  managers: CliManagerInfo[] | null;
+  entry?: CliCatalogEntry;
+  onOpenManage: () => void;
+  onJobDone: () => void;
+}) {
+  const [copied, copy] = useCopy();
+  const [managing, setManaging] = useState(false);
+  const [manager, setManager] = useState<string | undefined>();
+  const [armed, setArmed] = useState(false);
+  const { job, starting, start, kill, dismiss } = useCliJob(token, onJobDone);
+
+  const routes = (entry?.installs ?? []).filter((o) => o.manager);
+  const chosen = routes.find((o) => o.manager === (manager ?? guessManager(c.path, routes, managers))) ?? routes[0];
+  const busy = starting || job?.status === 'running';
+  const runAction = (action: CliJobAction): void => {
+    void start({ action, cliId: c.id, manager: chosen?.manager }, c.name);
+    setArmed(false);
+  };
+
   return (
     <div className="list-row">
       <div className="row between wrap-gap">
@@ -4455,13 +4652,164 @@ function CliRow({ c }: { c: CliStatus }) {
           </div>
           {c.description && <div className="small muted" style={{ marginTop: 3 }}>{c.description}</div>}
           {c.path && <div className="small muted mono" style={{ marginTop: 3, wordBreak: 'break-all' }}>{c.path}</div>}
+          {managing && (
+            <div style={{ marginTop: 8 }}>
+              {routes.length > 1 && (
+                <div className="row wrap-gap" style={{ gap: 8, marginBottom: 8 }}>
+                  <span className="small muted">via</span>
+                  <span className="seg">
+                    {routes.map((o) => (
+                      <button
+                        key={o.manager}
+                        className={chosen?.manager === o.manager ? 'active' : ''}
+                        onClick={() => setManager(o.manager)}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+              )}
+              {c.auth && (
+                <div className="cli-install" style={{ marginBottom: 6 }}>
+                  <span className="small muted">sign in</span>
+                  <code className="mono">{c.auth.command}</code>
+                  {c.auth.runnable ? (
+                    <button className="btn sm" disabled={busy} onClick={() => runAction('reauth')}>Run</button>
+                  ) : (
+                    c.auth.note && <span className="small muted">{c.auth.note}</span>
+                  )}
+                  <button className="btn sm btn-ghost" onClick={() => copy(`auth-${c.id}`, c.auth!.command)}>
+                    {copied === `auth-${c.id}` ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+              )}
+              {chosen ? (
+                <>
+                  <div className="cli-install" style={{ marginBottom: 6 }}>
+                    <span className="small muted">repair</span>
+                    <code className="mono">{chosen.repair ?? chosen.command}</code>
+                    <button className="btn sm" disabled={busy} onClick={() => runAction('repair')}>Run</button>
+                    <button className="btn sm btn-ghost" onClick={() => copy(`rep-${c.id}`, chosen.repair ?? chosen.command)}>
+                      {copied === `rep-${c.id}` ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  {chosen.uninstall && (
+                    <div className="cli-install">
+                      <span className="small muted">uninstall</span>
+                      <code className="mono">{chosen.uninstall}</code>
+                      {armed ? (
+                        <>
+                          <button className="btn sm btn-danger" disabled={busy} onClick={() => runAction('uninstall')}>Uninstall {c.name}</button>
+                          <button className="btn sm btn-ghost" onClick={() => setArmed(false)}>Cancel</button>
+                        </>
+                      ) : (
+                        <button className="btn sm btn-warn" disabled={busy} onClick={() => setArmed(true)}>Uninstall…</button>
+                      )}
+                      <button className="btn sm btn-ghost" onClick={() => copy(`un-${c.id}`, chosen.uninstall!)}>
+                        {copied === `un-${c.id}` ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="small muted">
+                  {entry ? 'This tool was not installed through a package manager Hypergate can drive; manage it the way it was installed.' : 'Loading the catalog…'}
+                </div>
+              )}
+              {job && <CliJobPane job={job} onKill={kill} onDismiss={dismiss} />}
+            </div>
+          )}
         </div>
-        {c.homepage && (
-          <div className="row"><a className="small muted" href={c.homepage} target="_blank" rel="noreferrer">docs</a></div>
+        <div className="row" style={{ gap: 8 }}>
+          <button
+            className="btn sm"
+            onClick={() => {
+              setManaging((v) => !v);
+              if (!managing) onOpenManage();
+            }}
+          >
+            {managing ? 'Close' : 'Manage'}
+          </button>
+          {c.homepage && <a className="small muted" href={c.homepage} target="_blank" rel="noreferrer">docs</a>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** An agent's pending install request: who wants what, why, and the two answers. */
+function CliRequestRow({ r, token, onAnswered, onJobDone }: {
+  r: CliInstallRequest;
+  token?: string;
+  onAnswered: () => void;
+  onJobDone: () => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState<CliJob | null>(null);
+  const answer = async (verdict: 'approve' | 'deny'): Promise<void> => {
+    if (!token) return;
+    setBusy(true);
+    try {
+      const res = await api.answerCliRequest(r.id, verdict, token);
+      onAnswered();
+      if (res.job) {
+        setJob(res.job);
+        toast.show(`Installing ${r.cliName}…`, 'success');
+      } else if (verdict === 'deny') {
+        toast.show(`Denied ${r.agentName}'s request for ${r.cliName}`);
+      }
+    } catch {
+      toast.show(`Could not ${verdict} the request. Is another job for this tool running?`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="list-row">
+      <div className="row between wrap-gap">
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div className="row wrap-gap" style={{ gap: 8 }}>
+            <span className="pill pill-starting"><span className="dot" />requested</span>
+            <span className="server-name">{r.cliName}</span>
+            {r.channel && <span className="chip chip-accent">{CLI_CHANNEL_CHIP[r.channel] ?? r.channel}</span>}
+            <span className="small muted">asked by {r.agentName}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}</span>
+          </div>
+          {r.reason && <div className="small muted" style={{ marginTop: 3 }}>“{r.reason}”</div>}
+          {job && <CliJobFollower id={job.id} initial={job} onDone={onJobDone} token={token} />}
+        </div>
+        {!job && (
+          <div className="row" style={{ gap: 6 }}>
+            <button className="btn sm btn-accent" disabled={busy || !token} onClick={() => void answer('approve')}>Install & approve</button>
+            <button className="btn sm btn-ghost" disabled={busy || !token} onClick={() => void answer('deny')}>Deny</button>
+          </div>
         )}
       </div>
     </div>
   );
+}
+
+/** Poll a job started elsewhere (an approved request) and render its pane. */
+function CliJobFollower({ id, initial, onDone, token }: { id: string; initial: CliJob; onDone: () => void; token?: string }) {
+  const [job, setJob] = useState<CliJob>(initial);
+  const done = useRef(false);
+  useEffect(() => {
+    if (job.status !== 'running') {
+      if (!done.current) { done.current = true; onDone(); }
+      return;
+    }
+    let live = true;
+    const t = setInterval(() => {
+      void api.cliJob(id).then((j) => { if (live) setJob(j); }).catch(() => {});
+    }, 400);
+    return () => { live = false; clearInterval(t); };
+  }, [id, job.status, onDone]);
+  const kill = (): void => {
+    if (token) void api.killCliJob(id, token).catch(() => {});
+  };
+  return <CliJobPane job={job} onKill={kill} onDismiss={() => {}} />;
 }
 
 /** The ad-hoc "is this command available?" result row (for a command not in the known list). */
