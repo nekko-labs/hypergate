@@ -283,12 +283,32 @@ pub fn apply() -> Result<(), String> {
         }
     }
 
-    // Now get out of the way. A running tray owns the daemon, so asking it to
-    // quit takes both down together; without one, stop the daemon directly.
-    if ask_running_instance_to_quit() {
+    // Now get out of the way. A running tray *usually* owns the daemon, so asking
+    // it to quit takes both down together — but that is an assumption, not a
+    // guarantee, and trusting it silently broke updating.
+    //
+    // A daemon started on its own (autostart at login, or by hand) before the
+    // tray is not the tray's child: it outlives the tray's exit and keeps the API
+    // port. The macOS updater then waits for that port to go quiet, never sees
+    // it, and gives up after 30 seconds with the app bundle untouched — reported
+    // as "Hypergate is still running", which is true and unactionable.
+    //
+    // Seen on 1.12.0: the tray quit on request, a daemon whose parent was launchd
+    // held 127.0.0.1:7777, and every apply failed the same way. Note that
+    // `ask_running_instance_to_quit` could not have caught this: it reports
+    // whether the quit was *delivered*, not whether the daemon died.
+    //
+    // So: deliver the quit, then check, and stop the daemon ourselves if it is
+    // still there. When the tray really does own it, the check clears in well
+    // under the grace period and nothing else happens.
+    let asked = ask_running_instance_to_quit();
+    if asked {
         log("asked the running agent to quit");
-        println!("Updating to v{latest}. Hypergate will restart when it's done.");
-    } else {
+    }
+    if daemon_outlived_quit() {
+        if asked {
+            log("the daemon outlived the agent that was asked to quit; stopping it directly");
+        }
         match api::shutdown() {
             Ok(()) => log("stopped the daemon through its API"),
             Err(e) => log(&format!("could not stop the daemon through its API: {e}")),
@@ -298,6 +318,10 @@ pub fn apply() -> Result<(), String> {
             Ok(false) => log("no daemon pid file to stop"),
             Err(e) => log(&format!("could not stop the daemon by pid: {e}")),
         }
+    }
+    if asked {
+        println!("Updating to v{latest}. Hypergate will restart when it's done.");
+    } else {
         println!("Updating to v{latest}. The daemon will start again when it's done.");
     }
     println!(
@@ -356,7 +380,10 @@ fn spawn_macos_updater(version: &str, sha256: &str, dmg: &Path, app: &Path) -> R
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+/// Whether something is accepting connections on a loopback port.
+///
+/// Pure std, so it is not macOS-only even though the macOS updater was its first
+/// caller: `apply` needs the same question answered on every platform.
 fn port_busy(port: u16) -> bool {
     std::net::TcpStream::connect_timeout(
         &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
@@ -679,6 +706,24 @@ fn ask_running_instance_to_quit() -> bool {
     stream.write_all(b"quit\n").is_ok()
 }
 
+/// Whether the daemon is still holding its API port shortly after a quit.
+///
+/// The grace period exists because a tray that genuinely owns the daemon takes a
+/// moment to bring it down, and stopping a daemon that is already on its way out
+/// is pointless noise in the log. Five seconds is comfortably inside the macOS
+/// updater's own 30-second budget, so intervening here still leaves time for the
+/// port to go quiet before that check runs.
+fn daemon_outlived_quit() -> bool {
+    let port = paths::port();
+    for _ in 0..10 {
+        if !port_busy(port) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    true
+}
+
 /// The files the daemon staged for this version, in the order its manifest gave
 /// (platform shell first, then the daemon package that depends on it).
 ///
@@ -896,6 +941,29 @@ mod tests {
         ] {
             assert!(!safe_version(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_bound_port_reads_as_busy_and_a_released_one_goes_free() {
+        // The whole quit-detection story rests on this: `ask_running_instance_to_quit`
+        // reports that a quit was *delivered*, not that the daemon died, so the
+        // port is the only evidence that it actually went away.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        assert!(port_busy(port), "a bound port must read as busy");
+        drop(listener);
+        // A bounded retry, not a bare assertion: this is an ephemeral port, and
+        // on a busy machine another process can claim it between the drop and the
+        // check. Asserting once made this test fail in a full run and pass alone.
+        // Retrying keeps it about `port_busy` instead of about who won a race.
+        let freed = (0..20).any(|_| {
+            if !port_busy(port) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            false
+        });
+        assert!(freed, "a released port must read as free");
     }
 
     #[cfg(target_os = "macos")]
