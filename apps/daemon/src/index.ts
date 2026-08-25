@@ -20,6 +20,9 @@ import {
   matchAgents,
   REGISTRY,
   searchRegistry,
+  resolveServer,
+  planSetup,
+  serverConfigFromEntry,
   KNOWN_CLIS,
   adviceForCli,
   adviceForServer,
@@ -73,6 +76,7 @@ import { registryConnections } from '@hypergate/shared';
 import { openStore } from './store.ts';
 import { CredentialVault } from './vault.ts';
 import { CredentialRequestStore } from './requests.ts';
+import { ServerInstallRequestStore } from './server-requests.ts';
 import { CliInstallRequestStore } from './cli-requests.ts';
 import { CliJobRunner } from './cli-jobs.ts';
 import * as shell from './shell.ts';
@@ -166,7 +170,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.13.0';
+const VERSION = '1.15.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -1115,9 +1119,11 @@ const cliJobs = new CliJobRunner(() => {
 
 /** Pending agent install requests: same memory-not-file reasoning as requests.ts. */
 const cliInstallRequests = new CliInstallRequestStore();
+const serverInstallRequests = new ServerInstallRequestStore();
 
 /** Where a user goes to answer CLI install requests. Clickable from a terminal. */
 const cliRequestUrl = (): string => `http://localhost:${PORT}/#cli/requests`;
+const serverRequestUrl = (): string => `http://localhost:${PORT}/#servers/requests`;
 
 /** A safe npm package / Homebrew formula name (the same shape cli-search accepts). */
 const SAFE_CLI_PACKAGE = /^[@a-zA-Z0-9._/-]{1,214}$/;
@@ -1285,6 +1291,142 @@ const cliBuiltins = (asker?: { id: string; name: string }): GatewayBuiltinTool[]
         id: row.id,
         url,
         message: `Ask the user to approve installing ${row.cliName} at ${url}. Hypergate will run the install and show them the log; call clis_list afterwards to confirm.`,
+      };
+    },
+  },
+];
+
+/**
+ * A one-line summary of how a resolved server would run, for a person deciding
+ * whether to approve it. The launch command is the honest answer here: a name
+ * and a version say what it claims to be, the command says what will execute.
+ */
+const runSummary = (entry: RegistryEntry): string => {
+  if (entry.runtime === 'remote') return `connect to ${entry.url} (${entry.transport ?? 'http'})`;
+  if (entry.runtime === 'docker') return `docker image ${entry.image}`;
+  return [entry.command, ...(entry.args ?? [])].join(' ');
+};
+
+/** The setup context for this machine: what is on PATH and what is in the vault. */
+const machineSetupContext = async (): Promise<{ installedCommands: string[]; storedCredentials: { envVar: string; id: string }[] }> => ({
+  installedCommands: (await detectClisCached()).filter((c) => c.found).map((c) => c.command),
+  storedCredentials: vault
+    .list()
+    .filter((c) => c.envVar)
+    .map((c) => ({ envVar: c.envVar as string, id: c.id })),
+});
+
+/**
+ * The gateway's own MCP-server tools: any caller may resolve a name and see
+ * what adding it would take; only an *agent* may file a request, and only the
+ * user, in the manager, approves one. Same shape as the CLI and credential
+ * tools, and for the same reason — the master token's owner is the user, who
+ * already has the Add flow and does not need a queue to talk to themselves
+ * through.
+ */
+const serverBuiltins = (asker?: { id: string; name: string }): GatewayBuiltinTool[] => [
+  {
+    name: 'server_resolve',
+    description:
+      'Resolve an MCP server name from the official registry to exactly what would run, pinned to a version, plus what setting it up would take on this machine (runtimes, credentials, sign-ins) and which of those are already satisfied. Read-only: it adds nothing. Use a fully-qualified name like "com.microsoft/azure" — an inexact name comes back with its candidates instead of a guess.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Registry name, ideally fully qualified (e.g. "com.microsoft/azure")' },
+        prerelease: { type: 'boolean', description: 'Allow a prerelease version. Off by default: the registry\'s own "latest" is often a beta.' },
+      },
+      required: ['name'],
+    },
+    call: async (args) => {
+      const name = typeof args.name === 'string' ? args.name.trim() : '';
+      if (!name) throw new Error('Name the server to resolve.');
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30_000);
+      try {
+        const resolved = await resolveServer(name, { signal: ctrl.signal, allowPrerelease: args.prerelease === true });
+        if (!resolved.ok) {
+          return resolved.reason === 'ambiguous'
+            ? { resolved: false, reason: 'ambiguous', candidates: resolved.candidates, message: `"${name}" matches ${resolved.candidates.length} servers. Pick one and resolve it by its full name.` }
+            : { resolved: false, reason: 'not_found', message: `No server in the registry is called "${name}".` };
+        }
+        const entry = { ...resolved.entry, advice: adviceForServer(resolved.entry) };
+        const plan = planSetup(entry, await machineSetupContext());
+        return {
+          resolved: true,
+          name: resolved.name,
+          version: resolved.version,
+          runs: runSummary(entry),
+          alreadyConfigured: servers.some((srv) => srv.id === entry.id),
+          advice: entry.advice,
+          ready: plan.ready,
+          steps: plan.steps.map((step) => ({ kind: step.kind, title: step.title, satisfied: step.satisfied, command: step.command, envVar: step.envVar, url: step.url })),
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  },
+  {
+    name: 'server_install_request',
+    description:
+      'Ask the user to add an MCP server through Hypergate. Pass a registry name and a short reason. Returns a URL to give the user; approving adds the server, starts it, and walks them through anything it still needs (a missing CLI, a credential, a sign-in). Filing adds nothing by itself; call server_resolve again after approval to confirm.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Registry name, ideally fully qualified (e.g. "com.microsoft/azure")' },
+        reason: { type: 'string', description: 'One short line on why the server is needed. Shown to the user.' },
+        prerelease: { type: 'boolean', description: 'Allow a prerelease version. Off by default.' },
+      },
+      required: ['name'],
+    },
+    call: async (args) => {
+      if (!asker) throw new Error('Only a connected agent can request a server. You hold the master token: add it from the manager.');
+      const name = typeof args.name === 'string' ? args.name.trim() : '';
+      if (!name) throw new Error('Name the server to request.');
+      const reason = typeof args.reason === 'string' ? args.reason.slice(0, 200) : undefined;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30_000);
+      let resolved;
+      try {
+        resolved = await resolveServer(name, { signal: ctrl.signal, allowPrerelease: args.prerelease === true });
+      } finally {
+        clearTimeout(timer);
+      }
+      // Resolve before filing: a request the user cannot act on is worse than
+      // an error, and an ambiguous name is a question for the agent, not a
+      // decision to hand the user.
+      if (!resolved.ok) {
+        if (resolved.reason === 'ambiguous')
+          throw new Error(`"${name}" matches ${resolved.candidates.length} servers (${resolved.candidates.slice(0, 5).join(', ')}). Request one by its full name.`);
+        throw new Error(`No server in the registry is called "${name}". Use server_resolve to check the name first.`);
+      }
+      const entry = { ...resolved.entry, advice: adviceForServer(resolved.entry) };
+      if (servers.some((srv) => srv.id === entry.id))
+        return { filed: false, alreadyConfigured: true, message: `${entry.name} is already set up on this machine.` };
+      if (entry.runnable === false)
+        throw new Error(`${entry.name} cannot be run by Hypergate: ${entry.note ?? 'no installable package or endpoint.'}`);
+
+      const plan = planSetup(entry, await machineSetupContext());
+      const row = serverInstallRequests.file({
+        query: name,
+        serverName: resolved.name,
+        entry,
+        version: resolved.version,
+        summary: runSummary(entry),
+        outstanding: plan.outstanding.map((step) => step.title),
+        agentId: asker.id,
+        agentName: asker.name,
+        reason,
+      });
+      const url = serverRequestUrl();
+      return {
+        filed: true,
+        id: row.id,
+        url,
+        runs: row.summary,
+        version: row.version,
+        stillNeeded: row.outstanding,
+        message: `Ask the user to approve adding ${row.displayName} at ${url}. Hypergate will add and start it${row.outstanding.length ? `, then walk them through: ${row.outstanding.join('; ')}` : ''}. Call server_resolve afterwards to confirm.`,
       };
     },
   },
@@ -1518,6 +1660,39 @@ const runOAuth = async (
       msg = `${cfg.name} doesn't register apps automatically, so browser sign-in needs a one-time OAuth app. Set one up in Hypergate (it takes a couple of minutes and uses the callback ${OAUTH_REDIRECT}), or connect with a token instead.`;
     return { authorized: false, error: msg };
   }
+};
+
+/**
+ * Persist a validated server and get it running (or waiting for a sign-in).
+ *
+ * The shared tail of every path that adds a server: the browser's Add flow
+ * and an approved agent request differ entirely in what they trust and how
+ * they validate, and not at all in what they then do. Keeping the effect in
+ * one place is what stops an approved request from quietly skipping the
+ * OAuth kick-off the Add dialog performs.
+ */
+const commitServer = async (cfg: ManagedServerConfig): Promise<ServerStatus> => {
+  const isRemote = cfg.runtime === 'remote';
+  servers.push(cfg);
+  saveConfig(servers);
+
+  // Remote + OAuth: kick off the browser flow. If tokens already exist
+  // (re-add), connect straight away; otherwise return the sign-in URL.
+  if (isRemote && usesOAuth(cfg)) {
+    const result = await runOAuth(cfg);
+    if (result.authorized) {
+      await supervisor.start(cfg);
+      return statusFor(cfg) as ServerStatus;
+    }
+    supervisor.markAuthorizing(cfg);
+    return { ...statusFor(cfg), authUrl: result.authUrl, error: result.error } as ServerStatus;
+  }
+
+  if (isRemote && cfg.auth === 'token' && !storedBearerToken(cfg)) {
+    return supervisor.markAuthorizing(cfg, `Paste a ${cfg.name} access token to connect.`);
+  }
+  if (cfg.enabled) await supervisor.start(cfg);
+  return (statusFor(cfg) ?? { id: cfg.id, state: 'stopped' }) as ServerStatus;
 };
 
 /** Find the managed remote server whose live OAuth flow used this CSRF `state`. */
@@ -1950,7 +2125,7 @@ if (STDIO_MODE) {
         const gateway = createGateway(
           supervisor,
           { name: 'hypergate-gateway', version: VERSION },
-          { caller, allowServer, builtins: [...credentialBuiltins(credScope, asker), ...cliBuiltins(asker)] },
+          { caller, allowServer, builtins: [...credentialBuiltins(credScope, asker), ...cliBuiltins(asker), ...serverBuiltins(asker)] },
         );
         res.on('close', () => {
           void transport.close();
@@ -2012,6 +2187,41 @@ if (STDIO_MODE) {
         clearTimeout(timer);
       }
     }
+    // Resolve one name to one pinned, ready-to-add server, plus everything
+    // standing between it and running. Two outbound calls (the name lookup and
+    // that server's version history), on an explicit request only. This is what
+    // lets an agent or the CLI say "set up com.microsoft/azure" and get back a
+    // concrete plan instead of a catalog page.
+    if (pathname === '/api/registry/resolve' && req.method === 'GET') {
+      const q = url.searchParams.get('q') ?? '';
+      if (!q.trim()) return json(res, 400, { error: 'q required' });
+      const allowPrerelease = url.searchParams.get('prerelease') === '1';
+      const ctrl = new AbortController();
+      // Longer than the 8s the catalog search gets, because this is a different
+      // kind of request: it is an explicit "set this one up", not a keystroke,
+      // and failing it is worse than making it wait. The registry's `?search=`
+      // was measured between 0.9s and 24s for the *same* query, and the fallback
+      // path spends one of those before it even asks for the version history.
+      const timer = setTimeout(() => ctrl.abort(), 30_000);
+      try {
+        const resolved = await resolveServer(q, { signal: ctrl.signal, allowPrerelease });
+        if (!resolved.ok) return json(res, 404, resolved);
+        // What this machine already has, so the plan only asks for what is missing.
+        const installedCommands = (await detectClisCached()).filter((c) => c.found).map((c) => c.command);
+        const storedCredentials = vault
+          .list()
+          .filter((c) => c.envVar)
+          .map((c) => ({ envVar: c.envVar as string, id: c.id }));
+        const entry = { ...resolved.entry, advice: adviceForServer(resolved.entry) };
+        return json(res, 200, { ...resolved, entry, plan: planSetup(entry, { installedCommands, storedCredentials }) });
+      } catch (e) {
+        process.stderr.write(`[registry] resolve failed: ${e instanceof Error ? e.message : String(e)}\n`);
+        return json(res, 502, { error: 'resolve_failed' });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     // Popularity scores for ordering the catalog (recommended set first, then by
     // this). Lazy + cached: served from disk while fresh (24h), otherwise fetched
     // now (npm + GitHub, 8s budget) and cached. Only ever hit when the UI opens
@@ -2136,6 +2346,38 @@ if (STDIO_MODE) {
         return json(res, 202, { request, approved: true, job });
       } catch (e) {
         return json(res, 409, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    // Agent server requests. Reading is open (it names servers, not secrets);
+    // answering is master-only, and approving is what actually adds the server.
+    if (pathname === '/api/server-requests' && req.method === 'GET')
+      return json(res, 200, { requests: serverInstallRequests.list() });
+    const srvReqM = /^\/api\/server-requests\/([^/]+)\/(approve|deny)$/.exec(pathname);
+    if (srvReqM && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const request = serverInstallRequests.get(decodeURIComponent(srvReqM[1]));
+      if (!request) return json(res, 404, { error: 'no such request (it may have expired)' });
+      if (srvReqM[2] === 'deny') {
+        serverInstallRequests.resolve(request.id);
+        return json(res, 200, { request, approved: false });
+      }
+      // The server may have been added by hand between the ask and the answer.
+      if (servers.some((srv) => srv.id === request.entry.id)) {
+        serverInstallRequests.resolve(request.id);
+        return json(res, 200, { request, approved: true, alreadyConfigured: true });
+      }
+      if (request.entry.id === BUILTIN_NS) return json(res, 400, { error: `"${BUILTIN_NS}" is a reserved id` });
+      try {
+        // Adds exactly the entry the user was shown, not a fresh resolve: the
+        // point of storing it was that the approval means *this* version.
+        const status = await commitServer(serverConfigFromEntry(request.entry));
+        // Resolved only once the add succeeded, so a failure leaves the request
+        // answerable rather than silently eaten.
+        serverInstallRequests.resolve(request.id);
+        return json(res, 200, { request, approved: true, status, plan: planSetup(request.entry, await machineSetupContext()) });
+      } catch (e) {
+        return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
       }
     }
 
@@ -2754,6 +2996,7 @@ if (STDIO_MODE) {
       // agent whose token was just revoked.
       credentialRequests.forgetAgent(clientM[1]);
       cliInstallRequests.forgetAgent(clientM[1]);
+      serverInstallRequests.forgetAgent(clientM[1]);
       return json(res, 200, { ok: true });
     }
 
@@ -2793,27 +3036,7 @@ if (STDIO_MODE) {
             secretStore(cfg.id).save(TOKEN_KEY, token.trim());
           }
         }
-        servers.push(cfg);
-        saveConfig(servers);
-
-        // Remote + OAuth: kick off the browser flow. If tokens already exist
-        // (re-add), connect straight away; otherwise return the sign-in URL.
-        if (isRemote && usesOAuth(cfg)) {
-          const result = await runOAuth(cfg);
-          if (result.authorized) {
-            await supervisor.start(cfg);
-            return json(res, 200, statusFor(cfg));
-          }
-          supervisor.markAuthorizing(cfg);
-          return json(res, 200, { ...statusFor(cfg), authUrl: result.authUrl, error: result.error } as ServerStatus);
-        }
-
-        if (isRemote && cfg.auth === 'token' && !storedBearerToken(cfg)) {
-          const error = `Paste a ${cfg.name} access token to connect.`;
-          return json(res, 200, supervisor.markAuthorizing(cfg, error));
-        }
-        if (cfg.enabled) await supervisor.start(cfg);
-        return json(res, 200, statusFor(cfg) ?? { id: cfg.id, state: 'stopped' });
+        return json(res, 200, await commitServer(cfg));
       } catch {
         return json(res, 400, { error: 'invalid_json' });
       }

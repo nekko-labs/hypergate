@@ -13,7 +13,7 @@
       "source": "./plugins/hypergate",
       "displayName": "Hypergate",
       "description": "Every MCP server Hypergate runs on this machine, through one local gateway.",
-      "version": "1.13.0",
+      "version": "1.15.0",
       "author": { "name": "Nekko Labs", "url": "https://hypergate.app" },
       "homepage": "https://hypergate.app",
       "repository": "https://github.com/nekko-labs/hypergate",

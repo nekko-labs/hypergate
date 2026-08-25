@@ -18,6 +18,7 @@ import type {
   CliCheckResult,
   CliInstallOption,
   CliInstallRequest,
+  ServerInstallRequest,
   CliJob,
   CliJobAction,
   CliManagerInfo,
@@ -428,18 +429,25 @@ export function App() {
   const refreshCliRequests = useCallback(() => {
     void api.cliRequests().then((r) => setCliRequests(r.requests)).catch(() => {});
   }, []);
+  // Pending "please add this server" requests, likewise.
+  const [serverRequests, setServerRequests] = useState<ServerInstallRequest[]>([]);
+  const refreshServerRequests = useCallback(() => {
+    void api.serverRequests().then((r) => setServerRequests(r.requests)).catch(() => {});
+  }, []);
   useEffect(() => {
     refreshCredRequests();
     refreshCliRequests();
+    refreshServerRequests();
     // Polled, not pushed: the daemon has no channel to the page, and a request
     // is only interesting on a human timescale. 10s is well inside the window
     // where an agent is still waiting to retry.
     const t = setInterval(() => {
       refreshCredRequests();
       refreshCliRequests();
+      refreshServerRequests();
     }, 10_000);
     return () => clearInterval(t);
-  }, [refreshCredRequests, refreshCliRequests]);
+  }, [refreshCredRequests, refreshCliRequests, refreshServerRequests]);
 
   // The OS's answer about proving who is at the keyboard, which decides whether
   // Reveal is offered at all. Fetched once: it cannot change while we run.
@@ -668,6 +676,11 @@ export function App() {
                             {credRequests.length}
                           </span>
                         )}
+                        {section.id === 'mcp-servers' && serverRequests.length > 0 && (
+                          <span className="n-badge" title="Agents waiting for a server to be added">
+                            {serverRequests.length}
+                          </span>
+                        )}
                         {section.id === 'cli' && cliRequests.length > 0 && (
                           <span className="n-badge" title="Agents waiting for a tool to be installed">
                             {cliRequests.length}
@@ -734,6 +747,21 @@ export function App() {
                       </button>
                     </span>
                   </div>
+
+                  {serverRequests.length > 0 && (
+                    <div className="panel" style={{ marginBottom: 10 }}>
+                      <div className="list">
+                        {serverRequests.map((r) => (
+                          <ServerRequestRow
+                            key={r.id}
+                            r={r}
+                            token={gateway?.token}
+                            onAnswered={() => { refreshServerRequests(); void refresh(); }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {servers === null && !showCatalog ? (
                     <EmptyState glyph="🐈" title="Loading servers…" loading>
@@ -4846,6 +4874,70 @@ function CliRequestRow({ r, token, onAnswered, onJobDone }: {
             <button className="btn sm btn-ghost" disabled={busy || !token} onClick={() => void answer('deny')}>Deny</button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * An agent asking for an MCP server, and the user's answer.
+ *
+ * Shows the *launch command*, not just a name and version: a name says what it
+ * claims to be, the command says what will actually execute on this machine,
+ * and that is the thing being approved. `stillNeeded` is the honest tail —
+ * approving adds and starts the server, but a missing CLI or an unsigned-in
+ * tool is work that remains, and saying so here beats a server that lands in
+ * an errored state with no explanation.
+ */
+function ServerRequestRow({ r, token, onAnswered }: {
+  r: ServerInstallRequest;
+  token?: string;
+  onAnswered: () => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const answer = async (verdict: 'approve' | 'deny'): Promise<void> => {
+    if (!token) return;
+    setBusy(true);
+    try {
+      const res = await api.answerServerRequest(r.id, verdict, token);
+      onAnswered();
+      if (verdict === 'deny') {
+        toast.show(`Denied ${r.agentName}'s request for ${r.displayName}`);
+      } else if (res.alreadyConfigured) {
+        toast.show(`${r.displayName} was already added.`);
+      } else {
+        toast.show(`Added ${r.displayName}${r.outstanding.length ? ' — see what it still needs' : ''}`, 'success');
+      }
+    } catch {
+      toast.show(`Could not ${verdict} the request.`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="list-row">
+      <div className="row between wrap-gap">
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div className="row wrap-gap" style={{ gap: 8 }}>
+            <span className="pill pill-starting"><span className="dot" />requested</span>
+            <span className="server-name">{r.displayName}</span>
+            {r.version && <span className="chip mono">v{r.version}</span>}
+            <span className="small muted">asked by {r.agentName}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}</span>
+          </div>
+          {r.reason && <div className="small muted" style={{ marginTop: 3 }}>“{r.reason}”</div>}
+          <div className="small mono muted" style={{ marginTop: 4, wordBreak: 'break-all' }}>{r.summary}</div>
+          {r.outstanding.length > 0 && (
+            <div className="small" style={{ marginTop: 4, color: 'var(--warning)' }}>
+              Still needs: {r.outstanding.join(' · ')}
+            </div>
+          )}
+        </div>
+        <div className="row" style={{ gap: 6 }}>
+          <button className="btn sm btn-accent" disabled={busy || !token} onClick={() => void answer('approve')}>Add &amp; approve</button>
+          <button className="btn sm btn-ghost" disabled={busy || !token} onClick={() => void answer('deny')}>Deny</button>
+        </div>
       </div>
     </div>
   );
