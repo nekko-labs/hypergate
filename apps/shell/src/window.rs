@@ -360,7 +360,14 @@ impl ManagerWindow {
 
     /// Bring an already-open window back to the front (and back into existence,
     /// when it was hidden by a close).
+    ///
+    /// Un-minimize first: a miniaturized window ignores `makeKeyAndOrderFront:`
+    /// and tao's `set_focus` refuses to touch one, so without this every
+    /// "bring it back" path (the tray's Open manager, the tray double-click,
+    /// the second-launch handoff, the Dock click) was a silent no-op on a
+    /// window the user had minimized.
     pub fn focus(&self) {
+        self.window.set_minimized(false);
         self.window.set_visible(true);
         self.window.set_focus();
     }
