@@ -4277,6 +4277,9 @@ function CliSection({ token, requests, onRequestsChange }: {
   const [results, setResults] = useState<CliCatalogEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [check, setCheck] = useState<CliCheckResult | null>(null);
+  // Bumped when a job finishes, so an open search re-asks and the row that was
+  // just installed (or removed) flips its state instead of showing a stale offer.
+  const [jobTick, setJobTick] = useState(0);
   const seq = useRef(0);
 
   const refreshClis = useCallback(() => {
@@ -4291,6 +4294,7 @@ function CliSection({ token, requests, onRequestsChange }: {
   // if it was ever opened.
   const onJobDone = useCallback(() => {
     refreshClis();
+    setJobTick((t) => t + 1);
     setCatalog((was) => {
       if (was) void api.cliCatalog().then(setCatalog).catch(() => {});
       return was;
@@ -4324,7 +4328,8 @@ function CliSection({ token, requests, onRequestsChange }: {
         .finally(() => { if (mine === seq.current) setSearching(false); });
     }, 350);
     return () => clearTimeout(t);
-  }, [q]);
+    // jobTick: a finished install/uninstall re-asks the same query.
+  }, [q, jobTick]);
 
   // The browse list is the same data the search draws on, so it loads on first
   // open rather than with the page.
@@ -4543,6 +4548,7 @@ function CliInstallRow({ c, token, managers, onJobDone }: {
   onJobDone: () => void;
 }) {
   const [copied, copy] = useCopy();
+  const [armed, setArmed] = useState<string | null>(null);
   const { job, starting, start, kill, dismiss } = useCliJob(token, onJobDone);
   const routes = (c.installs ?? []).filter((option) => !/^https?:\/\//i.test(option.command));
   const download = (c.installs ?? []).find((option) => /^https?:\/\//i.test(option.command));
@@ -4590,6 +4596,38 @@ function CliInstallRow({ c, token, managers, onJobDone }: {
                       >
                         Install
                       </button>
+                    )}
+                    {runnable && c.installed && managerHere && (
+                      <>
+                        <button
+                          className="btn sm"
+                          disabled={busy}
+                          title="Reinstall over the same route"
+                          onClick={() => void start({ action: 'repair', manager: option.manager, ...body }, c.name)}
+                        >
+                          Repair
+                        </button>
+                        {option.uninstall &&
+                          (armed === option.label ? (
+                            <>
+                              <button
+                                className="btn sm btn-danger"
+                                disabled={busy}
+                                onClick={() => {
+                                  setArmed(null);
+                                  void start({ action: 'uninstall', manager: option.manager, ...body }, c.name);
+                                }}
+                              >
+                                Uninstall {c.name}
+                              </button>
+                              <button className="btn sm btn-ghost" onClick={() => setArmed(null)}>Cancel</button>
+                            </>
+                          ) : (
+                            <button className="btn sm btn-warn" disabled={busy} onClick={() => setArmed(option.label)}>
+                              Uninstall…
+                            </button>
+                          ))}
+                      </>
                     )}
                     <button className="btn sm btn-ghost" onClick={() => copy(`cli-${c.id}-${option.label}`, option.command)}>
                       {copied === `cli-${c.id}-${option.label}` ? 'Copied!' : 'Copy'}

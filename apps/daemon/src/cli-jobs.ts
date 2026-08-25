@@ -61,7 +61,7 @@ export class CliJobRunner {
 
   /**
    * Spawn one lifecycle command. Throws when a job for this tool is already
-   * running — the caller turns that into a 409.
+   * running: the caller turns that into a 409.
    */
   start(opts: { cliId: string; name: string; action: CliJobAction; argv: string[]; command: string }): CliJob {
     if (this.running(opts.cliId)) throw new Error(`a job for ${opts.cliId} is already running`);
