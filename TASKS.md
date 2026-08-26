@@ -657,6 +657,20 @@ token via hypergate'"*.
   the OS's own explanation carried through, no grant written to the agent, the request left pending
   so it can be retried, and the agent still refused the value on a subsequent
   `credential_env`. Seven assertions, all green. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **The lowercase "hypergate" needed no fix, and the first diagnosis of it was wrong.** The
+  theory was that macOS shows the process name because nothing in the bundle matches
+  `CFBundleExecutable` (`HypergateApp`, while the helper that calls LocalAuthentication is
+  `hypergate`), and that fixing it meant changing the bundle's main executable, which
+  `build:installers` cannot verify on this machine (see the SEA note in Epic 59). Measured instead
+  of assumed, with a Swift probe printing what CoreFoundation resolves as the main bundle, which is
+  what LocalAuthentication names the prompt from: **both** layouts resolve it and both would show
+  "Hypergate", because resolution follows the executable's *path* rather than `CFBundleExecutable`.
+  The proposed change would have altered nothing while carrying real packaging risk. The lowercase
+  name came from the same place the stray prompt did: the smoke daemon resolving the unbundled dev
+  build at `apps/shell/target/release/hypergate`. An installed app already reads "Hypergate", its
+  daemon running with `HYPERGATE_SHELL_BIN=/Applications/Hypergate.app/Contents/MacOS/hypergate`.
+  Genuinely unbundled and left alone: an npm install, where the binary sits on `PATH` with no
+  `.app` around it, which is not worth a bundle to satisfy a dialog string. · Added: 2026-08-26 · Done: 2026-08-26
 - [x] **A process lesson worth keeping**: the script that was supposed to add this very epic
   anchored on "Epic 60", which did not exist on the branch yet, and printed "TASKS updated"
   regardless. The edit silently did nothing and was only caught during a later rebase. A patch
