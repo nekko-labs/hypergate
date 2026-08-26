@@ -623,6 +623,44 @@ Started as listing paperwork and turned up a real defect on the way: the bar the
 - [x] **`build:mcpb` now finds npm when Homebrew installed node**: the same defect `72a9232` fixed in `build-npm.mjs` and `build-standalone.mjs` lived in a third copy of `npmCli()` here, and that commit never reached `main`, so the bundle could not be built on the dev Mac at all (`could not find npm-cli.js near /opt/homebrew/Cellar/node/...`). `npm_execpath` is checked first, with the Homebrew prefix path as a fallback for a direct `node scripts/...` run. · Added: 2026-08-26 · Done: 2026-08-26
 - [x] **Verified**: 319 core + 94 daemon tests pass (2 new gateway assertions: a proxied tool's title and all four hints crossing the hop via a second fixture tool registered with `registerTool`, and a builtin's own title and hints reaching the client), `version:check` agrees across all eight files at 1.18.0, the HTTP smoke is green, `build:mcpb -- --self-signed` ends with the signature block present, and `mcpb validate` passes the manifest schema with the 512x512 icon accepted. · Added: 2026-08-26 · Done: 2026-08-26
 
+## Epic 62: a release build that refuses the wrong Node (v1.22.0)
+
+Philip, on being told installers cannot be built on his machine: *"is there a better approach then?
+we shouldn't rely on an old version of node"*. He was right, and the honest answer turned out to be
+that the diagnosis behind that sentence was incomplete.
+
+- [x] **It was never about the Node version.** `process.config.variables.single_executable_application`
+  is `false` on this machine, and Homebrew's formula says why in a comment:
+  `--disable-single-executable-application`, because SEA is incompatible with their `--shared`
+  build (nodejs/node#63126). No Homebrew Node of any version will ever work, so upgrading is not a
+  remedy and neither is downgrading. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **The more important half: that Node was never shippable anyway.** `seaBinary` copies
+  `process.execPath` and injects the blob into it, so the build Node *is* the shipped runtime.
+  `otool -L` shows Homebrew's Node linking 22 dylibs under `/opt/homebrew/opt/...`, none of which a
+  user has. The SEA failure was preventing a broken artifact rather than causing one, which reframes
+  the whole issue: the fix is an official Node, at any current version, not an old one. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **Guard both roles, because they are different requirements on possibly different binaries.**
+  The *generator* (`process.execPath`) needs SEA compiled in; the *base* (`--node`, defaulting to
+  `process.execPath`) is what ships and must be self-contained. Checking only the first would let a
+  shared-build Node *with* SEA enabled sail through and silently ship an installer that works on one
+  machine. · [spec](SPEC.md#312-distribution-shipped) · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **Recover rather than just complain**: `HYPERGATE_BUILD_NODE`, then fnm/nvm/volta/asdf trees
+  (newest version first) and `/usr/local/bin/node`, re-running the script with the first Node that
+  passes both checks and passing the original args through, guarded against recursion by
+  `HYPERGATE_NODE_CHECKED`. With nothing usable it exits 1 with the cause and the remedy, printed
+  rather than thrown: a machine-configuration problem with a known fix is only buried by a stack
+  trace through the build script. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **`foreignLibs` parses the linker's own columns**, not anything path-shaped in the output. The
+  first cut scraped `/`-prefixed tokens and turned `@rpath/libnode.147.dylib` into
+  `/libnode.147.dylib`, which reads like a system path and is not one. Now `otool`'s
+  `<name> (compatibility ...)` column and `ldd`'s `=> <path>`. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **Verified every branch on this machine**, including the ones with no real Node to test
+  against: both detectors against Homebrew's Node (22 foreign libs, SEA false) *and* against
+  `/bin/ls` and `/usr/bin/curl` as controls that must look self-contained (0 each, so no false
+  positives); discovery, re-exec, argument passthrough and the recursion guard against a stand-in
+  Node laid out the way nvm does; the `HYPERGATE_BUILD_NODE` override; and an unusable override
+  failing exactly once rather than looping. Exit code 1, no stack trace. · Added: 2026-08-26 · Done: 2026-08-26
+
 ## Epic 61: a prompt that says who is actually asking (v1.21.0)
 
 Philip, after a stray Touch ID prompt: *"it says 'hypergate is trying to reveal smoke token'. can we
