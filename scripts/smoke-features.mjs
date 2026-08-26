@@ -29,7 +29,16 @@ const boot = async () => {
     // HYPERGATE_NO_KEYCHAIN: a smoke daemon has no business writing scratch
     // secrets into the developer's real OS keychain; the file fallback keeps
     // everything inside the temp data dir it is about to delete.
-    env: { ...process.env, HYPERGATE_DIR: DIR, PORT: String(PORT), HYPERGATE_NO_KEYCHAIN: '1' },
+    // HYPERGATE_NO_AUTHORIZE, for the same reason as NO_KEYCHAIN: on a dev Mac
+    // the daemon finds the built shell binary and would raise a real Touch ID
+    // prompt, then wait two minutes for an answer nobody is there to give.
+    env: {
+      ...process.env,
+      HYPERGATE_DIR: DIR,
+      PORT: String(PORT),
+      HYPERGATE_NO_KEYCHAIN: '1',
+      HYPERGATE_NO_AUTHORIZE: '1',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   d.stderr.on('data', (x) => process.stderr.write(x));
@@ -479,6 +488,12 @@ const approved = await (await fetch(`${BASE}/api/credential-requests/${reAskedId
   method: 'POST', headers: credHeaders,
 })).json();
 if (!approved.ok || approved.granted !== true) fail(`approve should grant: ${JSON.stringify(approved)}`);
+// Approving asks the OS to confirm a person is present. This daemon cannot ask,
+// and "cannot ask" must not mean "cannot grant": otherwise no machine without
+// Touch ID or polkit could ever hand an agent a credential. It says so in the
+// response rather than implying somebody confirmed.
+if (approved.consent !== 'unavailable')
+  fail(`a grant with no prompt available should report consent unavailable: ${JSON.stringify(approved)}`);
 const afterApprove = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_env', arguments: { id: cred.id } });
 if (JSON.parse(afterApprove.body?.result?.content?.[0]?.text ?? '{}').env?.SMOKE_TOKEN !== SECRET_VALUE)
   fail(`the agent should be able to fetch after approval: ${JSON.stringify(afterApprove.body)}`);
@@ -507,8 +522,10 @@ if (!instructions.includes('clis_list') || !instructions.includes('cli_install_r
   fail('initialize should carry instructions naming the CLI tools');
 ok('the gateway advertises the vault in its MCP instructions');
 
-// The reveal door. No consent prompt is available in CI, and the smoke daemon
-// has no shell binary, so the honest outcome is a refusal — never the value.
+// The reveal door. This daemon runs with HYPERGATE_NO_AUTHORIZE, so consent is
+// reported unavailable and the honest outcome is a refusal, never the value.
+// It is not enough to assume no shell binary is present: on a dev machine
+// `locate()` finds apps/shell/target/release/hypergate and would prompt.
 const revealNoToken = await fetch(`${BASE}/api/credentials/${cred.id}/reveal`, { method: 'POST' });
 if (revealNoToken.status !== 401) fail(`reveal without the master token should 401, got ${revealNoToken.status}`);
 const revealForeign = await fetch(`${BASE}/api/credentials/${cred.id}/reveal`, {

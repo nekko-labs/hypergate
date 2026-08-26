@@ -623,6 +623,59 @@ Started as listing paperwork and turned up a real defect on the way: the bar the
 - [x] **`build:mcpb` now finds npm when Homebrew installed node**: the same defect `72a9232` fixed in `build-npm.mjs` and `build-standalone.mjs` lived in a third copy of `npmCli()` here, and that commit never reached `main`, so the bundle could not be built on the dev Mac at all (`could not find npm-cli.js near /opt/homebrew/Cellar/node/...`). `npm_execpath` is checked first, with the Homebrew prefix path as a fallback for a direct `node scripts/...` run. · Added: 2026-08-26 · Done: 2026-08-26
 - [x] **Verified**: 319 core + 94 daemon tests pass (2 new gateway assertions: a proxied tool's title and all four hints crossing the hop via a second fixture tool registered with `registerTool`, and a builtin's own title and hints reaching the client), `version:check` agrees across all eight files at 1.18.0, the HTTP smoke is green, `build:mcpb -- --self-signed` ends with the signature block present, and `mcpb validate` passes the manifest schema with the 512x512 icon accepted. · Added: 2026-08-26 · Done: 2026-08-26
 
+## Epic 61: a prompt that says who is actually asking (v1.21.0)
+
+Philip, after a stray Touch ID prompt: *"it says 'hypergate is trying to reveal smoke token'. can we
+update it to refer to the app calling hypergate instead? like 'Claude code wants to access smoke
+token via hypergate'"*.
+
+- [x] **The prompt he saw was ours, from a test.** `npm run smoke:features` exercises the reveal
+  door against a credential it invents called `smoke-token`. Worth stating plainly: nothing was
+  trying to read his keys. The suite now runs with `HYPERGATE_NO_AUTHORIZE=1` so it cannot raise a
+  real prompt, and the stale comment claiming "the smoke daemon has no shell binary" was corrected:
+  on a dev machine `locate()` finds `apps/shell/target/release/hypergate`, which is exactly how a
+  test came to prompt a human. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **The requested wording could not be truthful on the door he saw it on.** Reveal requires the
+  master token *and* a same-origin request, and its only caller in the tree is the manager UI's own
+  `api.ts`. No CLI command reaches it and no agent can, so the requester is always the person
+  clicking Reveal; naming a third-party app there would be a sentence Hypergate could never honestly
+  say. Reported rather than implemented, and the real home for his phrasing identified: the
+  credential-request door, where an agent genuinely is the one asking. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **OS consent on approving an agent's request, naming the agent.** Verified by capturing the
+  string handed to the prompt: `grant Claude Code access to the credential "GITHUB_TOKEN"`, which
+  macOS renders after its own mandatory `"<app>" is trying to` template. Names are sanitised on the
+  way in, with a test that a hostile agent name cannot rewrite the sentence around it. · [spec](SPEC.md#39-the-credential-vault-shipped) · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **Unavailable is not refusal, and that distinction is the whole design.** Reveal fails closed
+  because the cost is "you cannot see a value". Granting cannot: failing closed on a machine with no
+  Touch ID or polkit would mean no agent could ever be handed a credential there. So `denied` and
+  `error` refuse with 403, `unavailable` proceeds on the pre-existing bar and reports itself, and
+  the UI says "this machine cannot ask for confirmation" instead of implying a person approved.
+  `resolveCredentialRequest` left the throwing `j()` helper for the same reason reveal did: a
+  refusal is a result, not a transport error. · [spec](SPEC.md#39-the-credential-vault-shipped) · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **The denial path proved end to end without a human tapping anything**, using a stub shell
+  binary that exits 1 (authorize.rs's contract for "the person said no"): 403, `consent: "denied"`,
+  the OS's own explanation carried through, no grant written to the agent, the request left pending
+  so it can be retried, and the agent still refused the value on a subsequent
+  `credential_env`. Seven assertions, all green. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **The lowercase "hypergate" needed no fix, and the first diagnosis of it was wrong.** The
+  theory was that macOS shows the process name because nothing in the bundle matches
+  `CFBundleExecutable` (`HypergateApp`, while the helper that calls LocalAuthentication is
+  `hypergate`), and that fixing it meant changing the bundle's main executable, which
+  `build:installers` cannot verify on this machine (see the SEA note in Epic 59). Measured instead
+  of assumed, with a Swift probe printing what CoreFoundation resolves as the main bundle, which is
+  what LocalAuthentication names the prompt from: **both** layouts resolve it and both would show
+  "Hypergate", because resolution follows the executable's *path* rather than `CFBundleExecutable`.
+  The proposed change would have altered nothing while carrying real packaging risk. The lowercase
+  name came from the same place the stray prompt did: the smoke daemon resolving the unbundled dev
+  build at `apps/shell/target/release/hypergate`. An installed app already reads "Hypergate", its
+  daemon running with `HYPERGATE_SHELL_BIN=/Applications/Hypergate.app/Contents/MacOS/hypergate`.
+  Genuinely unbundled and left alone: an npm install, where the binary sits on `PATH` with no
+  `.app` around it, which is not worth a bundle to satisfy a dialog string. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **A process lesson worth keeping**: the script that was supposed to add this very epic
+  anchored on "Epic 60", which did not exist on the branch yet, and printed "TASKS updated"
+  regardless. The edit silently did nothing and was only caught during a later rebase. A patch
+  script that cannot find its anchor must fail loudly rather than report success. · Added: 2026-08-26 · Done: 2026-08-26
+
 ## Epic 60: the flaky stdio assertion was a real race (v1.20.0)
 
 Philip: *"I noticed the ci job is failing"*. One job of seven, `daemon + core (node 22)`, on the

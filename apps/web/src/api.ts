@@ -139,11 +139,25 @@ export const api = {
   // plain GET (a request names no secret); answering one is a grant, so it
   // carries the master token like every other vault mutation.
   credentialRequests: () => j<CredentialRequestsResponse>('/api/credential-requests'),
-  resolveCredentialRequest: (id: string, approve: boolean, token: string) =>
-    j<ResolveCredentialRequestResponse>(
-      `/api/credential-requests/${encodeURIComponent(id)}/${approve ? 'approve' : 'deny'}`,
-      { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
-    ),
+  // Not routed through `j`, for the same reason the reveal door is not: since
+  // approving asks the OS to confirm a person is present, a refusal at that
+  // prompt is a *result* rather than a transport error, and the body carries
+  // whether the user said no or the machine could not ask at all.
+  resolveCredentialRequest: async (
+    id: string,
+    approve: boolean,
+    token: string,
+  ): Promise<ResolveCredentialRequestResponse> => {
+    const res = await fetch(`${BASE}/api/credential-requests/${encodeURIComponent(id)}/${approve ? 'approve' : 'deny'}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    try {
+      return (await res.json()) as ResolveCredentialRequestResponse;
+    } catch {
+      return { ok: false, granted: false, consent: 'error', detail: `HTTP ${res.status}` };
+    }
+  },
   /**
    * The reveal door. Deliberately not routed through `j`: a refusal is a
    * *result* here, not an error, and its body carries the difference between

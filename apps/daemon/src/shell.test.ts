@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { verdictFromExit } from './shell.ts';
+import { consentSafeName, grantReason, revealReason, verdictFromExit } from './shell.ts';
 
 /**
  * The reveal door's exit-code contract, shared with `apps/shell/src/authorize.rs`.
@@ -73,5 +73,32 @@ describe('verdictFromExit', () => {
   it('trims stderr and drops it when empty', () => {
     expect(verdictFromExit(1, '   \n  ').detail).toBeUndefined();
     expect(verdictFromExit(1, '  boom \n').detail).toBe('boom');
+  });
+});
+
+describe('OS consent wording', () => {
+  it('names the agent on the grant door, and the credential on both', () => {
+    // macOS renders `"<app>" is trying to <reason>.`, so these complete that
+    // sentence rather than standing alone.
+    expect(grantReason('Claude Code', 'GITHUB_TOKEN')).toBe('grant Claude Code access to the credential "GITHUB_TOKEN"');
+    expect(revealReason('smoke-token')).toBe('reveal the value of "smoke-token"');
+  });
+
+  it('treats names as text rather than as copy it can trust', () => {
+    // A smuggled newline could make part of a name look like a second sentence
+    // the OS itself wrote, which is the one thing a consent dialog must not allow.
+    expect(consentSafeName('Claude' + String.fromCharCode(10) + 'Code')).toBe('Claude Code');
+    expect(consentSafeName('  spaced   out  ')).toBe('spaced out');
+    expect(consentSafeName('')).toBe('an unnamed item');
+    expect(consentSafeName('x'.repeat(80))).toHaveLength(48);
+    expect(consentSafeName('x'.repeat(80)).endsWith('…')).toBe(true);
+  });
+
+  it('keeps a hostile agent name from rewriting the sentence around it', () => {
+    const hostile = 'Claude Code" and also everything else in the vault "';
+    const reason = grantReason(hostile, 'GITHUB_TOKEN');
+    // It still reads as one grant, of one named credential.
+    expect(reason.endsWith('access to the credential "GITHUB_TOKEN"')).toBe(true);
+    expect(reason).not.toContain(String.fromCharCode(10));
   });
 });

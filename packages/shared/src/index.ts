@@ -926,6 +926,18 @@ export interface ResolveCredentialRequestResponse {
   ok: boolean;
   /** True when the grant was actually flipped on (approve only). */
   granted: boolean;
+  /**
+   * What the OS consent prompt said, on approve.
+   *
+   * `approved` a person proved they were at the keyboard; `unavailable` this
+   * machine cannot ask (no Touch ID, no polkit, or a shell binary predating
+   * `authorize`) and the grant fell back to master token + same-origin, which
+   * is worth showing rather than implying someone confirmed; `denied`/`error`
+   * come with a 403 and no grant. Absent on deny, where nothing is handed out.
+   */
+  consent?: 'approved' | 'unavailable' | 'denied' | 'error';
+  /** The OS's own explanation, when it gave one. */
+  detail?: string;
 }
 
 /**
