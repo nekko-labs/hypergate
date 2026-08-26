@@ -623,6 +623,47 @@ Started as listing paperwork and turned up a real defect on the way: the bar the
 - [x] **`build:mcpb` now finds npm when Homebrew installed node**: the same defect `72a9232` fixed in `build-npm.mjs` and `build-standalone.mjs` lived in a third copy of `npmCli()` here, and that commit never reached `main`, so the bundle could not be built on the dev Mac at all (`could not find npm-cli.js near /opt/homebrew/Cellar/node/...`). `npm_execpath` is checked first, with the Homebrew prefix path as a fallback for a direct `node scripts/...` run. · Added: 2026-08-26 · Done: 2026-08-26
 - [x] **Verified**: 319 core + 94 daemon tests pass (2 new gateway assertions: a proxied tool's title and all four hints crossing the hop via a second fixture tool registered with `registerTool`, and a builtin's own title and hints reaching the client), `version:check` agrees across all eight files at 1.18.0, the HTTP smoke is green, `build:mcpb -- --self-signed` ends with the signature block present, and `mcpb validate` passes the manifest schema with the 512x512 icon accepted. · Added: 2026-08-26 · Done: 2026-08-26
 
+## Epic 59: the daemon the OS starts could not see the machine (v1.19.0)
+
+Philip, after v1.18.0: *"I don't see the new cli changes to include brew and such"*, and separately
+that Login Items showed **Nekko Labs LLC** with a missing icon.
+
+- [x] **The ranking was right; its input was not.** His daemon picked the `curl` script for Claude
+  Code rather than Homebrew. `ps eww` on the running daemon showed `PATH=/usr/bin:/bin:/usr/sbin:/sbin`,
+  the stub launchd hands a GUI process: `brew` genuinely did not exist to it, so `rankInstall`
+  correctly sorted it below a script whose `curl` lives in `/usr/bin`. Pre-existing since
+  `resolveOnPath` has always read `process.env.PATH`; v1.17.0 only changed *how* it was wrong.
+  Under v1.16.0 the same row offered `npm install -g …` and clicking Install would have failed,
+  npm being equally invisible. · [spec](SPEC.md#33-catalog--registry-shipped) · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **The cosmetic symptom hid a functional one.** `hypergate cli ls` against his live daemon
+  reported **1 of 23** (only `git`, in `/usr/bin`). Same value feeds `hypergate__clis_list`, so every
+  connected agent was being told the machine had no node, npm or docker. Worse: `baseEnv()` in
+  core's runtime.ts copies `process.env.PATH` into every stdio child, so no `npx`/`uvx` server could
+  spawn. Not yet hit only because all four of his servers are `remote`. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **Fix: ask the login shell, once, when the PATH looks like a stub** (`login-path.ts`). `-i`
+  *and* `-l` because people put PATH edits in `.zshrc` and in `.zprofile` and neither flag sources
+  both. Output is sentinel-delimited (`__hypergate_path_start__…`) because an interactive shell
+  prints banners and nvm notices around the answer. Bounded at 3s with a SIGKILL and a second guard
+  timer, never throwing. Falls back to well-known install dirs **that exist** (absent directories
+  slow every lookup in every child for nothing). A shell that only echoes the stub back is rejected.
+  Windows is skipped entirely: GUI processes there get the real PATH from the registry. · [spec](SPEC.md#33-catalog--registry-shipped) · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **Applied once, at boot, to `process.env.PATH`**, which fixes detection, install jobs and
+  server spawning together rather than in three places. The memos are cleared with it, since
+  anything already cached was answered against the stub. The HTTP server does not wait on the
+  repair; `startEnabled()` does. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **Login item identity**: the LaunchAgent carried no `AssociatedBundleIdentifiers`, so macOS
+  attributed it to the signing identity (`Developer ID Application: Nekko Labs LLC (3HM5598S99)`,
+  exactly the string on screen) with a generic icon. Verified the mechanism against apps on the
+  machine that display correctly: iStat Menus points that key at its *main app's* bundle id while
+  its `Program` is a helper elsewhere. `enable()` now also unloads before loading, with plain
+  `unload` rather than `unload -w` so a failed reload cannot leave autostart disabled after the user
+  asked to enable it. · [spec](SPEC.md#38-desktop-shell--cli-shipped) · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **Verified under the real failure conditions**, not just in unit tests: a daemon started with
+  `env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin` went from **1 of 23** detected to **11 of 23**, and
+  Claude Code from the `curl` script to `brew install --cask claude-code`. Terminal launch is
+  untouched (no repair logged, no subprocess) and boot-to-healthy is 240ms either way. 319 core +
+  106 daemon tests (12 new), 65 Rust unit tests (4 new), fmt and clippy clean. · Added: 2026-08-26 · Done: 2026-08-26
+
 ## Epic 58: system package managers first, and scripts that run (v1.17.0)
 
 Philip: *"for the cli installations, we should prioritize system package managers like brew, wget, etc."*

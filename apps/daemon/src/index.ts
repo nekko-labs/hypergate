@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { resolveUserPath } from './login-path.ts';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -173,7 +174,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.18.0';
+const VERSION = '1.19.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -1903,11 +1904,38 @@ if (STDIO_MODE) {
   let clients = loadClients();
   const persistClients = debounce(() => saveClients(clients), 1500);
 
+  // Repair PATH before anything reads it.
+  //
+  // Started by launchd (the macOS login item) or a desktop session, this process
+  // inherits a stub `PATH` with no Homebrew, nvm, cargo or bun on it, and the
+  // same value answers three questions: which CLIs exist, which install route
+  // can run, and what every stdio server we spawn inherits (core's `baseEnv`
+  // copies it). On one Mac that meant 1 of 23 CLIs detected and no `npx` for
+  // any managed server. See login-path.ts. Costs nothing when the daemon was
+  // started from a terminal, because then there is nothing to repair.
+  const pathRepaired = resolveUserPath()
+    .then(({ path, source }) => {
+      if (source === 'inherited') return;
+      process.env.PATH = path;
+      // Anything already answered was answered against the stub.
+      cliMemo = undefined;
+      launcherMemo = undefined;
+      process.stderr.write(
+        `[boot] PATH looked like an OS stub; repaired from ${source} (${path.split(delimiter).filter(Boolean).length} entries)\n`,
+      );
+    })
+    .catch(() => {
+      /* never block boot on this: a stub PATH still runs, just knowing less */
+    });
+
   // Start managed servers in the background while the human-facing supervisor
   // becomes available immediately. The UI must show servers transitioning to
-  // running instead of withholding itself until every server is ready.
+  // running instead of withholding itself until every server is ready. Servers
+  // wait for the PATH repair, since a stdio child that cannot find `npx` fails
+  // to start at all and would only be retried by hand.
   let bootComplete = false;
-  const booted = startEnabled()
+  const booted = pathRepaired
+    .then(() => startEnabled())
     .then(() => {
       bootComplete = true;
     })
