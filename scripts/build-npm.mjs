@@ -47,6 +47,9 @@ const option = (name) => {
 };
 
 const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+// The MCP registry refuses a package whose `mcpName` does not match the `name`
+// in server.json, so it is read from there rather than written twice.
+const mcpName = JSON.parse(readFileSync(join(ROOT, 'server.json'), 'utf8')).name;
 const run = (cmd, cmdArgs, cwd = ROOT) => execFileSync(cmd, cmdArgs, { cwd, stdio: 'inherit' });
 
 /** Run a Node CLI by its script, never via a `.cmd` shim: spawning one needs
@@ -122,6 +125,8 @@ async function buildMain() {
       {
         name: PKG,
         version,
+        // Ties this package to its MCP registry entry (io.github.nekko-labs/hypergate).
+        mcpName,
         description:
           'Hypergate: local-first runtime and manager for MCP servers. Run servers securely, supervise them, and expose one gateway endpoint for any agent harness.',
         keywords: ['mcp', 'model-context-protocol', 'gateway', 'ai', 'agents', 'claude', 'cursor', 'toolhive'],

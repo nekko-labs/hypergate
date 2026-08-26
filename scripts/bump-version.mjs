@@ -27,6 +27,9 @@ const SITES = [
   { file: 'apps/shell/Cargo.lock', find: /(name = "hypergate-shell"\nversion = ")([^"]+)(")/ },
   { file: '.claude-plugin/marketplace.json', find: /("version":\s*")([^"]+)(")/ },
   { file: 'plugins/hypergate/.claude-plugin/plugin.json', find: /("version":\s*")([^"]+)(")/ },
+  // Two occurrences here — the server's own version and the npm package's — and
+  // the registry rejects a submission where they disagree, so `all` moves both.
+  { file: 'server.json', find: /("version":\s*")([^"]+)(")/g, all: true },
 ];
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
@@ -48,21 +51,23 @@ if (!SEMVER.test(next)) {
 }
 
 const stale = [];
-for (const { file, find } of SITES) {
+for (const { file, find, all } of SITES) {
   const before = read(file);
-  const match = before.match(find);
-  if (!match) throw new Error(`${file}: no version to replace (the pattern moved)`);
-  const found = match[2];
+  // `all` sites carry the version more than once; a global regex also makes
+  // String.replace rewrite every occurrence rather than just the first.
+  const matches = all ? [...before.matchAll(find)] : [before.match(find)].filter(Boolean);
+  if (!matches.length) throw new Error(`${file}: no version to replace (the pattern moved)`);
+  const found = matches.map((m) => m[2]);
   if (arg === '--check') {
-    if (found !== current) stale.push(`${file}: ${found} (root says ${current})`);
+    for (const v of new Set(found)) if (v !== current) stale.push(`${file}: ${v} (root says ${current})`);
     continue;
   }
-  if (found === next) {
+  if (found.every((v) => v === next)) {
     console.log(`  = ${file} already ${next}`);
     continue;
   }
   writeFileSync(join(ROOT, file), before.replace(find, `$1${next}$3`));
-  console.log(`  ${found} -> ${next}  ${file}`);
+  console.log(`  ${found.join(', ')} -> ${next}  ${file}`);
 }
 
 if (arg === '--check') {

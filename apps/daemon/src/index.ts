@@ -173,7 +173,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.17.0';
+const VERSION = '1.18.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -1036,8 +1036,12 @@ const credentialBuiltins = (
   return [
     {
       name: 'credentials_list',
+      title: 'List vault credentials',
       description:
         'List the vault credentials on this machine: metadata only (id, name, env var), never values. Rows with "allowed": true can be fetched with credential_env; rows with "allowed": false need the user to approve access first, via credential_request.',
+      // Metadata only, and nothing is written: safe for a client to call
+      // without stopping to ask the user.
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: { type: 'object', properties: {} },
       call: (): AgentCredentialListing[] => {
         // The opacity switch. On (the default) an agent sees every name so it
@@ -1066,8 +1070,14 @@ const credentialBuiltins = (
     },
     {
       name: 'credential_env',
+      title: 'Fetch a credential as environment variables',
       description:
         'Fetch one allowed credential as environment variables. Returns {env: {VAR: value, …}, value}. Set the env on the process that needs the key (e.g. before re-running a CLI) instead of asking the user to re-authenticate by hand. If access has not been granted, this files a request and tells you the URL to give the user.',
+      // Deliberately not read-only. It stamps the credential's last-used time
+      // and files a request when access was refused, and more to the point it
+      // hands back a live secret: a client that read `readOnlyHint: true` could
+      // auto-approve dispensing a key with the user never in the loop.
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: {
         type: 'object',
         properties: { id: { type: 'string', description: 'Credential id, from credentials_list' } },
@@ -1096,8 +1106,13 @@ const credentialBuiltins = (
     },
     {
       name: 'credential_request',
+      title: 'Request access to a credential',
       description:
         'Ask the user for access to a credential this client may not fetch. Returns a URL to give the user so they can approve it. Filing a request grants nothing by itself; retry credential_env once the user approves.',
+      // Files pending state, so not read-only — but idempotent: `file()` keys on
+      // (agent, credential) and bumps `attempts` rather than adding a row, so
+      // asking twice still leaves the user a single decision to make.
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: {
         type: 'object',
         properties: {

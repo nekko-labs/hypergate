@@ -46,6 +46,30 @@ describe('Supervisor + Gateway (end-to-end via process runtime)', () => {
     await client.close();
   });
 
+  it("carries a proxied tool's title and behavioural hints across the hop", async () => {
+    const gateway = createGateway(supervisor);
+    const [gwSide, clientSide] = InMemoryTransport.createLinkedPair();
+    await gateway.connect(gwSide);
+    const client = new Client({ name: 'test', version: '0' }, { capabilities: {} });
+    await client.connect(clientSide);
+
+    const { tools } = await client.listTools();
+    const peek = tools.find((t) => t.name === `echo${NS}peek`);
+    expect(peek).toBeDefined();
+    // The hints are the point: a client reads readOnlyHint to decide whether a
+    // call needs the user's approval, so aggregation must not drop them.
+    expect(peek!.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    // The display label is namespaced like the description, so two servers'
+    // identically-titled tools stay tellable apart.
+    expect(peek!.title).toBe('[echo] Peek at the text');
+    await client.close();
+  });
+
   it('records the call in usage analytics (server, tool, client, bytes)', async () => {
     const gateway = createGateway(supervisor, { name: 'gw', version: '0' }, { caller: 'test-harness 1.0' });
     const [gwSide, clientSide] = InMemoryTransport.createLinkedPair();
@@ -105,7 +129,9 @@ describe('Supervisor + Gateway (end-to-end via process runtime)', () => {
     const builtins: GatewayBuiltinTool[] = [
       {
         name: 'credentials_list',
+        title: 'List vault credentials',
         description: 'List the credentials this caller may fetch.',
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: { type: 'object', properties: {} },
         call: () => [{ id: 'fly-token', envVar: 'FLY_API_TOKEN' }],
       },
@@ -130,6 +156,11 @@ describe('Supervisor + Gateway (end-to-end via process runtime)', () => {
     const names = tools.map((t) => t.name);
     expect(names).toContain(`${BUILTIN_NS}${NS}credentials_list`);
     expect(names).toContain(`echo${NS}echo`);
+
+    // A builtin's own title and hints reach the client the same way.
+    const listTool = tools.find((t) => t.name === `${BUILTIN_NS}${NS}credentials_list`);
+    expect(listTool!.title).toBe(`[${BUILTIN_NS}] List vault credentials`);
+    expect(listTool!.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
 
     const listed = (await client.callTool({ name: `${BUILTIN_NS}${NS}credentials_list`, arguments: {} })) as {
       content: { type: string; text: string }[];

@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { Supervisor } from './supervisor.js';
 
 /** Separator between a server id and its tool name in the aggregated namespace. */
@@ -13,6 +14,13 @@ export const NS = '__';
 export const BUILTIN_NS = 'hypergate';
 
 /**
+ * Namespace a human-readable label the way descriptions are namespaced, so the
+ * `query` tool of two different servers is still tellable apart in a client
+ * that shows titles rather than the raw `<server>__<tool>` name.
+ */
+const nsLabel = (id: string, label: string): string => `[${id}] ${label}`;
+
+/**
  * A tool the gateway itself provides (not routed to any managed server) —
  * e.g. the credential vault's `credentials_list` / `credential_env`. The host
  * builds these per-request with the caller's scope closed over, so the tool
@@ -24,6 +32,15 @@ export interface GatewayBuiltinTool {
   name: string;
   description: string;
   inputSchema: unknown;
+  /** Human-readable label, preferred over `name` by clients that show one. */
+  title?: string;
+  /**
+   * Behavioural hints. Worth setting on every builtin: a client reads
+   * `readOnlyHint` to decide whether a call needs the user's approval, and MCP
+   * defaults `destructiveHint` to `true`, so a tool that is not read-only and
+   * leaves it unset is treated as destructive.
+   */
+  annotations?: ToolAnnotations;
   /** Returns JSON-serializable data; the gateway wraps it as text content. */
   call(args: Record<string, unknown>): Promise<unknown> | unknown;
 }
@@ -107,10 +124,12 @@ export function createGateway(
       });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const tools: { name: string; description?: string; inputSchema: unknown }[] = builtins.map((t) => ({
+    const tools: Tool[] = builtins.map((t) => ({
       name: `${BUILTIN_NS}${NS}${t.name}`,
       description: `[${BUILTIN_NS}] ${t.description}`,
-      inputSchema: t.inputSchema,
+      inputSchema: t.inputSchema as Tool['inputSchema'],
+      ...(t.title ? { title: nsLabel(BUILTIN_NS, t.title) } : {}),
+      ...(t.annotations ? { annotations: t.annotations } : {}),
     }));
     for (const id of supervisor.ids()) {
       if (!allowed(id)) continue;
@@ -119,10 +138,25 @@ export function createGateway(
       try {
         const res = await client.listTools();
         for (const t of res.tools) {
+          // Spread first, then override only what the namespace rewrites.
+          // Everything a tool carries beyond name/description/inputSchema —
+          // `annotations`, `outputSchema`, `icons`, `_meta` — belongs to the
+          // upstream server and has to survive the hop. The hints are why:
+          // a client reads `readOnlyHint` to decide whether a call needs the
+          // user's approval and `destructiveHint` to warn before one, so
+          // rebuilding the tool from three fields made every proxied tool look
+          // unannotated — costing a read-only tool its auto-approval and a
+          // destructive one its warning, and quietly weakening the metadata of
+          // every server Hypergate fronts. Spreading also carries whatever
+          // field MCP adds next, instead of dropping it until someone notices.
           tools.push({
+            ...t,
             name: `${id}${NS}${t.name}`,
             description: t.description ? `[${id}] ${t.description}` : `[${id}] ${t.name}`,
-            inputSchema: t.inputSchema,
+            ...(t.title ? { title: nsLabel(id, t.title) } : {}),
+            ...(t.annotations?.title
+              ? { annotations: { ...t.annotations, title: nsLabel(id, t.annotations.title) } }
+              : {}),
           });
         }
       } catch {

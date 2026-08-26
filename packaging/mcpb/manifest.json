@@ -12,6 +12,11 @@
   "repository": { "type": "git", "url": "https://github.com/nekko-labs/hypergate" },
   "license": "MIT",
   "keywords": ["mcp", "gateway", "local-first", "hypergate", "tools"],
+  "icon": "icon.png",
+  "icons": [
+    { "src": "icon.png", "size": "512x512" },
+    { "src": "icon-192.png", "size": "192x192" }
+  ],
   "privacy_policies": ["https://github.com/nekko-labs/hypergate/blob/main/PRIVACY.md"],
   "server": {
     "type": "node",
