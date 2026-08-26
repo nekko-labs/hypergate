@@ -2795,12 +2795,48 @@ if (STDIO_MODE) {
       if (!request) return json(res, 404, { error: 'not_found' });
       const approve = credReqM[2] === 'approve';
       let granted = false;
+      let consent: ResolveCredentialRequestResponse['consent'];
       if (approve) {
         const agent = clients.find((c) => c.id === request.agentId);
+        const row = vault.get(request.credentialId);
         // The agent or the credential can disappear between asking and
         // answering. Resolve the request either way: it is stale, and leaving
         // it pending would offer a decision that cannot be carried out.
-        if (agent && vault.get(request.credentialId)) {
+        if (agent && row) {
+          // Handing a key to an agent is the one grant made on someone else's
+          // behalf, so it asks the OS to prove a person is at the keyboard, and
+          // the prompt names the agent: "grant Claude Code access to the
+          // credential X" is a decision someone can actually make, where
+          // "something wants a key" is not.
+          const verdict = await shell.authorize(shell.grantReason(agent.name, row.name));
+          // Unavailable is not refusal. A Mac with no Touch ID, a Linux box with
+          // no polkit, or a shell binary older than `authorize` cannot answer,
+          // and failing closed there would mean no agent could ever be granted a
+          // credential on that machine. The bar falls back to what it was before
+          // this prompt existed (master token + same-origin), and the response
+          // says so rather than implying a person approved.
+          if (!verdict.authorized && verdict.reason !== 'unavailable') {
+            supervisor.record({
+              at: new Date().toISOString(),
+              serverId: BUILTIN_NS,
+              server: 'Hypergate',
+              tool: 'credential_grant',
+              client: agent.name,
+              ok: false,
+              ms: 0,
+              bytesIn: 0,
+              bytesOut: 0,
+              error: `grant refused at the OS prompt (${verdict.reason ?? 'denied'})`,
+            });
+            const denied: ResolveCredentialRequestResponse = {
+              ok: false,
+              granted: false,
+              consent: verdict.reason === 'error' ? 'error' : 'denied',
+              detail: verdict.detail,
+            };
+            return json(res, 403, denied);
+          }
+          consent = verdict.authorized ? 'approved' : 'unavailable';
           // The same arithmetic the per-agent switch uses. Approving is not a
           // second kind of permission, it is the ordinary grant.
           agent.credentials = setCredentialAllowed(agent.credentials, request.credentialId, true, vault.ids());
@@ -2809,7 +2845,7 @@ if (STDIO_MODE) {
         }
       }
       credentialRequests.resolve(request.id);
-      const out: ResolveCredentialRequestResponse = { ok: true, granted };
+      const out: ResolveCredentialRequestResponse = { ok: true, granted, consent };
       return json(res, 200, out);
     }
 
@@ -2825,7 +2861,7 @@ if (STDIO_MODE) {
       const id = decodeURIComponent(credRevealM[1]);
       const row = vault.get(id);
       if (!row) return json(res, 404, { error: 'not_found' });
-      const verdict = await shell.authorize(`reveal ${row.name}`);
+      const verdict = await shell.authorize(shell.revealReason(row.name));
       if (!verdict.authorized) {
         const out: RevealCredentialResponse = {
           ok: false,

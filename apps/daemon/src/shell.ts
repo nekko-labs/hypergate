@@ -201,7 +201,47 @@ export const verdictFromExit = (code: number | null, stderr: string): AuthorizeV
  * `authorized: true` is exit code 0 from a binary that got a real answer from
  * LocalAuthentication, Windows Hello, or polkit.
  */
+/** Characters that must never reach a system dialog: C0 and C1 controls. */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/**
+ * A name safe to render inside an OS consent dialog.
+ *
+ * Agent and credential names are chosen by the user, but they end up in a system
+ * prompt whose whole value is that it can be trusted, so they are treated as
+ * text rather than as trusted copy: control characters are stripped (a dialog is
+ * one line, and a smuggled newline could make a name look like a second sentence
+ * the OS wrote), whitespace is collapsed, and the result is capped. Empty input
+ * becomes a placeholder rather than a hole in the sentence.
+ */
+export const consentSafeName = (name: string, cap = 48): string => {
+  const clean = (name ?? '').replace(CONTROL_CHARS, ' ').replace(/\s+/g, ' ').trim();
+  if (!clean) return 'an unnamed item';
+  return clean.length > cap ? `${clean.slice(0, cap - 1)}…` : clean;
+};
+
+/**
+ * The sentence the OS puts after "<app> is trying to".
+ *
+ * Both doors name the credential; the grant door also names the agent that
+ * asked, because "something wants a key" is not a decision anyone can actually
+ * make. Phrased to complete the OS's own template rather than to stand alone.
+ */
+export const revealReason = (credential: string): string => `reveal the value of "${consentSafeName(credential)}"`;
+
+export const grantReason = (agent: string, credential: string): string =>
+  `grant ${consentSafeName(agent)} access to the credential "${consentSafeName(credential)}"`;
+
 export const authorize = async (reason: string): Promise<AuthorizeVerdict> => {
+  // Same contract as HYPERGATE_NO_KEYCHAIN: a daemon started by a test has no
+  // business reaching for the developer's real hardware. Without this, running
+  // the smoke suite on a Mac raises a Touch ID prompt nobody asked for, and then
+  // waits two minutes for an answer nobody is there to give. Reported as
+  // `unavailable`, which is the truth for that daemon, and which callers already
+  // have to handle for machines with no prompt at all.
+  if (process.env.HYPERGATE_NO_AUTHORIZE === '1')
+    return { authorized: false, reason: 'unavailable', detail: 'OS consent is disabled for this daemon' };
   const bin = shellBin();
   if (!bin) return { authorized: false, reason: 'unavailable', detail: 'the hypergate shell binary is not installed' };
   return await new Promise((resolvePromise) => {

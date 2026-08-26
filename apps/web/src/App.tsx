@@ -1845,11 +1845,26 @@ function PendingRequests({ requests, token, onChange }: {
     setBusy(r.id);
     try {
       const res = await api.resolveCredentialRequest(r.id, approve, token);
+      // Approving asks the OS to confirm a person is present, so a refusal there
+      // is an outcome to report, not a failure: the request is still pending and
+      // the button can simply be pressed again.
+      if (approve && !res.granted && (res.consent === 'denied' || res.consent === 'error')) {
+        toast.show(
+          res.consent === 'denied'
+            ? `Not granted: the confirmation was refused`
+            : `Not granted: ${res.detail ?? 'the confirmation did not complete'}`,
+          'error',
+        );
+        setBusy(null);
+        return;
+      }
       toast.show(
         approve
           ? res.granted
-            ? `${r.agentName} can now fetch ${r.credentialName}`
-            : `Request cleared, but nothing was granted — the agent or the credential is gone`
+            ? res.consent === 'unavailable'
+              ? `${r.agentName} can now fetch ${r.credentialName} (this machine cannot ask for confirmation)`
+              : `${r.agentName} can now fetch ${r.credentialName}`
+            : `Request cleared, but nothing was granted: the agent or the credential is gone`
           : `Denied ${r.agentName} access to ${r.credentialName}`,
         approve && res.granted ? 'success' : 'info',
       );
