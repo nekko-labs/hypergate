@@ -25,7 +25,7 @@
 //   node scripts/build-standalone.mjs --shell <path-to-hypergate-binary>
 //   node scripts/build-standalone.mjs --node <path-to-node-binary>
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -184,7 +184,155 @@ function payload(shellBinary) {
   }
 }
 
+// ── is this Node fit to build a release with? ─────────────────────────────────
+//
+// Two different Node binaries, two different requirements, and getting either
+// wrong fails in a way that is easy to misread.
+//
+//   1. **The generator** (`process.execPath`) writes the SEA blob, so it needs
+//      single-executable support compiled in. Homebrew's Node does not have it:
+//      the formula passes `--disable-single-executable-application` because the
+//      feature is incompatible with its `--shared` build
+//      (nodejs/node#63126). No Homebrew version will ever work, so "update Node"
+//      is the wrong advice; an official build is the right one.
+//   2. **The base** (`--node`, defaulting to `process.execPath`) is copied and
+//      becomes the `hypergated` we ship, so it has to run on machines that are
+//      not this one. Homebrew's Node links 21 dylibs under /opt/homebrew, none
+//      of which a user has.
+//
+// The second check matters more than the first, because a shared-build Node
+// with SEA *enabled* would sail through and silently produce an installer that
+// only works on the machine that built it. CI is unaffected either way:
+// actions/setup-node installs official builds.
+
+/**
+ * Libraries a binary needs from outside the OS's own directories.
+ *
+ * Parsed from the linker's own columns rather than by scraping anything that
+ * looks like a path: `otool` prints each dependency as `<name> (compatibility
+ * ...)`, and `ldd` as `<soname> => <resolved path>`. Scraping instead turns
+ * `@rpath/libnode.dylib` into `/libnode.dylib`, which reads like a system path
+ * and is not one.
+ */
+function foreignLibs(exe) {
+  const system = process.platform === 'darwin' ? [/^\/usr\/lib\//, /^\/System\//] : [/^\/lib/, /^\/usr\/lib/];
+  let out;
+  try {
+    out =
+      process.platform === 'darwin'
+        ? execFileSync('otool', ['-L', exe], { encoding: 'utf8' })
+        : execFileSync('ldd', [exe], { encoding: 'utf8' });
+  } catch {
+    return []; // no otool/ldd: cannot tell, and guessing would block a good build
+  }
+  const deps =
+    process.platform === 'darwin'
+      ? [...out.matchAll(/^\s+(\S+)\s+\(compatibility/gm)].map((m) => m[1])
+      : [...out.matchAll(/=>\s+(\/\S+)/g)].map((m) => m[1]);
+  // An @rpath/@loader_path dependency is by definition not a system library.
+  return deps.filter((lib) => !system.some((re) => re.test(lib)));
+}
+
+/** Does this Node have single-executable support compiled in? */
+function seaCapable(exe) {
+  try {
+    const out = execFileSync(exe, ['-p', 'process.config.variables.single_executable_application'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return out.trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/** Node installs that are official builds rather than a distro's shared one. */
+function candidateNodes() {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  const roots = [
+    join(home, '.local/share/fnm/node-versions'),
+    join(home, 'Library/Application Support/fnm/node-versions'),
+    join(home, '.fnm/node-versions'),
+    join(home, '.nvm/versions/node'),
+    join(home, '.volta/tools/image/node'),
+    join(home, '.asdf/installs/nodejs'),
+  ];
+  const found = [];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    // Newest version first, so a build picks up the most current official Node.
+    for (const entry of readdirSync(root).sort().reverse()) {
+      for (const rel of ['bin/node', 'installation/bin/node', `bin/node${EXE}`]) {
+        const candidate = join(root, entry, ...rel.split('/'));
+        if (existsSync(candidate)) found.push(candidate);
+      }
+    }
+  }
+  for (const fixed of ['/usr/local/bin/node', 'C:\\Program Files\\nodejs\\node.exe']) {
+    if (existsSync(fixed)) found.push(fixed);
+  }
+  return found;
+}
+
+/** A Node that can both generate the blob and be shipped, or undefined. */
+function findUsableNode() {
+  const explicit = process.env.HYPERGATE_BUILD_NODE;
+  const list = explicit ? [explicit, ...candidateNodes()] : candidateNodes();
+  return list.find((exe) => existsSync(exe) && seaCapable(exe) && foreignLibs(exe).length === 0);
+}
+
+/**
+ * Refuse to build a release with a Node that cannot produce one, recovering
+ * automatically when a usable Node is installed. Windows Node is self-contained
+ * and ships SEA, so this only ever engages on macOS and Linux.
+ */
+function requireShippableNode() {
+  if (process.env.HYPERGATE_NODE_CHECKED === '1' || process.platform === 'win32') return;
+  const base = option('node') ?? process.execPath;
+  const problems = [];
+  if (!seaCapable(process.execPath)) problems.push('it has no single-executable support compiled in');
+  const foreign = foreignLibs(base);
+  if (foreign.length > 0) {
+    const shown = foreign.slice(0, 3).join(', ');
+    problems.push(
+      `the binary it would ship links ${foreign.length} librar${foreign.length === 1 ? 'y' : 'ies'} that exist only on this machine (${shown}${foreign.length > 3 ? ', …' : ''})`,
+    );
+  }
+  if (problems.length === 0) return;
+
+  const better = findUsableNode();
+  if (better) {
+    console.log(`› ${process.execPath} cannot build a distributable release, so using ${better}`);
+    run(better, [fileURLToPath(import.meta.url), ...args], { env: { ...process.env, HYPERGATE_NODE_CHECKED: '1' } });
+    process.exit(0);
+  }
+  // Printed rather than thrown: this is a machine-configuration problem with a
+  // known remedy, and a stack trace through the build script only buries it.
+  console.error(
+    [
+      '',
+      `${process.execPath} cannot build a release that runs anywhere else:`,
+      ...problems.map((p) => `  - ${p}`),
+      '',
+      'This is not about the Node version. Homebrew builds Node against shared',
+      'libraries and disables single-executable support for that reason, so no',
+      'Homebrew Node of any version can produce a distributable binary.',
+      '',
+      'Install an official build (nodejs.org, or fnm/nvm/volta, current version is',
+      'fine) and this script will find and use it, or point at one directly:',
+      '',
+      '  HYPERGATE_BUILD_NODE=/path/to/official/node npm run build:standalone',
+      '',
+      'CI is unaffected: actions/setup-node installs official builds already.',
+      '',
+    ].join('\n'),
+  );
+  process.exit(1);
+}
+
 // ── entry point ──────────────────────────────────────────────────────────────
+
+requireShippableNode();
 
 const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 
