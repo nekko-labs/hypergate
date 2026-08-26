@@ -623,6 +623,29 @@ Started as listing paperwork and turned up a real defect on the way: the bar the
 - [x] **`build:mcpb` now finds npm when Homebrew installed node**: the same defect `72a9232` fixed in `build-npm.mjs` and `build-standalone.mjs` lived in a third copy of `npmCli()` here, and that commit never reached `main`, so the bundle could not be built on the dev Mac at all (`could not find npm-cli.js near /opt/homebrew/Cellar/node/...`). `npm_execpath` is checked first, with the Homebrew prefix path as a fallback for a direct `node scripts/...` run. · Added: 2026-08-26 · Done: 2026-08-26
 - [x] **Verified**: 319 core + 94 daemon tests pass (2 new gateway assertions: a proxied tool's title and all four hints crossing the hop via a second fixture tool registered with `registerTool`, and a builtin's own title and hints reaching the client), `version:check` agrees across all eight files at 1.18.0, the HTTP smoke is green, `build:mcpb -- --self-signed` ends with the signature block present, and `mcpb validate` passes the manifest schema with the 512x512 icon accepted. · Added: 2026-08-26 · Done: 2026-08-26
 
+## Epic 60: the flaky stdio assertion was a real race (v1.20.0)
+
+Philip: *"I noticed the ci job is failing"*. One job of seven, `daemon + core (node 22)`, on the
+PR branch only; `main` and node 24 were green with identical code.
+
+- [x] **Not the change under review.** `STDIO_MODE` returns at index.ts:1853 and never reaches the
+  boot block v1.19.0 touched, so the PATH repair could not have affected it. The failure was
+  `✗ --stdio started its own gateway instead of proxying:` with **empty** stderr, having already
+  received its `tools/list` answer, which says the proxy replied before it logged. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **Reproduced the ordering rather than guessing it.** A probe timestamping the stderr line
+  against the `id:2` reply: **old order** reply at 232ms, log at 233ms (`FAIL`); **new order** log at
+  222ms, reply at 227ms (`PASS`). One millisecond locally is a comfortable loss on a loaded runner. · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **Fix: attach fully, then serve.** `listTools()` and the stderr line moved above
+  `proxy.connect(new StdioServerTransport())`, so nothing can be answered before the account of what
+  we attached to exists. This also closes a worse latent bug: previously a `listTools` throw *after*
+  connect fell into the catch and returned false, and the caller's fallback then connected a second
+  `StdioServerTransport` to the same stdin, leaving two servers reading one channel. · [spec](SPEC.md#32-gateway-shipped) · Added: 2026-08-26 · Done: 2026-08-26
+- [x] **The test was passing by luck, so it was fixed too.** It sampled stderr from a 100ms poll and
+  after `kill()`, which let a write that came *after* the answer still count. It now snapshots stderr
+  inside the stdout data handler, at the instant the answer arrives. Verified in both directions:
+  deterministic `✗ --stdio answered before saying it had attached to the resident daemon: ""`
+  against the old code, green against the fixed code, three consecutive full smoke runs. · Added: 2026-08-26 · Done: 2026-08-26
+
 ## Epic 59: the daemon the OS starts could not see the machine (v1.19.0)
 
 Philip, after v1.18.0: *"I don't see the new cli changes to include brew and such"*, and separately

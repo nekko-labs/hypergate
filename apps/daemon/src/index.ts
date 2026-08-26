@@ -174,7 +174,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.19.0';
+const VERSION = '1.20.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -1825,10 +1825,16 @@ const startStdioProxy = async (): Promise<boolean> => {
     });
     const upstream = new Client({ name: 'hypergate-stdio-proxy', version: VERSION }, { capabilities: {} });
     await upstream.connect(transport);
-    const proxy = createProxy(upstream, { name: 'hypergate-gateway', version: VERSION });
-    await proxy.connect(new StdioServerTransport());
+    // Everything that can fail, and everything worth logging, happens *before*
+    // stdio starts serving. Connecting the transport first meant the proxy could
+    // answer a client's `tools/list` while the round-trip below was still in
+    // flight, so a harness that acted on the first response and exited could
+    // race the line that says which daemon we attached to. Whoever gets an
+    // answer has now certainly seen it.
     const { tools } = await upstream.listTools();
     process.stderr.write(`hypergated gateway (stdio → resident daemon on ${PORT}) up — ${tools.length} tool(s)\n`);
+    const proxy = createProxy(upstream, { name: 'hypergate-gateway', version: VERSION });
+    await proxy.connect(new StdioServerTransport());
     return true;
   } catch (e) {
     // A daemon that answered /health but refused the gateway is worth saying out

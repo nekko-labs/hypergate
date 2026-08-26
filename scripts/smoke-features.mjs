@@ -670,7 +670,15 @@ const proxy = spawn(
 let proxyErr = '';
 let proxyOut = '';
 proxy.stderr.on('data', (x) => (proxyErr += x));
-proxy.stdout.on('data', (x) => (proxyOut += x));
+// Snapshot stderr in the data handler, the instant the answer arrives. Sampling
+// it from a 100ms poll (or after killing the child) lets a stderr write that
+// came *after* the answer still count, which is how the ordering below passed
+// by luck: the two were about a millisecond apart, and a slow runner lost.
+let errWhenAnswered = null;
+proxy.stdout.on('data', (x) => {
+  proxyOut += x;
+  if (errWhenAnswered === null && proxyOut.includes('"id":2')) errWhenAnswered = proxyErr;
+});
 const rpc = (msg) => proxy.stdin.write(`${JSON.stringify(msg)}\n`);
 rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'smoke', version: '0' } } });
 rpc({ jsonrpc: '2.0', method: 'notifications/initialized' });
@@ -689,7 +697,11 @@ const proxied = await Promise.race([
 ]);
 proxy.kill();
 if (proxied === 'timeout') fail(`the stdio proxy never answered tools/list: ${proxyErr}`);
-if (!/resident daemon/.test(proxyErr)) fail(`--stdio started its own gateway instead of proxying: ${proxyErr}`);
+// The proxy must finish attaching, and say which daemon it attached to, *before*
+// it serves anything: a harness that acts on the first response and exits should
+// still have a complete account of what it connected to.
+if (!/resident daemon/.test(errWhenAnswered ?? ''))
+  fail(`--stdio answered before saying it had attached to the resident daemon: ${JSON.stringify(errWhenAnswered)}`);
 const proxiedTools = proxied.result.tools.map((t) => t.name);
 if (!proxiedTools.includes('echo__echo')) fail(`the proxy did not expose the daemon's tools: ${JSON.stringify(proxiedTools)}`);
 ok(`--stdio proxied to the running daemon (${proxiedTools.length} tool(s)) instead of starting its own servers`);
