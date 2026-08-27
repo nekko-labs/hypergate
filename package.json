@@ -1,7 +1,7 @@
 {
   "name": "hypergate",
   "private": true,
-  "version": "1.22.0",
+  "version": "1.23.0",
   "description": "Local-first runtime & manager for MCP servers — run servers securely (process sandbox or Docker), supervise them, and expose one gateway endpoint for any agent harness. A ToolHive rival you own.",
   "license": "MIT",
   "type": "module",
