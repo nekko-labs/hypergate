@@ -252,6 +252,32 @@ describe('install ordering (the system-manager-first rule)', () => {
     expect(claude.installs!.some((o) => o.manager === 'brew')).toBe(false);
   });
 
+  it('offers Homebrew for the runtimes whose vendors document it', () => {
+    // Deno and Bun each document a `brew` route beside their install script, so
+    // a Mac with Homebrew gets the managed route rather than a `curl | sh` that
+    // Hypergate can neither upgrade nor remove afterwards.
+    const deno = enrichCliInstalls(cliCatalogEntry(knownCli('deno')!, 'darwin'));
+    expect(chooseInstall(deno)?.command).toBe('brew install deno');
+    expect(deno.installs!.map((o) => o.manager)).toEqual(['brew', 'script', undefined]);
+
+    // Bun's docs name their own tap, so the route carries the tap path and the
+    // derived uninstall names it too.
+    const bun = enrichCliInstalls(cliCatalogEntry(knownCli('bun')!, 'darwin'));
+    expect(chooseInstall(bun)?.command).toBe('brew install oven-sh/bun/bun');
+    expect(bun.installs![0].uninstall).toBe('brew uninstall oven-sh/bun/bun');
+  });
+
+  it('leaves a tool on npm when Homebrew packages it but the vendor does not', () => {
+    // wrangler and vercel both have homebrew-core formulae, but neither vendor
+    // documents one. Curated routes come from the vendor's own install docs, so
+    // npm stays the route here rather than a repackaging nobody vouched for.
+    for (const id of ['wrangler', 'vercel']) {
+      const tool = enrichCliInstalls(cliCatalogEntry(knownCli(id)!, 'darwin'));
+      expect(tool.installs!.some((o) => o.manager === 'brew')).toBe(false);
+      expect(chooseInstall(tool)?.manager).toBe('npm');
+    }
+  });
+
   it('falls back to npm when no system manager is on this machine', () => {
     const claude = enrichCliInstalls(cliCatalogEntry(knownCli('claude')!, 'darwin'));
     const bare = {

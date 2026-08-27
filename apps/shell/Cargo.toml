@@ -1,6 +1,6 @@
 [package]
 name = "hypergate-shell"
-version = "1.22.0"
+version = "1.23.0"
 edition = "2024"
 description = "Hypergate desktop shell: tray agent, CLI, and sandbox launcher"
 license = "MIT"

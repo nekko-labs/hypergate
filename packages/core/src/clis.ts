@@ -124,10 +124,14 @@ const EXTRA_INSTALLS: Record<string, CliInstallOption[]> = {
     // and is what lets the host be verified before anything is executed.
     { label: 'PowerShell', command: 'powershell -c "irm https://bun.sh/install.ps1 | iex"', platforms: ['win32'] },
     { label: 'shell', command: 'curl -fsSL https://bun.sh/install | bash', platforms: ['darwin', 'linux'] },
+    // Bun's docs name their own tap rather than the homebrew-core formula of the
+    // same name, so the route says what the vendor says.
+    { label: 'Homebrew', command: 'brew install oven-sh/bun/bun', platforms: ['darwin', 'linux'] },
   ],
   deno: [
     { label: 'PowerShell', command: 'powershell -c "irm https://deno.land/install.ps1 | iex"', platforms: ['win32'] },
     { label: 'shell', command: 'curl -fsSL https://deno.land/install.sh | sh', platforms: ['darwin', 'linux'] },
+    { label: 'Homebrew', command: 'brew install deno', platforms: ['darwin', 'linux'] },
   ],
   python: [
     { label: 'winget', command: 'winget install Python.Python.3.13', platforms: ['win32'] },

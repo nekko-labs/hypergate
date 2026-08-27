@@ -4573,6 +4573,16 @@ function guessManager(path: string | undefined, routes: CliInstallOption[]): str
   for (const [needle, manager] of hints) {
     if (p.includes(needle) && routes.some((r) => r.manager === manager)) return manager;
   }
+  // Nothing on the path names a manager this tool has a route for, so the copy
+  // on disk came from somewhere else: the vendor's own installer, or a manual
+  // download. Prefer the script route, which re-runs that installer and offers
+  // no uninstall, over a system manager whose `uninstall` would not find this
+  // binary at all. Bun is the case that shows it: `~/.bun/bin/bun` is where its
+  // own installer puts it *and* where it installs global packages, and the tool
+  // has no `bun` route of its own, so ranking alone would offer to
+  // `brew uninstall` a binary Homebrew never placed.
+  const script = routes.find((r) => r.manager === 'script');
+  if (p && script) return script.manager;
   return (routes.find((r) => r.available !== false) ?? routes[0])?.manager;
 }
 
