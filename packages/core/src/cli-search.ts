@@ -285,6 +285,13 @@ const brewCandidatesFor = (entry: CliCatalogEntry): string[] => {
  * De-duplicated by package and by command, so the official `@playwright/cli` row
  * doesn't appear twice because it is both curated and on npm.
  *
+ * Homebrew is de-duplicated *ahead of* npm for the same reason it outranks npm
+ * in `sortCliCatalog`: where both channels ship the same command, Homebrew's is
+ * built from the project's own release and npm's is usually a third-party
+ * wrapper that downloads that same binary. Searching `ripgrep` used to return
+ * only the npm wrapper, because it claimed the command name first and dropped
+ * the real formula before the ranking could ever see it.
+ *
  * After that merge, the first few actionable curated/npm rows get a bounded,
  * search-only Homebrew enrichment. Candidate formula names come from each row,
  * so a formula is merged into the tool it actually describes instead of being
@@ -316,7 +323,7 @@ export async function searchCliCatalog(
     out.push(entry);
   }
   const sorted = sortCliCatalog(out);
-  if (platform === 'win32' || (platform !== undefined && platform !== 'darwin' && platform !== 'linux')) return sorted;
+  if (platform !== undefined && platform !== 'darwin' && platform !== 'linux') return sorted;
 
   // Search-only enrichment: static catalog browsing must not trigger a formula
   // lookup for every one of the 20+ curated tools.
@@ -344,7 +351,7 @@ export async function searchCliCatalog(
       .map((name) => candidates.get(name))
       .find((candidate): candidate is CliCatalogEntry => !!candidate && brewFormulaMatches(entry, candidate));
     if (!formula) return entry;
-    const note = `homebrew-core packages this tool under "${formula.command}", but the vendor's own docs may name a different route.`;
+    const note = `Homebrew core packages this tool as "${formula.command}"; the vendor's own docs may name a different route.`;
     const installs = [...(entry.installs ?? []), brewInstallOption(formula.command, note)];
     return { ...entry, installs };
   });

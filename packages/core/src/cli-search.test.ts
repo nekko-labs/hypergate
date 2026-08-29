@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { chooseInstall, enrichCliInstalls } from './cli-actions.js';
 import { binCommand, categoryFor, lookupBrewFormula, mapBrewFormula, mapNpmCli, publisherOf, searchCliCatalog, searchCuratedClis, searchNpmClis } from './cli-search.js';
 import { cliCatalogEntry, KNOWN_CLIS, knownCli, matchesCli, sortCliCatalog } from './clis.js';
 import type { CliCatalogEntry } from '@hypergate/shared';
@@ -303,9 +304,34 @@ describe('searchCliCatalog Homebrew enrichment', () => {
     expect(vercel.installs).toContainEqual(expect.objectContaining({
       label: 'Homebrew',
       command: 'brew install vercel',
-      note: expect.stringContaining('vendor'),
+      note: 'Homebrew core packages this tool as "vercel"; the vendor\'s own docs may name a different route.',
     }));
+    expect(vercel.installs?.filter((install) => install.label === 'Homebrew')).toHaveLength(1);
     expect(seen.filter((url) => url.includes('/formula/vercel.json'))).toHaveLength(1);
+  });
+
+  it('lets a present discovered Homebrew route beat npm after enrichment', async () => {
+    const { impl } = stubFetch({
+      '/-/v1/search': { objects: [{ package: { name: 'vercel' } }] },
+      '/vercel/latest': {
+        name: 'vercel',
+        version: '59.10.0',
+        homepage: 'https://vercel.com/docs/cli',
+        bin: { vercel: 'cli.js' },
+      },
+      '/formula/vercel.json': {
+        name: 'vercel',
+        homepage: 'https://vercel.com/home',
+        versions: { stable: '59.9.1' },
+      },
+    });
+    const [vercel] = (await searchCliCatalog('vercel', { fetchImpl: impl, platform: 'darwin' }))
+      .filter((entry) => entry.id === 'vercel');
+    const annotated = enrichCliInstalls({
+      ...vercel,
+      installs: vercel.installs?.map((install) => install.label === 'Homebrew' ? { ...install, available: true } : install),
+    });
+    expect(chooseInstall(annotated)?.command).toBe('brew install vercel');
   });
 
   it('derives a differently named formula from the publisher', async () => {
@@ -328,7 +354,7 @@ describe('searchCliCatalog Homebrew enrichment', () => {
     const wrangler = results.find((entry) => entry.id === 'wrangler')!;
     expect(wrangler.installs).toContainEqual(expect.objectContaining({
       command: 'brew install cloudflare-wrangler',
-      note: expect.stringContaining('cloudflare-wrangler'),
+      note: 'Homebrew core packages this tool as "cloudflare-wrangler"; the vendor\'s own docs may name a different route.',
     }));
     const formulaLookups = seen.filter((url) => url.includes('/formula/'));
     expect(formulaLookups.filter((url) => url.includes('/formula/cloudflare-wrangler.json'))).toHaveLength(1);
