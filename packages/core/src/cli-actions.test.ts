@@ -267,21 +267,14 @@ describe('install ordering (the system-manager-first rule)', () => {
     expect(bun.installs![0].uninstall).toBe('brew uninstall oven-sh/bun/bun');
   });
 
-  it('prefers the hand-checked Homebrew route for Vercel and Wrangler', () => {
-    for (const [id, command, uninstall] of [
-      ['vercel', 'brew install vercel', 'brew uninstall vercel'],
-      ['wrangler', 'brew install cloudflare-wrangler', 'brew uninstall cloudflare-wrangler'],
-    ]) {
-      const mac = enrichCliInstalls(cliCatalogEntry(knownCli(id)!, 'darwin'));
-      expect(mac.installs![0].manager).toBe('brew');
-      expect(mac.installs![0].command).toBe(command);
-      expect(mac.installs![0].uninstall).toBe(uninstall);
-      expect(mac.installs![0].note).toBeTruthy();
-      expect(chooseInstall(mac)).toMatchObject({ manager: 'brew', command, uninstall });
-
-      const windows = enrichCliInstalls(cliCatalogEntry(knownCli(id)!, 'win32'));
-      expect(windows.installs!.some((o) => o.manager === 'brew')).toBe(false);
-      expect(chooseInstall(windows)?.manager).toBe('npm');
+  it('leaves a tool on npm when Homebrew packages it but the vendor does not', () => {
+    // wrangler and vercel both have homebrew-core formulae, but neither vendor
+    // documents one. Curated routes come from the vendor's own install docs, so
+    // npm stays the route here rather than a repackaging nobody vouched for.
+    for (const id of ['wrangler', 'vercel']) {
+      const tool = enrichCliInstalls(cliCatalogEntry(knownCli(id)!, 'darwin'));
+      expect(tool.installs!.some((o) => o.manager === 'brew')).toBe(false);
+      expect(chooseInstall(tool)?.manager).toBe('npm');
     }
   });
 
@@ -294,12 +287,11 @@ describe('install ordering (the system-manager-first rule)', () => {
     expect(chooseInstall(enrichCliInstalls(bare))?.manager).toBe('npm');
   });
 
-  it('leaves Playwright CLI on npm because Homebrew has the wrong tool', () => {
-    // homebrew-core's abandoned playwright-cli 0.1.x formula is a different
-    // version line from @playwright/cli, so it is deliberately not offered.
-    const e = enrichCliInstalls(cliCatalogEntry(knownCli('playwright-cli')!, 'darwin'));
-    expect(chooseInstall(e)?.manager).toBe('npm');
-    expect(e.installs!.some((o) => o.manager === 'brew')).toBe(false);
+  it('leaves an npm-only tool on npm, since no vendor route exists to prefer', () => {
+    for (const id of ['wrangler', 'vercel', 'playwright-cli']) {
+      const e = enrichCliInstalls(cliCatalogEntry(knownCli(id)!, 'darwin'));
+      expect(chooseInstall(e)?.manager, id).toBe('npm');
+    }
   });
 });
 

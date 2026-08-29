@@ -149,11 +149,16 @@ interface BrewFormula {
   analytics?: { install?: Record<string, Record<string, number>> };
 }
 
+const brewInstallOption = (name: string, note?: string): CliInstallOption => {
+  const option: CliInstallOption = { label: 'Homebrew', command: `brew install ${name}`, platforms: ['darwin', 'linux'] };
+  return note ? { ...option, note } : option;
+};
+
 /** Map one Homebrew formula to a catalog entry. */
 export function mapBrewFormula(formula: BrewFormula): CliCatalogEntry | undefined {
   const name = formula.name ?? formula.full_name;
   if (!name) return undefined;
-  const installs: CliInstallOption[] = [{ label: 'Homebrew', command: `brew install ${name}`, platforms: ['darwin', 'linux'] }];
+  const installs: CliInstallOption[] = [brewInstallOption(name)];
   const thirtyDay = formula.analytics?.install?.['30d'];
   const popularity = thirtyDay ? Math.max(...Object.values(thirtyDay).filter((n) => typeof n === 'number'), 0) : undefined;
   return {
@@ -247,18 +252,43 @@ export function searchCuratedClis(query: string, platform?: string): CliCatalogE
   return KNOWN_CLIS.filter((c) => matchesCli(c, query)).map((c) => cliCatalogEntry(c, platform));
 }
 
+const homepageHostMatches = (left?: string, right?: string): boolean => {
+  if (!left || !right) return false;
+  try {
+    const a = new URL(left).hostname.toLowerCase().replace(/\.$/, '');
+    const b = new URL(right).hostname.toLowerCase().replace(/\.$/, '');
+    return !!a && !!b && (a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`));
+  } catch {
+    return false;
+  }
+};
+
+const brewFormulaMatches = (entry: CliCatalogEntry, formula: CliCatalogEntry): boolean =>
+  !formula.deprecated
+  && (formula.command.toLowerCase() === entry.command.toLowerCase()
+    || homepageHostMatches(formula.homepage, entry.homepage));
+
+const brewCandidatesFor = (entry: CliCatalogEntry): string[] => {
+  const names = [entry.command];
+  if (entry.publisher) {
+    const publisher = entry.publisher.replace(/\s+on GitHub$/i, '');
+    names.push(`${slug(publisher)}-${entry.command}`);
+  }
+  return names
+    .map((name) => name.toLowerCase())
+    .filter((name, index, all) => all.indexOf(name) === index && SAFE_NAME.test(name));
+};
+
 /**
  * The whole lookup: curated first (hand-verified, and the only source that can
- * say "recommended"), then the Homebrew formula of that exact name, then npm.
+ * say "recommended"), then the Homebrew formula of the query name, then npm.
  * De-duplicated by package and by command, so the official `@playwright/cli` row
  * doesn't appear twice because it is both curated and on npm.
  *
- * Homebrew is de-duplicated *ahead of* npm for the same reason it outranks npm
- * in `sortCliCatalog`: where both channels ship the same command, Homebrew's is
- * built from the project's own release and npm's is usually a third-party
- * wrapper that downloads that same binary. Searching `ripgrep` used to return
- * only the npm wrapper, because it claimed the command name first and dropped
- * the real formula before the ranking could ever see it.
+ * After that merge, the first few actionable curated/npm rows get a bounded,
+ * search-only Homebrew enrichment. Candidate formula names come from each row,
+ * so a formula is merged into the tool it actually describes instead of being
+ * dropped merely because a curated or npm row claimed the command first.
  */
 export async function searchCliCatalog(
   query: string,
@@ -285,5 +315,37 @@ export async function searchCliCatalog(
     commands.add(command);
     out.push(entry);
   }
-  return sortCliCatalog(out);
+  const sorted = sortCliCatalog(out);
+  if (platform === 'win32' || (platform !== undefined && platform !== 'darwin' && platform !== 'linux')) return sorted;
+
+  // Search-only enrichment: static catalog browsing must not trigger a formula
+  // lookup for every one of the 20+ curated tools.
+  // Candidate names are deliberately derived, not guessed, so a `playwright`
+  // command never turns into the unrelated stale `playwright-cli` formula.
+  const targets = sorted
+    .slice(0, 3)
+    .filter((entry) => entry.channel === 'curated' || entry.channel === 'npm')
+    .filter((entry) => !entry.installs?.some((install) => install.label === 'Homebrew'));
+  const candidates = new Map<string, CliCatalogEntry | undefined>();
+  candidates.set(text.toLowerCase(), brew);
+  if (brew) {
+    candidates.set(brew.command.toLowerCase(), brew);
+  }
+  const names = [...new Set(targets.flatMap(brewCandidatesFor))];
+  const missing = names.filter((name) => !candidates.has(name));
+  const lookedUp = await Promise.all(
+    missing.map(async (name) => [name, await lookupBrewFormula(name, { fetchImpl, signal, base: brewBase }).catch(() => undefined)] as const),
+  );
+  for (const [name, formula] of lookedUp) candidates.set(name, formula);
+
+  return sorted.map((entry) => {
+    if (!targets.includes(entry)) return entry;
+    const formula = brewCandidatesFor(entry)
+      .map((name) => candidates.get(name))
+      .find((candidate): candidate is CliCatalogEntry => !!candidate && brewFormulaMatches(entry, candidate));
+    if (!formula) return entry;
+    const note = `homebrew-core packages this tool under "${formula.command}", but the vendor's own docs may name a different route.`;
+    const installs = [...(entry.installs ?? []), brewInstallOption(formula.command, note)];
+    return { ...entry, installs };
+  });
 }
