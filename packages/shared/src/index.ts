@@ -480,6 +480,8 @@ export interface CliInstallOption {
   requires?: string;
   /** Whether `requires` was on PATH when the daemon assembled this result. */
   available?: boolean;
+  /** The route's provenance or caveat, shown beside the selected command. */
+  note?: string;
   /** The matching uninstall command, when the manager makes it mechanical. */
   uninstall?: string;
   /** The matching reinstall/repair command, when the manager has a better verb than install. */

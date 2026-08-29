@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { chooseInstall, enrichCliInstalls } from './cli-actions.js';
 import { binCommand, categoryFor, lookupBrewFormula, mapBrewFormula, mapNpmCli, publisherOf, searchCliCatalog, searchCuratedClis, searchNpmClis } from './cli-search.js';
 import { cliCatalogEntry, KNOWN_CLIS, knownCli, matchesCli, sortCliCatalog } from './clis.js';
 import type { CliCatalogEntry } from '@hypergate/shared';
@@ -279,5 +280,170 @@ describe('searchCliCatalog channel precedence', () => {
     expect(ripgrep).toHaveLength(1);
     expect(ripgrep[0].channel).toBe('brew');
     expect(ripgrep[0].installs?.[0].command).toBe('brew install ripgrep');
+  });
+});
+
+describe('searchCliCatalog Homebrew enrichment', () => {
+  it('merges a formula matched by command name and adds provenance', async () => {
+    const { impl, seen } = stubFetch({
+      '/-/v1/search': { objects: [{ package: { name: 'vercel' } }] },
+      '/vercel/latest': {
+        name: 'vercel',
+        version: '59.10.0',
+        homepage: 'https://vercel.com/docs/cli',
+        bin: { vercel: 'cli.js' },
+      },
+      '/formula/vercel.json': {
+        name: 'vercel',
+        homepage: 'https://vercel.com/home',
+        versions: { stable: '59.9.1' },
+      },
+    });
+    const results = await searchCliCatalog('vercel', { fetchImpl: impl, platform: 'darwin' });
+    const vercel = results.find((entry) => entry.id === 'vercel')!;
+    expect(vercel.installs).toContainEqual(expect.objectContaining({
+      label: 'Homebrew',
+      command: 'brew install vercel',
+      note: 'Homebrew core packages this tool as "vercel"; the vendor\'s own docs may name a different route.',
+    }));
+    expect(vercel.installs?.filter((install) => install.label === 'Homebrew')).toHaveLength(1);
+    expect(seen.filter((url) => url.includes('/formula/vercel.json'))).toHaveLength(1);
+  });
+
+  it('lets a present discovered Homebrew route beat npm after enrichment', async () => {
+    const { impl } = stubFetch({
+      '/-/v1/search': { objects: [{ package: { name: 'vercel' } }] },
+      '/vercel/latest': {
+        name: 'vercel',
+        version: '59.10.0',
+        homepage: 'https://vercel.com/docs/cli',
+        bin: { vercel: 'cli.js' },
+      },
+      '/formula/vercel.json': {
+        name: 'vercel',
+        homepage: 'https://vercel.com/home',
+        versions: { stable: '59.9.1' },
+      },
+    });
+    const [vercel] = (await searchCliCatalog('vercel', { fetchImpl: impl, platform: 'darwin' }))
+      .filter((entry) => entry.id === 'vercel');
+    const annotated = enrichCliInstalls({
+      ...vercel,
+      installs: vercel.installs?.map((install) => install.label === 'Homebrew' ? { ...install, available: true } : install),
+    });
+    expect(chooseInstall(annotated)?.command).toBe('brew install vercel');
+  });
+
+  it('derives a differently named formula from the publisher', async () => {
+    const { impl, seen } = stubFetch({
+      '/-/v1/search': { objects: [{ package: { name: 'wrangler' } }] },
+      '/wrangler/latest': {
+        name: 'wrangler',
+        version: '4.127.1',
+        homepage: 'https://developers.cloudflare.com/workers/wrangler/',
+        repository: { url: 'git+https://github.com/cloudflare/wrangler.git' },
+        bin: { wrangler: 'cli.js' },
+      },
+      '/formula/cloudflare-wrangler.json': {
+        name: 'cloudflare-wrangler',
+        homepage: 'https://developers.cloudflare.com/workers/',
+        versions: { stable: '4.127.0' },
+      },
+    });
+    const results = await searchCliCatalog('wrangler', { fetchImpl: impl, platform: 'linux' });
+    const wrangler = results.find((entry) => entry.id === 'wrangler')!;
+    expect(wrangler.installs).toContainEqual(expect.objectContaining({
+      command: 'brew install cloudflare-wrangler',
+      note: 'Homebrew core packages this tool as "cloudflare-wrangler"; the vendor\'s own docs may name a different route.',
+    }));
+    const formulaLookups = seen.filter((url) => url.includes('/formula/'));
+    expect(formulaLookups.filter((url) => url.includes('/formula/cloudflare-wrangler.json'))).toHaveLength(1);
+    expect(new Set(formulaLookups).size).toBe(formulaLookups.length);
+  });
+
+  it('refuses a differently named formula with an unrelated homepage', async () => {
+    const { impl } = stubFetch({
+      '/-/v1/search': { objects: [{ package: { name: 'widget-cli', publisher: { username: 'Acme' } } }] },
+      '/widget-cli/latest': {
+        name: 'widget-cli',
+        homepage: 'https://acme.example/widget',
+        bin: { widget: 'cli.js' },
+      },
+      '/formula/acme-widget.json': {
+        name: 'acme-widget',
+        homepage: 'https://unrelated.example/widget',
+        versions: { stable: '1.0.0' },
+      },
+    });
+    const results = await searchCliCatalog('widget', { fetchImpl: impl, platform: 'darwin' });
+    expect(results.find((entry) => entry.channel === 'npm')?.installs?.some((install) => install.label === 'Homebrew')).toBe(false);
+  });
+
+  it('does not look up the stale Playwright formula by construction', async () => {
+    // This search row's command is `playwright`, so neither the command nor its
+    // publisher-derived candidate is the abandoned `playwright-cli` formula.
+    const { impl, seen } = stubFetch({
+      '/-/v1/search': { objects: [{ package: { name: 'playwright-tools' } }] },
+      '/playwright-tools/latest': {
+        name: 'playwright-tools',
+        homepage: 'https://playwright.dev',
+        bin: { playwright: 'cli.js' },
+      },
+      '/formula/playwright-cli.json': {
+        name: 'playwright-cli',
+        homepage: 'https://playwright.dev',
+        versions: { stable: '0.1.18' },
+      },
+    });
+    const results = await searchCliCatalog('browser-tool', { fetchImpl: impl, platform: 'darwin' });
+    expect(results.some((entry) => entry.installs?.some((install) => install.label === 'Homebrew'))).toBe(false);
+    expect(seen.some((url) => url.includes('/formula/playwright-cli.json'))).toBe(false);
+  });
+
+  it('skips formula enrichment on Windows', async () => {
+    const { impl, seen } = stubFetch({
+      '/-/v1/search': { objects: [{ package: { name: 'vercel' } }] },
+      '/vercel/latest': { name: 'vercel', bin: { vercel: 'cli.js' } },
+      '/formula/vercel.json': { name: 'vercel', versions: { stable: '59.9.1' } },
+    });
+    const results = await searchCliCatalog('vercel', { fetchImpl: impl, platform: 'win32' });
+    expect(results.find((entry) => entry.id === 'vercel')?.installs?.some((install) => install.label === 'Homebrew')).toBe(false);
+    // The existing query-name lookup still runs; only the generic enrichment is
+    // skipped on Windows.
+    expect(seen.filter((url) => url.includes('/formula/'))).toHaveLength(1);
+  });
+
+  it('keeps results when a candidate formula fetch throws or returns 404', async () => {
+    const throwing = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('/-/v1/search')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ objects: [{ package: { name: 'vercel' } }] }),
+        } as unknown as Response;
+      }
+      if (url.includes('/vercel/latest')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ name: 'vercel', bin: { vercel: 'cli.js' } }),
+        } as unknown as Response;
+      }
+      throw new Error('brew unavailable');
+    }) as unknown as typeof fetch;
+    const throwingResults = await searchCliCatalog('vercel', { fetchImpl: throwing, platform: 'darwin' });
+    expect(throwingResults.find((entry) => entry.id === 'vercel')).toBeTruthy();
+    expect(throwingResults.find((entry) => entry.id === 'vercel')?.installs?.some((install) => install.label === 'Homebrew')).toBe(false);
+
+    const { impl } = stubFetch({
+      '/-/v1/search': { objects: [{ package: { name: 'vercel' } }] },
+      '/vercel/latest': { name: 'vercel', bin: { vercel: 'cli.js' } },
+    });
+    const missingResults = await searchCliCatalog('vercel', { fetchImpl: impl, platform: 'darwin' });
+    expect(missingResults.find((entry) => entry.id === 'vercel')).toBeTruthy();
+    expect(missingResults.find((entry) => entry.id === 'vercel')?.installs?.some((install) => install.label === 'Homebrew')).toBe(false);
   });
 });

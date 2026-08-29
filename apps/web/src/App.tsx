@@ -4712,6 +4712,7 @@ function CliInstallRow({ c, token, onJobDone }: {
                   {pick.requires ?? pick.label} isn't on this machine, so Hypergate can't run this route; copy it or pick another.
                 </div>
               )}
+              {pick.note && <div className="small muted">{pick.note}</div>}
             </div>
           )}
           {job && <CliJobPane job={job} onKill={kill} onDismiss={dismiss} />}
