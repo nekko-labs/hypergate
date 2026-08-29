@@ -103,7 +103,18 @@ export const knownCli = (id: string): CliTool | undefined => KNOWN_CLIS.find((c)
  * a given machine may prefer — a Windows user has no `brew`, and telling them to
  * open a download page when `winget` would do it is worse advice.
  *
- * Only commands taken from the vendor's own install docs belong here.
+ * Routes come from the vendor's own install docs, or from a hand-checked
+ * homebrew-core formula that builds from the tool's own upstream release and
+ * tracks its current version line. Such routes carry a `note`, so the UI never
+ * implies the vendor documented them. Homebrew core is a reviewed tap and is
+ * already the source the `brew` lookup channel trusts (see cli-search.ts and
+ * adviceForCli), so a system-manager route that can also upgrade and remove
+ * the tool beats an npm global.
+ *
+ * That version-line check is why `playwright-cli` is not included:
+ * homebrew-core's abandoned 0.1.18 formula is a different version line from
+ * `@playwright/cli`. The hand-check found homebrew-core 59.9.1 vs npm 59.10.0
+ * for Vercel and 4.127.0 vs npm 4.127.1 for Wrangler.
  */
 const EXTRA_INSTALLS: Record<string, CliInstallOption[]> = {
   // Anthropic documents four routes and leads with the native script; Homebrew
@@ -160,6 +171,12 @@ const EXTRA_INSTALLS: Record<string, CliInstallOption[]> = {
     { label: 'PowerShell', command: 'powershell -c "iwr https://fly.io/install.ps1 -useb | iex"', platforms: ['win32'] },
     { label: 'shell', command: 'curl -L https://fly.io/install.sh | sh', platforms: ['darwin', 'linux'] },
     { label: 'Homebrew', command: 'brew install flyctl', platforms: ['darwin', 'linux'] },
+  ],
+  wrangler: [
+    { label: 'Homebrew', command: 'brew install cloudflare-wrangler', platforms: ['darwin', 'linux'], note: "Homebrew core's formula builds Cloudflare's own release, but Cloudflare's docs document only the npm route." },
+  ],
+  vercel: [
+    { label: 'Homebrew', command: 'brew install vercel', platforms: ['darwin', 'linux'], note: "Homebrew core's formula builds Vercel's own release, but Vercel's docs document only the npm route." },
   ],
   aws: [
     { label: 'winget', command: 'winget install Amazon.AWSCLI', platforms: ['win32'] },
