@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CliJob } from '@hypergate/shared';
 import { CliJobRunner } from './cli-jobs.ts';
@@ -65,6 +68,34 @@ describe('CliJobRunner', () => {
     const done = await finished(runner, job.id);
     expect(done.status).toBe('failed');
     expect(done.error).toBeTruthy();
+  });
+
+  it.skipIf(process.platform === 'win32')('disables Homebrew ask mode when stdin is closed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hypergate-brew-'));
+    const originalPath = process.env.PATH;
+    const originalNoAsk = process.env.HOMEBREW_NO_ASK;
+    symlinkSync(node, join(dir, 'brew'));
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`;
+    delete process.env.HOMEBREW_NO_ASK;
+    try {
+      const runner = new CliJobRunner();
+      const job = runner.start({
+        cliId: 'demo',
+        name: 'Demo',
+        action: 'install',
+        command: 'brew install demo',
+        argv: ['brew', '-e', "console.log(process.env.HOMEBREW_NO_ASK ?? 'unset')"],
+      });
+      const done = await finished(runner, job.id);
+      expect(done.status).toBe('succeeded');
+      expect(done.lines).toContain('1');
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalNoAsk === undefined) delete process.env.HOMEBREW_NO_ASK;
+      else process.env.HOMEBREW_NO_ASK = originalNoAsk;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('one job per tool at a time; a second start throws while the first runs', async () => {
