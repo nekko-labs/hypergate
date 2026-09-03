@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.nekko-labs/hypergate",
   "description": "Local-first runtime and manager for MCP servers, behind one gateway endpoint for any agent harness.",
-  "version": "1.24.0",
+  "version": "1.25.0",
   "websiteUrl": "https://hypergate.app",
   "repository": {
     "url": "https://github.com/nekko-labs/hypergate",
@@ -12,7 +12,7 @@
     {
       "registryType": "npm",
       "identifier": "hypergated",
-      "version": "1.24.0",
+      "version": "1.25.0",
       "transport": { "type": "stdio" }
     }
   ]

@@ -103,6 +103,7 @@ export class CliJobRunner {
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
+        env: file === 'brew' ? { ...process.env, HOMEBREW_NO_ASK: '1' } : undefined,
       });
     } catch (e) {
       this.finish(record, 'failed', undefined, e instanceof Error ? e.message : String(e));
