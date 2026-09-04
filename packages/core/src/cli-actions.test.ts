@@ -144,6 +144,7 @@ describe('curated catalog integrity (lifecycle view)', () => {
       }
     }
     expect(KNOWN_CLIS.find((t) => t.id === 'flyctl')?.auth?.runnable).toBe(true);
+    expect(KNOWN_CLIS.find((t) => t.id === 'az')?.auth).toEqual({ command: 'az login', runnable: true });
     expect(KNOWN_CLIS.find((t) => t.id === 'gh')?.auth?.runnable).toBeUndefined();
   });
 

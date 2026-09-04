@@ -174,7 +174,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.25.0';
+const VERSION = '1.26.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -2429,7 +2429,8 @@ if (STDIO_MODE) {
         // Resolved only once the job actually started, so a 409 (another job
         // running) leaves the request answerable rather than silently eaten.
         cliInstallRequests.resolve(request.id);
-        return json(res, 202, { request, approved: true, job });
+        const setup = request.channel ? undefined : knownCli(request.cliId)?.auth;
+        return json(res, 202, { request, approved: true, job, setup });
       } catch (e) {
         return json(res, 409, { error: e instanceof Error ? e.message : String(e) });
       }

@@ -21,6 +21,7 @@ import type {
   ServerInstallRequest,
   CliJob,
   CliJobAction,
+  CliAuthHint,
   StartCliJobRequest,
   AuthorizeCapability,
   CredentialGuideInfo,
@@ -4505,8 +4506,9 @@ function useCliJob(token: string | undefined, onDone?: () => void) {
   useEffect(() => {
     if (!job || job.status === 'running' || doneFor.current === job.id) return;
     doneFor.current = job.id;
-    if (job.status === 'succeeded') toast.show(`${job.name}: ${job.action} finished`, 'success');
-    else if (job.status === 'failed') toast.show(`${job.name}: ${job.action} failed${job.error ? `: ${job.error}` : ''}`, 'error');
+    const action = job.action === 'reauth' ? 'setup' : job.action;
+    if (job.status === 'succeeded') toast.show(`${job.name}: ${action} finished`, 'success');
+    else if (job.status === 'failed') toast.show(`${job.name}: ${action} failed${job.error ? `: ${job.error}` : ''}`, 'error');
     onDone?.();
   }, [job, onDone, toast]);
 
@@ -4533,12 +4535,18 @@ function useCliJob(token: string | undefined, onDone?: () => void) {
 /** The live (or finished) job under a row: status, the exact command, the log, and Stop. */
 function CliJobPane({ job, onKill, onDismiss }: { job: CliJob; onKill: () => void; onDismiss: () => void }) {
   const running = job.status === 'running';
+  const activity: Record<CliJobAction, string> = {
+    install: 'installing…',
+    uninstall: 'uninstalling…',
+    repair: 'repairing…',
+    reauth: 'setting up…',
+  };
   return (
     <div style={{ marginTop: 8 }}>
       <div className="row between wrap-gap" style={{ marginBottom: 6 }}>
         <span className="row" style={{ gap: 8 }}>
           {running ? (
-            <span className="pill pill-starting"><span className="dot" />{job.action}ing…</span>
+            <span className="pill pill-starting"><span className="dot" />{activity[job.action]}</span>
           ) : job.status === 'succeeded' ? (
             <span className="pill pill-ready"><span className="dot" />done</span>
           ) : (
@@ -4553,6 +4561,55 @@ function CliJobPane({ job, onKill, onDismiss }: { job: CliJob; onKill: () => voi
       </div>
       {job.error && !running && <div className="small" style={{ color: 'var(--danger)', marginBottom: 6 }}>{job.error}</div>}
       {job.lines.length > 0 ? <LogConsole lines={job.lines} /> : running ? <div className="small muted">Waiting for output…</div> : null}
+    </div>
+  );
+}
+
+function CliSetupStep({
+  auth,
+  busy,
+  copied,
+  copyKey,
+  automatic = false,
+  status,
+  onCopy,
+  onRun,
+}: {
+  auth: NonNullable<CliCatalogEntry['auth']>;
+  busy: boolean;
+  copied: string | null;
+  copyKey: string;
+  automatic?: boolean;
+  status?: CliJob['status'];
+  onCopy: () => void;
+  onRun: () => void;
+}) {
+  const message =
+    status === 'succeeded'
+      ? 'Account setup finished. This CLI is ready to use.'
+      : status === 'running'
+        ? 'Account setup is running.'
+        : status === 'failed' || status === 'killed'
+          ? 'Account setup did not finish. Try again, or copy the command to your terminal.'
+          : automatic && auth.runnable
+            ? 'Next: Hypergate starts account setup automatically.'
+            : auth.runnable
+              ? 'Set up the account this CLI will use.'
+              : 'Next: finish account setup in your terminal.';
+  return (
+    <div className="cli-installs">
+      <div className="small muted">{message}</div>
+      <span className="cli-install">
+        <span className="small muted">setup</span>
+        <code className="mono">{auth.command}</code>
+        {auth.runnable && (
+          <button className="btn sm" disabled={busy} onClick={onRun}>
+            {status === 'succeeded' ? 'Run again' : status === 'failed' || status === 'killed' ? 'Try again' : 'Run'}
+          </button>
+        )}
+        <button className="btn sm btn-ghost" onClick={onCopy}>{copied === copyKey ? 'Copied!' : 'Copy'}</button>
+      </span>
+      {auth.note && <div className="small muted">{auth.note}</div>}
     </div>
   );
 }
@@ -4607,6 +4664,12 @@ function CliInstallRow({ c, token, onJobDone }: {
   const [sel, setSel] = useState<string | null>(null);
   const [armed, setArmed] = useState(false);
   const { job, starting, start, kill, dismiss } = useCliJob(token, onJobDone);
+  const autoSetupFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!c.auth?.runnable || !job || job.action !== 'install' || job.status !== 'succeeded' || autoSetupFor.current === job.id) return;
+    autoSetupFor.current = job.id;
+    void start({ action: 'reauth', cliId: c.id }, c.name);
+  }, [c.auth?.runnable, c.id, c.name, job, start]);
   const routes = (c.installs ?? []).filter((option) => !/^https?:\/\//i.test(option.command));
   const download = (c.installs ?? []).find((option) => /^https?:\/\//i.test(option.command));
   // Neither a command nor a link: "Comes with Node.js" is the whole answer.
@@ -4624,6 +4687,8 @@ function CliInstallRow({ c, token, onJobDone }: {
   const runnable = !!pick?.runner;
   const missing = runnable && pick!.available === false;
   const busy = starting || job?.status === 'running';
+  const setupStatus = job?.action === 'reauth' ? job.status : undefined;
+  const showSetup = !!c.auth && (c.installed || job?.action === 'reauth' || (job?.action === 'install' && job.status === 'succeeded'));
   const body: Omit<StartCliJobRequest, 'action' | 'manager'> =
     c.channel === 'curated' ? { cliId: c.id } : { channel: c.channel, package: c.package ?? c.id };
   const run = (action: CliJobAction): void => {
@@ -4715,6 +4780,18 @@ function CliInstallRow({ c, token, onJobDone }: {
               {pick.note && <div className="small muted">{pick.note}</div>}
             </div>
           )}
+          {showSetup && c.auth && (
+            <CliSetupStep
+              auth={c.auth}
+              busy={busy}
+              copied={copied}
+              copyKey={`setup-${c.id}`}
+              automatic={job?.action === 'install' && job.status === 'succeeded'}
+              status={setupStatus}
+              onCopy={() => copy(`setup-${c.id}`, c.auth!.command)}
+              onRun={() => run('reauth')}
+            />
+          )}
           {job && <CliJobPane job={job} onKill={kill} onDismiss={dismiss} />}
         </div>
         <div className="row">
@@ -4727,11 +4804,11 @@ function CliInstallRow({ c, token, onJobDone }: {
 }
 
 /**
- * One tool you have. Manage opens the lifecycle controls: sign in again (the
- * vendor's own command), repair (reinstall over the same route), and an armed
- * uninstall — each showing its exact command with Run and Copy, so the button
- * is a shortcut rather than a black box. With several install routes the route
- * choice is explicit, defaulting to the one the resolved path suggests.
+ * One tool you have. Account setup stays visible because it is part of making
+ * an installed CLI useful; Manage opens repair (reinstall over the same route)
+ * and an armed uninstall. Each shows its exact command with Run and Copy, so
+ * the button is a shortcut rather than a black box. With several install routes
+ * the choice is explicit, defaulting to the one the resolved path suggests.
  */
 function CliRow({ c, token, entry, onOpenManage, onJobDone }: {
   c: CliStatus;
@@ -4749,6 +4826,7 @@ function CliRow({ c, token, entry, onOpenManage, onJobDone }: {
   const routes = (entry?.installs ?? []).filter((o) => o.manager);
   const chosen = routes.find((o) => o.manager === (manager ?? guessManager(c.path, routes))) ?? routes[0];
   const busy = starting || job?.status === 'running';
+  const setupStatus = job?.action === 'reauth' ? job.status : undefined;
   const runAction = (action: CliJobAction): void => {
     void start({ action, cliId: c.id, manager: chosen?.manager }, c.name);
     setArmed(false);
@@ -4767,6 +4845,17 @@ function CliRow({ c, token, entry, onOpenManage, onJobDone }: {
           </div>
           {c.description && <div className="small muted" style={{ marginTop: 3 }}>{c.description}</div>}
           {c.path && <div className="small muted mono" style={{ marginTop: 3, wordBreak: 'break-all' }}>{c.path}</div>}
+          {c.auth && (
+            <CliSetupStep
+              auth={c.auth}
+              busy={busy}
+              copied={copied}
+              copyKey={`setup-${c.id}`}
+              status={setupStatus}
+              onCopy={() => copy(`setup-${c.id}`, c.auth!.command)}
+              onRun={() => runAction('reauth')}
+            />
+          )}
           {managing && (
             <div style={{ marginTop: 8 }}>
               {routes.length > 1 && (
@@ -4783,20 +4872,6 @@ function CliRow({ c, token, entry, onOpenManage, onJobDone }: {
                       </button>
                     ))}
                   </span>
-                </div>
-              )}
-              {c.auth && (
-                <div className="cli-install" style={{ marginBottom: 6 }}>
-                  <span className="small muted">sign in</span>
-                  <code className="mono">{c.auth.command}</code>
-                  {c.auth.runnable ? (
-                    <button className="btn sm" disabled={busy} onClick={() => runAction('reauth')}>Run</button>
-                  ) : (
-                    c.auth.note && <span className="small muted">{c.auth.note}</span>
-                  )}
-                  <button className="btn sm btn-ghost" onClick={() => copy(`auth-${c.id}`, c.auth!.command)}>
-                    {copied === `auth-${c.id}` ? 'Copied!' : 'Copy'}
-                  </button>
                 </div>
               )}
               {chosen ? (
@@ -4863,17 +4938,19 @@ function CliRequestRow({ r, token, onAnswered, onJobDone }: {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [job, setJob] = useState<CliJob | null>(null);
+  const [setup, setSetup] = useState<CliAuthHint>();
   const answer = async (verdict: 'approve' | 'deny'): Promise<void> => {
     if (!token) return;
     setBusy(true);
     try {
       const res = await api.answerCliRequest(r.id, verdict, token);
-      onAnswered();
       if (res.job) {
         setJob(res.job);
+        setSetup(res.setup);
         toast.show(`Installing ${r.cliName}…`, 'success');
-      } else if (verdict === 'deny') {
-        toast.show(`Denied ${r.agentName}'s request for ${r.cliName}`);
+      } else {
+        onAnswered();
+        if (verdict === 'deny') toast.show(`Denied ${r.agentName}'s request for ${r.cliName}`);
       }
     } catch {
       toast.show(`Could not ${verdict} the request. Is another job for this tool running?`, 'error');
@@ -4893,7 +4970,14 @@ function CliRequestRow({ r, token, onAnswered, onJobDone }: {
             <span className="small muted">asked by {r.agentName}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}</span>
           </div>
           {r.reason && <div className="small muted" style={{ marginTop: 3 }}>“{r.reason}”</div>}
-          {job && <CliJobFollower id={job.id} initial={job} onDone={onJobDone} token={token} />}
+          {job && (
+            <CliJobFollower
+              initial={job}
+              followUp={setup?.runnable ? { action: 'reauth', cliId: r.cliId } : undefined}
+              onDone={() => { onAnswered(); onJobDone(); }}
+              token={token}
+            />
+          )}
         </div>
         {!job && (
           <div className="row" style={{ gap: 6 }}>
@@ -4971,22 +5055,41 @@ function ServerRequestRow({ r, token, onAnswered }: {
 }
 
 /** Poll a job started elsewhere (an approved request) and render its pane. */
-function CliJobFollower({ id, initial, onDone, token }: { id: string; initial: CliJob; onDone: () => void; token?: string }) {
+function CliJobFollower({
+  initial,
+  followUp,
+  onDone,
+  token,
+}: {
+  initial: CliJob;
+  followUp?: StartCliJobRequest;
+  onDone: () => void;
+  token?: string;
+}) {
   const [job, setJob] = useState<CliJob>(initial);
+  const continued = useRef(false);
   const done = useRef(false);
+  const followUpRef = useRef(followUp);
+  followUpRef.current = followUp;
   useEffect(() => {
     if (job.status !== 'running') {
-      if (!done.current) { done.current = true; onDone(); }
+      if (job.status === 'succeeded' && job.action === 'install' && followUpRef.current && token && !continued.current) {
+        continued.current = true;
+        void api.startCliJob(followUpRef.current, token).then(setJob).catch(onDone);
+      } else if (!done.current) {
+        done.current = true;
+        onDone();
+      }
       return;
     }
     let live = true;
     const t = setInterval(() => {
-      void api.cliJob(id).then((j) => { if (live) setJob(j); }).catch(() => {});
+      void api.cliJob(job.id).then((j) => { if (live) setJob(j); }).catch(() => {});
     }, 400);
     return () => { live = false; clearInterval(t); };
-  }, [id, job.status, onDone]);
+  }, [job.id, job.status, onDone, token]);
   const kill = (): void => {
-    if (token) void api.killCliJob(id, token).catch(() => {});
+    if (token) void api.killCliJob(job.id, token).catch(() => {});
   };
   return <CliJobPane job={job} onKill={kill} onDismiss={() => {}} />;
 }

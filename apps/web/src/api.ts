@@ -16,6 +16,7 @@ import type {
   ServerInstallRequest,
   CliJob,
   CliManagerInfo,
+  CliAuthHint,
   StartCliJobRequest,
   OAuthAppInfo,
   CreateCredentialRequest,
@@ -102,7 +103,7 @@ export const api = {
     ),
   cliRequests: () => j<{ requests: CliInstallRequest[] }>('/api/cli-requests'),
   answerCliRequest: (id: string, verdict: 'approve' | 'deny', token: string) =>
-    j<{ request: CliInstallRequest; approved: boolean; job?: CliJob }>(
+    j<{ request: CliInstallRequest; approved: boolean; job?: CliJob; setup?: CliAuthHint }>(
       `/api/cli-requests/${encodeURIComponent(id)}/${verdict}`,
       { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
     ),
