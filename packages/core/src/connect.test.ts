@@ -55,7 +55,7 @@ describe('connect targets', () => {
     }
   });
 
-  it('leads with Kotrain then Claude Code, and sorts the rest by name', () => {
+  it('leads with Agent Nekko then Claude Code, and sorts the rest by name', () => {
     // The picker renders the catalog in array order, so the order *is* the UI.
     const [first, second, ...rest] = CONNECT_TARGETS;
     expect(first.id).toBe('kotrain');
@@ -69,7 +69,7 @@ describe('connect targets', () => {
 
   it('only claims a config path for clients that read one', () => {
     expect(configPathFor('cursor', 'linux')).toBe('~/.cursor/mcp.json');
-    expect(configPathFor('kotrain', 'linux')).toBe('~/.kotrain/settings.json');
+    expect(configPathFor('kotrain', 'linux')).toBe('~/.nekko/settings.json');
     expect(configPathFor('openclaw', 'linux')).toBe('~/.openclaw/openclaw.json');
     expect(configPathFor('hermes', 'linux')).toBe('~/.hermes/config.yaml');
     expect(configPathFor('warp', 'linux')).toBe('~/.warp/.mcp.json');
@@ -118,7 +118,7 @@ describe('connect commands', () => {
     expect(JSON.parse(connectSnippet('vscode', ctx)!).servers[ENTRY_NAME].url).toBe(ctx.url);
     // OpenClaw nests under `mcp.servers` and names its transport explicitly.
     expect(JSON.parse(connectSnippet('openclaw', ctx)!).mcp.servers[ENTRY_NAME].transport).toBe('streamable-http');
-    // Kotrain's list is an array of configs, each carrying its own bearer token.
+    // Agent Nekko's list is an array of configs, each carrying its own bearer token.
     const kotrain = JSON.parse(connectSnippet('kotrain', ctx)!).mcpServers;
     expect(Array.isArray(kotrain)).toBe(true);
     expect(kotrain[0]).toMatchObject({ id: ENTRY_NAME, url: ctx.url, token: ctx.token, enabled: true });
@@ -131,7 +131,7 @@ describe('connect commands', () => {
     expect(connectSnippet('hermes', ctx)).toContain(`Authorization: "Bearer ${ctx.token}"`);
   });
 
-  it('asks Kotrain to connect itself, naming a port and nothing else', () => {
+  it('asks Agent Nekko to connect itself, naming a port and nothing else', () => {
     const link = connectDeepLink('kotrain', ctx)!;
     expect(link).toBe('kotrain://hypergate/connect?port=7777');
     // A token in a URL would be a credential handed through the OS's link
@@ -253,7 +253,7 @@ describe('agentConnectTarget', () => {
   });
 
   it('fills a deep-link target with the link, and never with the token', () => {
-    const t = agentConnectTarget(status({ id: 'kotrain', name: 'Kotrain', method: 'deeplink', command: undefined }), ctx);
+    const t = agentConnectTarget(status({ id: 'kotrain', name: 'Agent Nekko', method: 'deeplink', command: undefined }), ctx);
     expect(t.deepLink).toBe('kotrain://hypergate/connect?port=7777');
     expect(t.argv).toBeUndefined();
     expect(t.token).toBeUndefined();

@@ -41,15 +41,15 @@ export const ENTRY_NAME = 'hypergate';
 export const CONNECT_TARGETS: ConnectTarget[] = [
   {
     id: 'kotrain',
-    name: 'Kotrain',
-    // The one client that connects itself: Kotrain registers `kotrain://`, so
-    // the button hands the job to the app rather than writing a config file
-    // underneath it (Kotrain holds its settings in memory while it runs, so a
+    name: 'Agent Nekko',
+    // The one client that connects itself: it registers a URL scheme, so the
+    // button hands the job to the app rather than writing a config file
+    // underneath it (the app holds its settings in memory while it runs, so a
     // file written behind its back would be overwritten by the next save).
     method: 'deeplink',
     blurb: 'Local-first AI chat, cowork and coding in one window (Nekko Labs).',
-    hint: 'Kotrain comes forward and asks you to confirm, then shows Hypergate as a tab in its own window.',
-    homepage: 'https://kotrain.com',
+    hint: 'Agent Nekko comes forward and asks you to confirm, then shows Hypergate as a tab in its own window.',
+    homepage: 'https://agentnekko.com',
   },
   {
     id: 'claude-code',
@@ -163,7 +163,7 @@ export const configPathFor = (id: string, platform: string): string | undefined 
     case 'cursor':
       return '~/.cursor/mcp.json';
     case 'kotrain':
-      return '~/.kotrain/settings.json';
+      return '~/.nekko/settings.json';
     case 'openclaw':
       return '~/.openclaw/openclaw.json';
     case 'hermes':
@@ -338,6 +338,11 @@ export const connectSnippet = (id: string, ctx: ConnectContext): string | undefi
  */
 export const connectDeepLink = (id: string, ctx: ConnectContext): string | undefined => {
   if (id !== 'kotrain') return undefined;
+  // Deliberately still `kotrain://` after the rename to Agent Nekko. The new
+  // builds register `agent-nekko://`, `kotrain://` and `nekkos://`; the builds
+  // already installed register only the older two. An unhandled scheme fails
+  // silently, so emitting the oldest one every build answers is the only choice
+  // that works for everyone. Switch once v0.7.0+ is what people are running.
   let port = '7777';
   try {
     port = new URL(ctx.url).port || port;

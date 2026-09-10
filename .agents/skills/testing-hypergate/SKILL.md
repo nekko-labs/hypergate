@@ -38,7 +38,7 @@ Note the `--arg` repetition syntax (`--arg=-y` for args starting with `-`).
   (`a daemon is running but this shell did not start it`). For daemon-down tests use
   `pkill -f 'daemon/dist/index.js'` and restart manually.
 - Agents/servers persist in `~/.hypergate`, so state carries across daemon restarts.
-- Catalog entries whose install instruction is a URL or prose (`node`, `bun`, `kotrain`)
+- Catalog entries whose install instruction is a URL or prose (`node`, `bun`)
   are the right adversarial inputs for `hypergate cli install --run` safety tests.
 
 ## Testing management-API security
