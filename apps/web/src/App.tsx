@@ -3473,7 +3473,7 @@ type BrandMark = {
 };
 
 const AGENT_BRAND: Record<string, BrandMark> = {
-  // The Kotrain paw, at the proportions its own favicon uses. Cropped to the
+  // The Agent Nekko paw, at the proportions its own favicon uses. Cropped to the
   // paw itself: the favicon's 32×32 includes its rounded tile, and keeping that
   // padding would render the paw a fifth smaller than every mark beside it.
   kotrain: {
@@ -3541,7 +3541,7 @@ const AGENT_BRAND: Record<string, BrandMark> = {
  * so its name is the only handle left to find its logo by.
  */
 const AGENT_ID_BY_NAME: Record<string, string> = {
-  Kotrain: 'kotrain',
+  'Agent Nekko': 'kotrain',
   'Claude Code': 'claude-code',
   Antigravity: 'antigravity',
   Cursor: 'cursor',
