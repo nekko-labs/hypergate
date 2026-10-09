@@ -21,8 +21,8 @@ on:
   # ...but a merge performed by a bot does not: a push made with GITHUB_TOKEN
   # never starts a workflow run (the same recursion guard that stops a
   # bot-pushed tag from triggering release.yml). Merges here are human today, so
-  # the push above is the fast path, but kotrain's are not and its release was
-  # silently skipped because of exactly this. So a schedule is the backstop: it
+  # the push above is the fast path, but nekko-agent's are not and its release
+  # was silently skipped because of exactly this. So a schedule is the backstop: it
   # notices an untagged version bump whoever merged it. Everything below is
   # idempotent (it stops once the tag exists), so overlapping triggers are safe.
   schedule:

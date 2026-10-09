@@ -64,7 +64,7 @@ fn open_external(url: &str) {
 /// would have let any page in the webview launch anything.
 fn client_deep_link(client: &str) -> Option<String> {
     match client {
-        "kotrain" => Some(format!("kotrain://hypergate/connect?port={}", crate::paths::port())),
+        "nekko-agent" => Some(format!("nekko-agent://hypergate/connect?port={}", crate::paths::port())),
         _ => None,
     }
 }
@@ -262,7 +262,7 @@ impl ManagerWindow {
                 open_external(url);
                 return;
             }
-            // "Connect Agent Nekko": the page names a client, we build and launch
+            // "Connect Nekko Agent": the page names a client, we build and launch
             // that client's own URL. An unknown name is ignored, so the list of
             // apps this can start is the one written above and no other.
             if let Some(client) = body.strip_prefix("connect:") {
@@ -452,8 +452,8 @@ mod tests {
 
     #[test]
     fn builds_a_clients_own_link() {
-        let link = client_deep_link("kotrain").expect("kotrain is a known client");
-        assert!(link.starts_with("kotrain://hypergate/connect?port="));
+        let link = client_deep_link("nekko-agent").expect("nekko-agent is a known client");
+        assert!(link.starts_with("nekko-agent://hypergate/connect?port="));
         // The port is ours, and a credential never rides along.
         assert!(link.contains(&crate::paths::port().to_string()));
         assert!(!link.contains("token"));
@@ -463,7 +463,7 @@ mod tests {
     fn refuses_clients_it_does_not_know() {
         // The page names a client, not a URL: an unknown name has to be a
         // no-op, or naming one would be the same as launching anything.
-        for client in ["", "explorer", "kotrain://x", "file:///c:/windows"] {
+        for client in ["", "explorer", "nekko-agent://x", "file:///c:/windows"] {
             assert!(client_deep_link(client).is_none(), "should have refused {client}");
         }
     }

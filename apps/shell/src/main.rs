@@ -169,7 +169,7 @@ enum Command {
     },
     /// Call a tool through the gateway, exactly as an agent would.
     Call {
-        /// Namespaced tool name, e.g. `kotrain__kotrain_status`.
+        /// Namespaced tool name, e.g. `nekko-agent__nekko-agent_status`.
         tool: String,
         /// Arguments as a JSON object.
         args: Option<String>,

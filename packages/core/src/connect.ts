@@ -32,7 +32,7 @@ export const ENTRY_NAME = 'hypergate';
 /**
  * Clients Hypergate knows how to connect.
  *
- * Order is deliberate and only two entries deep: Kotrain first because it is
+ * Order is deliberate and only two entries deep: Nekko Agent first because it is
  * ours and the pairing we can vouch for end to end, then Claude Code as the
  * harness most people arrive already running. Everything after those two is
  * alphabetical: a flat list nobody has to argue about, rather than a ranking
@@ -40,16 +40,16 @@ export const ENTRY_NAME = 'hypergate';
  */
 export const CONNECT_TARGETS: ConnectTarget[] = [
   {
-    id: 'kotrain',
-    name: 'Agent Nekko',
+    id: 'nekko-agent',
+    name: 'Nekko Agent',
     // The one client that connects itself: it registers a URL scheme, so the
     // button hands the job to the app rather than writing a config file
     // underneath it (the app holds its settings in memory while it runs, so a
     // file written behind its back would be overwritten by the next save).
     method: 'deeplink',
     blurb: 'Local-first AI chat, cowork and coding in one window (Nekko Labs).',
-    hint: 'Agent Nekko comes forward and asks you to confirm, then shows Hypergate as a tab in its own window.',
-    homepage: 'https://agentnekko.com',
+    hint: 'Nekko Agent comes forward and asks you to confirm, then shows Hypergate as a tab in its own window.',
+    homepage: 'https://nekkoagent.com',
   },
   {
     id: 'claude-code',
@@ -162,7 +162,7 @@ export const configPathFor = (id: string, platform: string): string | undefined 
       return '~/.gemini/config/mcp_config.json';
     case 'cursor':
       return '~/.cursor/mcp.json';
-    case 'kotrain':
+    case 'nekko-agent':
       return '~/.nekko/settings.json';
     case 'openclaw':
       return '~/.openclaw/openclaw.json';
@@ -300,9 +300,9 @@ export const connectSnippet = (id: string, ctx: ConnectContext): string | undefi
         null,
         2,
       );
-    // Kotrain's mcpServers is an array of configs, each carrying its own bearer
+    // Nekko Agent's mcpServers is an array of configs, each carrying its own bearer
     // token rather than a headers map — its own shape, not the portable one.
-    case 'kotrain':
+    case 'nekko-agent':
       return JSON.stringify(
         {
           mcpServers: [
@@ -337,19 +337,14 @@ export const connectSnippet = (id: string, ctx: ConnectContext): string | undefi
  * handed through the OS's link handler on the word of whoever opened it.
  */
 export const connectDeepLink = (id: string, ctx: ConnectContext): string | undefined => {
-  if (id !== 'kotrain') return undefined;
-  // Deliberately still `kotrain://` after the rename to Agent Nekko. The new
-  // builds register `agent-nekko://`, `kotrain://` and `nekkos://`; the builds
-  // already installed register only the older two. An unhandled scheme fails
-  // silently, so emitting the oldest one every build answers is the only choice
-  // that works for everyone. Switch once v0.7.0+ is what people are running.
+  if (id !== 'nekko-agent') return undefined;
   let port = '7777';
   try {
     port = new URL(ctx.url).port || port;
   } catch {
     /* a malformed gateway URL still gets the default, which is where it lives */
   }
-  return `kotrain://hypergate/connect?port=${encodeURIComponent(port)}`;
+  return `nekko-agent://hypergate/connect?port=${encodeURIComponent(port)}`;
 };
 
 // ── shell quoting ───────────────────────────────────────────────────────────

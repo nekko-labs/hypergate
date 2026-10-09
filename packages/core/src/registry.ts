@@ -32,19 +32,16 @@ const githubOAuthApp = {
 export const REGISTRY: RegistryEntry[] = [
   // ── Recommended set (sorts first, in RECOMMENDED_IDS order) ───────────────
   {
-    // The id stays `kotrain` after the product's rename to Agent Nekko: it is
-    // written into every added-server record and every namespaced tool name,
-    // so changing it would orphan servers people already have.
-    id: 'kotrain',
-    name: 'Agent Nekko',
-    description: "Drive this machine's Agent Nekko agent from any harness: chat, spin up sessions, and kick off training runs on your local model.",
+    id: 'nekko-agent',
+    name: 'Nekko Agent',
+    description: "Drive this machine's Nekko Agent agent from any harness: chat, spin up sessions, and kick off training runs on your local model.",
     runtime: 'process',
-    command: 'agent-nekko',
+    command: 'nekko-agent',
     args: ['mcp'],
     official: true,
     recommended: true,
-    note: 'Requires the Agent Nekko CLI on PATH (`npm i -g agent-nekko`) — check the CLIs section below.',
-    homepage: 'https://github.com/nekko-labs/agent-nekko',
+    note: 'Requires the Nekko Agent CLI on PATH (`npm i -g nekko-agent`), check the CLIs section below.',
+    homepage: 'https://github.com/nekko-labs/nekko-agent',
   },
   {
     id: 'context7',
@@ -360,7 +357,7 @@ export const registryEntry = (id: string): RegistryEntry | undefined => REGISTRY
  * Hypergate's recommended starting set, in display order. These sort to the top
  * of the catalog ahead of everything else (which is then ordered by popularity).
  */
-export const RECOMMENDED_IDS: readonly string[] = ['kotrain', 'context7', 'supabase', 'linear', 'figma'];
+export const RECOMMENDED_IDS: readonly string[] = ['nekko-agent', 'context7', 'supabase', 'linear', 'figma'];
 
 /**
  * Order the catalog the way the UI shows it: the recommended set first (in
