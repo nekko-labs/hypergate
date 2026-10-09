@@ -1593,11 +1593,11 @@ mod tests {
 
     fn entry() -> RegistryEntry {
         serde_json::from_value(json!({
-            "id": "kotrain",
-            "name": "Agent Nekko",
+            "id": "nekko-agent",
+            "name": "Nekko Agent",
             "description": "Drive the local agent",
             "runtime": "process",
-            "command": "kotrain",
+            "command": "nekko-agent",
             "args": ["mcp"],
             "official": true,
             "recommended": true,
@@ -1663,9 +1663,9 @@ mod tests {
     #[test]
     fn builds_a_catalog_entry_verbatim() {
         let cfg = build_add_config(Some(&entry()), &opts(), &no_env).unwrap();
-        assert_eq!(cfg["id"], json!("kotrain"));
-        assert_eq!(cfg["name"], json!("Agent Nekko"));
-        assert_eq!(cfg["command"], json!("kotrain"));
+        assert_eq!(cfg["id"], json!("nekko-agent"));
+        assert_eq!(cfg["name"], json!("Nekko Agent"));
+        assert_eq!(cfg["command"], json!("nekko-agent"));
         assert_eq!(cfg["args"], json!(["mcp"]));
         assert_eq!(cfg["runtime"], json!("process"));
         assert_eq!(cfg["enabled"], json!(true));
@@ -1674,15 +1674,15 @@ mod tests {
     #[test]
     fn overrides_beat_the_catalog_entry() {
         let o = AddOptions {
-            id: Some("kotrain-dev".into()),
-            name: Some("Kotrain (dev)".into()),
+            id: Some("nekko-agent-dev".into()),
+            name: Some("Nekko Agent (dev)".into()),
             command: Some("node".into()),
             args: vec!["cli.js".into(), "mcp".into()],
             env: vec!["LOG=debug".into()],
             ..opts()
         };
         let cfg = build_add_config(Some(&entry()), &o, &no_env).unwrap();
-        assert_eq!(cfg["id"], json!("kotrain-dev"));
+        assert_eq!(cfg["id"], json!("nekko-agent-dev"));
         assert_eq!(cfg["command"], json!("node"));
         assert_eq!(cfg["args"], json!(["cli.js", "mcp"]));
         assert_eq!(cfg["env"]["LOG"], json!("debug"));
@@ -1856,7 +1856,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err,
-            "entry `kotrain` has no connection options; remove `--connection local`"
+            "entry `nekko-agent` has no connection options; remove `--connection local`"
         );
     }
 
@@ -1970,7 +1970,7 @@ mod tests {
         assert!(!terms.iter().any(|t| t == "mcp"));
 
         // A plain id is just itself.
-        assert_eq!(search_terms("kotrain"), vec!["kotrain"]);
+        assert_eq!(search_terms("nekko-agent"), vec!["nekko-agent"]);
     }
 
     #[test]
@@ -2079,7 +2079,7 @@ mod tests {
         );
         for instruction in [
             "https://bun.sh",
-            "Build from github.com/nekko-labs/kotrain",
+            "Build from github.com/nekko-labs/nekko-agent",
             "Comes with Node.js",
             "curl https://example.test/install.sh | sh",
         ] {
