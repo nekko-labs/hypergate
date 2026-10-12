@@ -372,7 +372,7 @@ function useUpdater(gateway: GatewayInfo | null): Updater {
 /**
  * Order the catalog like the daemon's sortRegistry, but client-side (we don't
  * bundle @hypergate/core into the browser): recommended entries first — keeping
- * the daemon's authored order (kotrain, context7, supabase, linear, figma) — then
+ * the daemon's authored order (nekko-agent, context7, supabase, linear, figma), then
  * the rest by popularity desc, with a stable fallback to the original order.
  */
 function sortCatalog(entries: RegistryEntry[], pop: PopularityMap): RegistryEntry[] {
@@ -3473,10 +3473,10 @@ type BrandMark = {
 };
 
 const AGENT_BRAND: Record<string, BrandMark> = {
-  // The Agent Nekko paw, at the proportions its own favicon uses. Cropped to the
+  // The Nekko Agent paw, at the proportions its own favicon uses. Cropped to the
   // paw itself: the favicon's 32×32 includes its rounded tile, and keeping that
   // padding would render the paw a fifth smaller than every mark beside it.
-  kotrain: {
+  'nekko-agent': {
     box: '5 5.5 22 20.5',
     fill: [
       'M23 20a7 5.5 0 0 1-14 0a7 5.5 0 0 1 14 0Z',
@@ -3541,7 +3541,7 @@ const AGENT_BRAND: Record<string, BrandMark> = {
  * so its name is the only handle left to find its logo by.
  */
 const AGENT_ID_BY_NAME: Record<string, string> = {
-  'Agent Nekko': 'kotrain',
+  'Nekko Agent': 'nekko-agent',
   'Claude Code': 'claude-code',
   Antigravity: 'antigravity',
   Cursor: 'cursor',
@@ -4134,7 +4134,7 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
                and the file to write by hand if it isn't installed here. */
             <>
               <div className="row wrap-gap" style={{ marginTop: 10 }}>
-                <button className="btn btn-primary" onClick={() => { setLaunched(true); connectClient('kotrain', t.deepLink!); }}>
+                <button className="btn btn-primary" onClick={() => { setLaunched(true); connectClient('nekko-agent', t.deepLink!); }}>
                   {verb} {t.name}
                 </button>
                 <span className="small muted">
@@ -4294,7 +4294,7 @@ function AgentEditor({
 /**
  * "Command-line tools": which CLIs are installed on this machine (many MCP
  * servers need one — `uvx` for Python servers, `docker` for the Docker runtime,
- * `flyctl` for Fly, `kotrain` for the Kotrain server) plus a quick search to
+ * `flyctl` for Fly, `nekko-agent` for the Nekko Agent server) plus a quick search to
  * check any command. Local + shell-free; nothing leaves the machine.
  *
  * This lists what you *have*. It used to list all 22 tools we know of and mark

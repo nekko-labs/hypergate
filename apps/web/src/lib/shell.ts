@@ -53,7 +53,7 @@ export function tellShell(message: string): void {
  * port it already knows: nothing from a page becomes something the OS
  * launches.
  */
-export function connectClient(client: 'kotrain', deepLink: string): void {
+export function connectClient(client: 'nekko-agent', deepLink: string): void {
   if (inShell) {
     tellShell(`connect:${client}`);
     return;

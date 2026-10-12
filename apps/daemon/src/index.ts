@@ -135,7 +135,7 @@ import type {
  *   • default: one localhost port serving the management API, the web UI, and
  *     the streamable-HTTP MCP gateway at /mcp (bearer-token auth).
  *   • `--stdio`: connect the aggregating gateway to stdio so an agent harness
- *     (Claude Code, Cursor, Agent Nekko) can spawn `hypergated --stdio` as ONE
+ *     (Claude Code, Cursor, Nekko Agent) can spawn `hypergated --stdio` as ONE
  *     MCP endpoint that fans out to all enabled servers.
  *
  * Local-first: binds to localhost. The daemon makes outbound calls only for

@@ -49,16 +49,16 @@ describe('connect targets', () => {
   it('offers the popular agents by name', () => {
     const ids = CONNECT_TARGETS.map((t) => t.id);
     for (const id of [
-      'claude-code', 'cursor', 'kotrain', 'devin', 'hermes', 'odysseus', 'openclaw', 'warp', 'antigravity',
+      'claude-code', 'cursor', 'nekko-agent', 'devin', 'hermes', 'odysseus', 'openclaw', 'warp', 'antigravity',
     ]) {
       expect(ids, id).toContain(id);
     }
   });
 
-  it('leads with Agent Nekko then Claude Code, and sorts the rest by name', () => {
+  it('leads with Nekko Agent then Claude Code, and sorts the rest by name', () => {
     // The picker renders the catalog in array order, so the order *is* the UI.
     const [first, second, ...rest] = CONNECT_TARGETS;
-    expect(first.id).toBe('kotrain');
+    expect(first.id).toBe('nekko-agent');
     expect(second.id).toBe('claude-code');
     // `.mcp.json` files under "m", the way anyone reading the list says it,
     // rather than under the dot. That is the only reason for the sort key.
@@ -69,7 +69,7 @@ describe('connect targets', () => {
 
   it('only claims a config path for clients that read one', () => {
     expect(configPathFor('cursor', 'linux')).toBe('~/.cursor/mcp.json');
-    expect(configPathFor('kotrain', 'linux')).toBe('~/.nekko/settings.json');
+    expect(configPathFor('nekko-agent', 'linux')).toBe('~/.nekko/settings.json');
     expect(configPathFor('openclaw', 'linux')).toBe('~/.openclaw/openclaw.json');
     expect(configPathFor('hermes', 'linux')).toBe('~/.hermes/config.yaml');
     expect(configPathFor('warp', 'linux')).toBe('~/.warp/.mcp.json');
@@ -118,10 +118,10 @@ describe('connect commands', () => {
     expect(JSON.parse(connectSnippet('vscode', ctx)!).servers[ENTRY_NAME].url).toBe(ctx.url);
     // OpenClaw nests under `mcp.servers` and names its transport explicitly.
     expect(JSON.parse(connectSnippet('openclaw', ctx)!).mcp.servers[ENTRY_NAME].transport).toBe('streamable-http');
-    // Agent Nekko's list is an array of configs, each carrying its own bearer token.
-    const kotrain = JSON.parse(connectSnippet('kotrain', ctx)!).mcpServers;
-    expect(Array.isArray(kotrain)).toBe(true);
-    expect(kotrain[0]).toMatchObject({ id: ENTRY_NAME, url: ctx.url, token: ctx.token, enabled: true });
+    // Nekko Agent's list is an array of configs, each carrying its own bearer token.
+    const nekkoAgent = JSON.parse(connectSnippet('nekko-agent', ctx)!).mcpServers;
+    expect(Array.isArray(nekkoAgent)).toBe(true);
+    expect(nekkoAgent[0]).toMatchObject({ id: ENTRY_NAME, url: ctx.url, token: ctx.token, enabled: true });
     // Warp reads the same portable shape Cursor does.
     expect(JSON.parse(connectSnippet('warp', ctx)!).mcpServers[ENTRY_NAME].url).toBe(ctx.url);
     // Antigravity rejects `url` and `httpUrl` outright; the key is `serverUrl`.
@@ -131,15 +131,15 @@ describe('connect commands', () => {
     expect(connectSnippet('hermes', ctx)).toContain(`Authorization: "Bearer ${ctx.token}"`);
   });
 
-  it('asks Agent Nekko to connect itself, naming a port and nothing else', () => {
-    const link = connectDeepLink('kotrain', ctx)!;
-    expect(link).toBe('kotrain://hypergate/connect?port=7777');
+  it('asks Nekko Agent to connect itself, naming a port and nothing else', () => {
+    const link = connectDeepLink('nekko-agent', ctx)!;
+    expect(link).toBe('nekko-agent://hypergate/connect?port=7777');
     // A token in a URL would be a credential handed through the OS's link
     // handler; the client reads its own back over loopback instead.
     expect(link).not.toContain(ctx.token);
-    expect(connectDeepLink('kotrain', { ...ctx, url: 'http://localhost:7999/mcp' })).toContain('port=7999');
+    expect(connectDeepLink('nekko-agent', { ...ctx, url: 'http://localhost:7999/mcp' })).toContain('port=7999');
     // A gateway URL with no port at all still points at where the daemon lives.
-    expect(connectDeepLink('kotrain', { ...ctx, url: 'not a url' })).toContain('port=7777');
+    expect(connectDeepLink('nekko-agent', { ...ctx, url: 'not a url' })).toContain('port=7777');
   });
 
   it('has no deep link for a client that never registered a scheme', () => {
@@ -186,7 +186,7 @@ describe('a helper command instead of a stored token', () => {
   it('leaves every other client on the token, since only Claude Code runs helpers', () => {
     // `.mcp.json` in particular is read by harnesses that would choke on a field
     // they don't know, so the portable snippet stays portable.
-    for (const id of ['mcp-json', 'cursor', 'vscode', 'gemini-cli', 'openclaw', 'kotrain', 'hermes']) {
+    for (const id of ['mcp-json', 'cursor', 'vscode', 'gemini-cli', 'openclaw', 'nekko-agent', 'hermes']) {
       expect(connectSnippet(id, helped) ?? '', id).not.toContain('headersHelper');
     }
     expect(connectArgv('gemini-cli', helped)!.add).toContain('Authorization: Bearer deadbeef');
@@ -253,8 +253,8 @@ describe('agentConnectTarget', () => {
   });
 
   it('fills a deep-link target with the link, and never with the token', () => {
-    const t = agentConnectTarget(status({ id: 'kotrain', name: 'Agent Nekko', method: 'deeplink', command: undefined }), ctx);
-    expect(t.deepLink).toBe('kotrain://hypergate/connect?port=7777');
+    const t = agentConnectTarget(status({ id: 'nekko-agent', name: 'Nekko Agent', method: 'deeplink', command: undefined }), ctx);
+    expect(t.deepLink).toBe('nekko-agent://hypergate/connect?port=7777');
     expect(t.argv).toBeUndefined();
     expect(t.token).toBeUndefined();
     // The by-hand route is still there for a machine without the app.
