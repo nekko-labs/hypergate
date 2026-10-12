@@ -45,13 +45,16 @@ export const KNOWN_CLIS: CliTool[] = [
     publisher: 'Anthropic',
   },
   {
+    // Detected id stays `kotrain` (see registry.ts); the command is the
+    // current executable, which the renamed package installs alongside the
+    // older `kotrain` and `nekkos` aliases.
     id: 'kotrain',
-    name: 'Kotrain',
-    command: 'kotrain',
+    name: 'Agent Nekko',
+    command: 'agent-nekko',
     category: 'mcp',
-    description: "Kotrain CLI — exposes this machine's local agent as an MCP server (`kotrain mcp`).",
-    homepage: 'https://github.com/nekko-labs/kotrain',
-    install: 'Build from github.com/nekko-labs/kotrain',
+    description: "Agent Nekko CLI — exposes this machine's local agent as an MCP server (`agent-nekko mcp`).",
+    homepage: 'https://github.com/nekko-labs/agent-nekko',
+    install: 'npm i -g agent-nekko',
     official: true,
     publisher: 'Nekko Labs',
   },

@@ -32,16 +32,19 @@ const githubOAuthApp = {
 export const REGISTRY: RegistryEntry[] = [
   // ── Recommended set (sorts first, in RECOMMENDED_IDS order) ───────────────
   {
+    // The id stays `kotrain` after the product's rename to Agent Nekko: it is
+    // written into every added-server record and every namespaced tool name,
+    // so changing it would orphan servers people already have.
     id: 'kotrain',
-    name: 'Kotrain',
-    description: "Drive this machine's Kotrain agent from any harness: chat, spin up sessions, and kick off training runs on your local model.",
+    name: 'Agent Nekko',
+    description: "Drive this machine's Agent Nekko agent from any harness: chat, spin up sessions, and kick off training runs on your local model.",
     runtime: 'process',
-    command: 'kotrain',
+    command: 'agent-nekko',
     args: ['mcp'],
     official: true,
     recommended: true,
-    note: 'Requires the Kotrain CLI (`kotrain`) on PATH — check the CLIs section below.',
-    homepage: 'https://github.com/nekko-labs/kotrain',
+    note: 'Requires the Agent Nekko CLI on PATH (`npm i -g agent-nekko`) — check the CLIs section below.',
+    homepage: 'https://github.com/nekko-labs/agent-nekko',
   },
   {
     id: 'context7',

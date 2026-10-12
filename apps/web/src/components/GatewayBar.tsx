@@ -12,7 +12,7 @@ export function GatewayBar({ gateway }: { gateway: GatewayInfo }) {
     claude: `claude mcp add -t http hypergate ${gateway.url} -H "Authorization: Bearer ${token}"`,
     json: JSON.stringify(gateway.clientSnippet, null, 2),
     stdio: JSON.stringify(gateway.stdioSnippet ?? { mcpServers: { 'hypergate': { command: 'hypergated', args: ['--stdio'] } } }, null, 2),
-    kotrain: 'Kotrain auto-detects Hypergate.\nSettings → MCP servers → "Connect Hypergate gateway" — one click, done.',
+    kotrain: 'Agent Nekko auto-detects Hypergate.\nSettings → MCP servers → "Connect Hypergate gateway" — one click, done.',
   };
   return (
     <div className="gwbar">
@@ -32,7 +32,7 @@ export function GatewayBar({ gateway }: { gateway: GatewayInfo }) {
             <button className={`tab ${tab === 'claude' ? 'active' : ''}`} onClick={() => setTab('claude')}>Claude Code</button>
             <button className={`tab ${tab === 'json' ? 'active' : ''}`} onClick={() => setTab('json')}>.mcp.json</button>
             <button className={`tab ${tab === 'stdio' ? 'active' : ''}`} onClick={() => setTab('stdio')}>stdio</button>
-            <button className={`tab ${tab === 'kotrain' ? 'active' : ''}`} onClick={() => setTab('kotrain')}>Kotrain</button>
+            <button className={`tab ${tab === 'kotrain' ? 'active' : ''}`} onClick={() => setTab('kotrain')}>Agent Nekko</button>
           </div>
           <pre className="snippet">{snippets[tab]}</pre>
           {tab !== 'kotrain' && (

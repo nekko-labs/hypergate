@@ -1594,7 +1594,7 @@ mod tests {
     fn entry() -> RegistryEntry {
         serde_json::from_value(json!({
             "id": "kotrain",
-            "name": "Kotrain",
+            "name": "Agent Nekko",
             "description": "Drive the local agent",
             "runtime": "process",
             "command": "kotrain",
@@ -1664,7 +1664,7 @@ mod tests {
     fn builds_a_catalog_entry_verbatim() {
         let cfg = build_add_config(Some(&entry()), &opts(), &no_env).unwrap();
         assert_eq!(cfg["id"], json!("kotrain"));
-        assert_eq!(cfg["name"], json!("Kotrain"));
+        assert_eq!(cfg["name"], json!("Agent Nekko"));
         assert_eq!(cfg["command"], json!("kotrain"));
         assert_eq!(cfg["args"], json!(["mcp"]));
         assert_eq!(cfg["runtime"], json!("process"));

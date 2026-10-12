@@ -262,7 +262,7 @@ impl ManagerWindow {
                 open_external(url);
                 return;
             }
-            // "Connect Kotrain": the page names a client, we build and launch
+            // "Connect Agent Nekko": the page names a client, we build and launch
             // that client's own URL. An unknown name is ignored, so the list of
             // apps this can start is the one written above and no other.
             if let Some(client) = body.strip_prefix("connect:") {
