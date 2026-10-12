@@ -1970,7 +1970,7 @@ mod tests {
         assert!(!terms.iter().any(|t| t == "mcp"));
 
         // A plain id is just itself.
-        assert_eq!(search_terms("nekko-agent"), vec!["nekko-agent"]);
+        assert_eq!(search_terms("nekko"), vec!["nekko"]);
     }
 
     #[test]
