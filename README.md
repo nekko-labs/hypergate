@@ -103,6 +103,23 @@ npm run shell:test    # unit + integration tests for the tray, CLI and sandbox l
 npm run smoke:shell   # daemon ↔ shell bridge: keychain, autostart, sandbox-exec, CLI
 ```
 
+### Checking a change against a running daemon
+
+The daemon runs from source, but it imports `@hypergate/core` and `@hypergate/shared` from their built `dist/`, and it serves the manager UI from `apps/web/dist`. Those are gitignored local builds that go stale silently, so a daemon started after a `src` edit can still run the old code while the tests pass. Rebuild what you changed before any live check:
+
+```bash
+npm run build -w @hypergate/shared && npm run build -w @hypergate/core
+npm run build -w @hypergate/web   # for a UI change
+```
+
+To check it without touching your real daemon on 7777, run an isolated one on its own port and data dir:
+
+```bash
+HYPERGATE_PORT=7899 HYPERGATE_DIR="$(mktemp -d)" npm run daemon
+```
+
+Dev daemons from earlier sessions can keep running on other ports and answer with old behaviour. Before trusting a daemon, list Node listeners (`lsof -nP -iTCP -sTCP:LISTEN | grep node`) and compare each one's `curl -s localhost:<port>/health` version with `package.json`.
+
 ### Packaging
 
 ```bash
@@ -121,6 +138,8 @@ npm run build:installers   # dist-installers/: this platform's installer
 ```
 
 `build:standalone` compiles the daemon into a single executable with **Node's SEA** support: the esbuild bundle is injected into a copy of the Node binary, and the web UI is placed beside it (the daemon resolves its UI relative to `process.execPath` in that layout). `bun build --compile` would be less work and would cross-compile, but Bun has no `node:sqlite`, so a Bun build silently loses durable usage history and server logs. That is worth the extra machinery.
+
+`build:standalone` and `build:installers` need a Node with single-executable support compiled in. Homebrew's Node disables it (at any version), so the script first looks for an official build installed via nodejs.org, fnm, nvm, volta or asdf and re-runs itself with that, or uses `HYPERGATE_BUILD_NODE=/path/to/node`. With none available it exits with an explanation; that is a toolchain limit, not a bug in the scripts. CI builds the installers with official Node, and `npm run build:npm` works locally with any Node.
 
 `build:installers` then wraps that tree for the host platform: NSIS on Windows, `hdiutil` on macOS, `dpkg-deb` plus `rpmbuild` on Linux. Each is built on its own OS, never cross-built, so every artifact is made by the toolchain that will run it. The definitions live in [`packaging/installers/`](packaging/installers/).
 
