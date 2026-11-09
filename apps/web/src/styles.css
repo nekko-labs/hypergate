@@ -1,16 +1,16 @@
 /* Hypergate, Nekko Labs design language (violet→cyan era, matches Nekko Agent).
-   Two themes: DARK (a calm mid-slate) is the default and Light is opt-in via
+   Two themes: DARK (Midnight, #0a0c16 blue) is the default and Light is opt-in via
    the topbar sun/moon button (data-theme on <html>). */
 :root {
   --accent: #8071ff;
   --accent-2: #22d3ee;
   --grad: linear-gradient(120deg, var(--accent), var(--accent-2));
 
-  /* Dark (default) — mid slate, neither near-black nor paper-white. */
-  --paper: #24272f;
-  --paper-2: #2b2f39;
-  --card: #2c313c;
-  --card-2: #333947;
+  /* Dark (default): Midnight, a deep blue-black (#0a0c16) with lifted blue cards. */
+  --paper: #0a0c16;
+  --paper-2: #0f1220;
+  --card: #141828;
+  --card-2: #1b2034;
   --ink: #edeff5;
   --ink-2: #b7bdcc;
   --ink-3: #838b9d;
@@ -345,7 +345,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
    background grows to cover the window while the palette swaps under it. */
 .theme-sweep { position: fixed; inset: 0; z-index: 9999; pointer-events: none; background: var(--paper); }
 .theme-sweep[data-to='light'] { background: #f7f8fb; }
-.theme-sweep[data-to='dark'] { background: #24272f; }
+.theme-sweep[data-to='dark'] { background: #0a0c16; }
 
 @media (prefers-reduced-motion: reduce) {
   .themetoggle { transition: none; }

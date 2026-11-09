@@ -24,6 +24,6 @@
     </mask>
   </defs>
   <!-- deep space tile -->
-  <rect x="4" y="4" width="92" height="92" rx="23" fill="#05060f"/>
+  <rect x="4" y="4" width="92" height="92" rx="23" fill="#0a0c16"/>
   <circle cx="50" cy="50" r="40" fill="url(#hgRing)" mask="url(#hgGate)"/>
 </svg>
