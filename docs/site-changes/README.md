@@ -16,6 +16,7 @@ visual history stays intact.
 | 2026-08-03 | First feature section reframed around security; three hero stats removed | [`2026-08-03-security-first-feature`](2026-08-03-security-first-feature) |
 | 2026-08-04 | Hero headline `One gate.` → `One secure gate.`, subhead rewritten around safely connecting agents to real services | [`2026-08-04-secure-gate-hero`](2026-08-04-secure-gate-hero) |
 | 2026-08-04 | Title, social and structured-data copy realigned to the new hero; subhead comma splice fixed | [`2026-08-04-hero-metadata`](2026-08-04-hero-metadata) |
+| 2026-11-09 | Headline `Connect everything once. For All.`, new Connect once section (hub + four pillars), features reordered around setup, permissions and visibility; Midnight `#0a0c16` background | [`2026-11-09-connect-once`](2026-11-09-connect-once) |
 
 Two notes on reading the table. Each pair is captured against the base the change
 landed on, so consecutive folders can differ by more than the change they document:

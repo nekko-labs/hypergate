@@ -795,8 +795,8 @@ fn startup_html(error: Option<&str>) -> String {
     format!(
         r#"<!doctype html><html><head><meta charset="utf-8"><title>Hypergate</title>
 <style>
-:root{{color-scheme:dark}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1117;color:#e7e9ee;font:15px/1.5 system-ui,sans-serif}}
-main{{width:min(440px,calc(100vw - 48px));text-align:center;padding:40px 28px;border:1px solid #2a3042;border-radius:20px;background:#171b27;box-shadow:0 18px 60px #05060a99}}
+:root{{color-scheme:dark}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#0a0c16;color:#e7e9ee;font:15px/1.5 system-ui,sans-serif}}
+main{{width:min(440px,calc(100vw - 48px));text-align:center;padding:40px 28px;border:1px solid #222a40;border-radius:20px;background:#121628;box-shadow:0 18px 60px #05060a99}}
 h1{{font-size:24px;margin:0 0 8px}}p{{color:#aab3c7;margin:8px 0}}.error{{color:#ff9aab}}button{{margin:18px 6px 0;padding:9px 15px;border:1px solid #5662a4;border-radius:9px;background:#252c51;color:#f2f4ff;cursor:pointer}}button:hover{{background:#303a6b}}code{{font-size:12px;overflow-wrap:anywhere;color:#8fddec}}
 {gate_css}
 </style></head><body><main>{gate}<h1>{title}</h1>{message}
