@@ -623,7 +623,9 @@ pub fn resolve_program(
     for dir in std::env::split_paths(path_var?) {
         for ext in exts {
             let candidate = dir.join(format!("{argv0}{ext}"));
-            if candidate.is_file() {
+            // A file without an execute bit is not a command on POSIX: the
+            // shell (and execvp) would skip it and keep searching, so do we.
+            if candidate.is_file() && is_executable(&candidate) {
                 // A relative PATH entry (`.`, `bin`) resolves against cwd, the
                 // same way the shell would have run it.
                 return Some(if candidate.is_absolute() {
@@ -635,6 +637,20 @@ pub fn resolve_program(
         }
     }
     None
+}
+
+#[cfg(unix)]
+fn is_executable(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p)
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// Windows decides by extension (PATHEXT), which the caller already applied.
+#[cfg(not(unix))]
+fn is_executable(_: &std::path::Path) -> bool {
+    true
 }
 
 /// What `cred programs` asked for: `Some(Some(list))` bind exactly these,
@@ -2008,6 +2024,45 @@ mod tests {
         dir
     }
 
+    /// An empty file that PATH search will accept: executable on unix.
+    fn exe(p: std::path::PathBuf) {
+        std::fs::write(&p, b"").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_program_skips_a_non_executable_namesake() {
+        let root = scratch("noexec");
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        // A text file named `git` earlier on PATH, the real one later.
+        std::fs::write(first.join("git"), b"not a program").unwrap();
+        exe(second.join("git"));
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        let got = resolve_program("git", Some(&path), &root, &[String::new()]).unwrap();
+        assert_eq!(got, second.join("git"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn instructions_status_forwards_the_same_homes_as_writes() {
+        let mut homes = serde_json::Map::new();
+        assert_eq!(api::instructions_status_path(&homes), "/api/instructions");
+        homes.insert("CLAUDE_CONFIG_DIR".into(), json!("/home/me/alt claude"));
+        homes.insert("CODEX_HOME".into(), json!("/home/me/.codex-work"));
+        assert_eq!(
+            api::instructions_status_path(&homes),
+            "/api/instructions?CLAUDE_CONFIG_DIR=%2Fhome%2Fme%2Falt%20claude&CODEX_HOME=%2Fhome%2Fme%2F.codex-work"
+        );
+    }
+
     #[test]
     fn resolve_program_walks_path_in_order() {
         let root = scratch("order");
@@ -2015,8 +2070,8 @@ mod tests {
         let second = root.join("second");
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();
-        std::fs::write(second.join("tool"), b"").unwrap();
-        std::fs::write(first.join("tool"), b"").unwrap();
+        exe(second.join("tool"));
+        exe(first.join("tool"));
         let path = std::env::join_paths([&first, &second]).unwrap();
         let got = resolve_program("tool", Some(&path), &root, &[String::new()]).unwrap();
         assert_eq!(got, first.join("tool"));
@@ -2049,8 +2104,8 @@ mod tests {
         // Fixture names match the extensions exactly, so the test holds on a
         // case-sensitive filesystem too (Linux CI); on Windows PATHEXT is
         // upper case and the filesystem answers either spelling.
-        std::fs::write(root.join("gh.CMD"), b"").unwrap();
-        std::fs::write(root.join("gh.EXE"), b"").unwrap();
+        exe(root.join("gh.CMD"));
+        exe(root.join("gh.EXE"));
         let path = std::env::join_paths([&root]).unwrap();
         let exts = vec![".EXE".to_string(), ".CMD".to_string(), String::new()];
         let got = resolve_program("gh", Some(&path), &root, &exts).unwrap();

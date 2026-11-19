@@ -757,6 +757,7 @@ const settingsInfo = (): SettingsInfo => {
     credentialLockdown: s.credentialLockdown === true,
     autoQuarantine: s.autoQuarantine === true,
     alertWebhookFormat: s.alertWebhookFormat ?? 'json',
+    instructionsPromptDismissed: s.instructionsPromptDismissed === true,
     ...ambient.settingsInfo(),
     // Probed rather than assumed: a Mac with no Touch ID sensor and a Linux box
     // with no polkit both need the reveal button disabled with a reason, and
@@ -3345,7 +3346,15 @@ if (STDIO_MODE) {
     // master token (plus the global same-origin guard) like every other
     // mutation of something that is not Hypergate's.
     if (pathname === '/api/instructions' && req.method === 'GET') {
-      const out: InstructionsStatusResponse = agentInstructions.status(instructionsAgentKey);
+      // The CLI forwards its own CLAUDE_CONFIG_DIR / CODEX_HOME here exactly as
+      // it does for install and remove, so status reads the same files a write
+      // would change. Only the known keys are honoured (instructions.ts).
+      const homes: Record<string, string> = {};
+      for (const k of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME']) {
+        const v = url.searchParams.get(k);
+        if (v) homes[k] = v;
+      }
+      const out: InstructionsStatusResponse = agentInstructions.status(instructionsAgentKey, homes);
       return json(res, 200, out);
     }
     const instrM = /^\/api\/instructions\/([a-z0-9-]+)$/.exec(pathname);

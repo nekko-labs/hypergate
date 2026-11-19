@@ -95,7 +95,11 @@ export class AgentInstructions {
    * the same file (OpenCode falling back to Claude Code's), so the list is
    * de-duplicated by path: one file, one write.
    */
-  private pick(id: string, mode: 'install' | 'remove', ctx: InstructionsContext): InstructionsHarness[] {
+  private pick(
+    id: string,
+    mode: 'install' | 'remove',
+    ctx: InstructionsContext,
+  ): { h: InstructionsHarness; path: string }[] {
     const rows =
       id === 'all'
         ? INSTRUCTION_HARNESSES.filter((h) => {
@@ -104,13 +108,19 @@ export class AgentInstructions {
           })
         : INSTRUCTION_HARNESSES.filter((h) => h.id === id);
     if (!rows.length && id !== 'all') throw new Error(`unknown harness "${id}"`);
+    // Every path is planned here, before anything is written. Resolving again
+    // per write would let a file created earlier in the batch change where a
+    // later harness lands (OpenCode falls back to Claude Code's file once it
+    // exists), and its block would then overwrite Claude Code's.
     const seen = new Set<string>();
-    return rows.filter((h) => {
-      const p = resolveHarness(h, ctx).path;
-      if (seen.has(p)) return false;
-      seen.add(p);
-      return true;
-    });
+    const out: { h: InstructionsHarness; path: string }[] = [];
+    for (const h of rows) {
+      const path = resolveHarness(h, ctx).path;
+      if (seen.has(path)) continue;
+      seen.add(path);
+      out.push({ h, path });
+    }
+    return out;
   }
 
   install(
@@ -119,8 +129,7 @@ export class AgentInstructions {
     homes?: Record<string, string>,
   ): InstructionsWriteResult[] {
     const ctx = this.ctx(homes);
-    return this.pick(id, 'install', ctx).map((h) => {
-      const path = resolveHarness(h, ctx).path;
+    return this.pick(id, 'install', ctx).map(({ h, path }) => {
       try {
         const before = readText(path);
         const after = upsertInstructionsBlock(before, renderInstructionsBlock(safeAgentKey(agentKeyFor(h), h.id)));
@@ -137,8 +146,7 @@ export class AgentInstructions {
 
   remove(id: string, homes?: Record<string, string>): InstructionsWriteResult[] {
     const ctx = this.ctx(homes);
-    return this.pick(id, 'remove', ctx).map((h) => {
-      const path = resolveHarness(h, ctx).path;
+    return this.pick(id, 'remove', ctx).map(({ h, path }) => {
       try {
         const before = readText(path);
         if (before === undefined) return { id: h.id, path, changed: false };

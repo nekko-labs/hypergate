@@ -40,6 +40,17 @@ describe('AgentInstructions', () => {
     expect(ai.status(keyFor).harnesses.find((h) => h.id === 'claude-code')).toMatchObject({ installed: true, current: true });
   });
 
+  it('install all plans every path before writing, so OpenCode never lands in a Claude file made in the same batch', () => {
+    const { home, ai } = sandbox();
+    mkdirSync(join(home, '.claude'));
+    mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
+    const results = ai.install('all', (h) => h.id);
+    expect(results.map((r) => r.id).sort()).toEqual(['claude-code', 'opencode']);
+    expect(readFileSync(join(home, '.claude', 'CLAUDE.md'), 'utf8')).toContain('hypergate run --agent claude-code');
+    expect(readFileSync(join(home, '.claude', 'CLAUDE.md'), 'utf8')).not.toContain('--agent opencode');
+    expect(readFileSync(join(home, '.config', 'opencode', 'AGENTS.md'), 'utf8')).toContain('hypergate run --agent opencode');
+  });
+
   it('backs up an existing file once, before the first write, and preserves its text', () => {
     const { home, backups, ai } = sandbox();
     const dir = join(home, '.claude');

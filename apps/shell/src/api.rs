@@ -345,7 +345,31 @@ fn delete_json(path: &str, body: &serde_json::Value) -> Result<String, String> {
 /// Which harnesses have a Hypergate block in their global instructions. Local
 /// file reads only, so `hypergate start` can afford to ask.
 pub fn instructions_status() -> Result<serde_json::Value, String> {
-    get("/api/instructions")
+    get(&instructions_status_path(&crate::commands::instruction_homes()))
+}
+
+/// `/api/instructions`, carrying the same config-home overrides a write sends,
+/// so status describes the files `install` and `remove` would touch.
+pub fn instructions_status_path(homes: &serde_json::Map<String, serde_json::Value>) -> String {
+    let query: Vec<String> = homes
+        .iter()
+        .filter_map(|(k, v)| v.as_str().map(|v| format!("{k}={}", pct(v))))
+        .collect();
+    if query.is_empty() {
+        "/api/instructions".into()
+    } else {
+        format!("/api/instructions?{}", query.join("&"))
+    }
+}
+
+/// Percent-encode a query value (RFC 3986 unreserved characters pass through).
+fn pct(v: &str) -> String {
+    v.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            other => format!("%{other:02X}"),
+        })
+        .collect()
 }
 
 /// The route for one harness id (or `all`). Ids are plain slugs, checked here

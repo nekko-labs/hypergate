@@ -653,8 +653,15 @@ fn dispatch_json(command: &Command) -> Result<ExitCode, String> {
     let failed_call =
         matches!(command, Command::Call { .. }) && data.get("isError").and_then(Value::as_bool).unwrap_or(false);
     let doctor_failed = matches!(command, Command::Doctor) && data["problems"].as_bool().unwrap_or(false);
+    // A write that could not change a file exits 1, like the human path does.
+    let instructions_failed = matches!(
+        command,
+        Command::Instructions {
+            action: InstructionsAction::Install { .. } | InstructionsAction::Remove { .. }
+        }
+    ) && data["ok"].as_bool() == Some(false);
     println!("{}", serde_json::to_string(&envelope(data)).map_err(|e| e.to_string())?);
-    Ok(if failed_call || doctor_failed {
+    Ok(if failed_call || doctor_failed || instructions_failed {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
