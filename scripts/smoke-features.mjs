@@ -3,7 +3,7 @@
 // Boots the daemon on a scratch port/data-dir, exercises each, then restarts
 // the daemon (same data-dir) to prove analytics survive a restart.
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -314,6 +314,21 @@ const noSecret = await appPost({ origin: BASE, authorization: `Bearer ${master}`
 if (noSecret.status !== 400) fail(`GitHub requires a client secret; POST without one should 400, got ${noSecret.status}`);
 ok('OAuth app setup reports this port’s callback, 404s an unknown provider, demands GitHub’s secret, and refuses no-token / cross-origin writes');
 
+// ── agent instruction files (read + the guards; never writes the real home) ──
+const instr = await (await fetch(`${BASE}/api/instructions`)).json();
+if (instr.blockVersion !== 1 || !Array.isArray(instr.harnesses) || !instr.harnesses.length)
+  fail(`instructions status malformed: ${JSON.stringify(instr).slice(0, 200)}`);
+if (!instr.harnesses.every((h) => typeof h.path === 'string' && h.source.startsWith('https://')))
+  fail('every instructions harness must name its file and cite a vendor source');
+const instrNoToken = await fetch(`${BASE}/api/instructions/all`, { method: 'POST' });
+if (instrNoToken.status !== 401) fail(`installing instructions without the master token should 401, got ${instrNoToken.status}`);
+const instrForeign = await fetch(`${BASE}/api/instructions/all`, {
+  method: 'DELETE',
+  headers: { authorization: `Bearer ${master}`, origin: 'https://evil.example' },
+});
+if (instrForeign.status !== 403) fail(`a cross-origin page must not remove instructions, got ${instrForeign.status}`);
+ok(`instructions status lists ${instr.harnesses.length} harnesses; writes refuse no-token and cross-origin callers`);
+
 // ── the credential vault ─────────────────────────────────────────────────────
 // Store → gate → hand out → roll → delete, end to end. Values must reach
 // exactly three places (a spawned server's env, an allowed agent's
@@ -575,6 +590,93 @@ const resolveAs = await (await fetch(`${BASE}/api/credentials/resolve`, {
 })).json();
 if (resolveAs.env?.SMOKE_TOKEN !== SECRET_VALUE) fail(`master resolving as the granted agent should get the env: ${JSON.stringify(resolveAs)}`);
 ok('resolve honours scope: master all, an ungranted agent 403, master-as-agent its allow-list');
+
+// ── credential lockdown ─────────────────────────────────────────────────────
+// This daemon runs with HYPERGATE_NO_AUTHORIZE, so every presence prompt
+// reports `unavailable` and falls back to the master token: what is checked
+// here is everything lockdown decides *without* a person.
+const onPath = (name) => {
+  const exts = process.platform === 'win32' ? ['.exe', '.cmd', ''] : [''];
+  for (const dir of (process.env.PATH ?? '').split(process.platform === 'win32' ? ';' : ':').filter(Boolean)) {
+    for (const ext of exts) {
+      const p = join(dir, name + ext);
+      if (existsSync(p) && statSync(p).isFile()) return p;
+    }
+  }
+  return undefined;
+};
+const lockdownOn = await (await fetch(`${BASE}/api/lockdown`, {
+  method: 'POST', headers: credHeaders, body: JSON.stringify({ enabled: true }),
+})).json();
+if (!lockdownOn.enabled || lockdownOn.consent !== 'not-needed') fail(`turning lockdown on: ${JSON.stringify(lockdownOn)}`);
+const settingsLocked = await (await fetch(`${BASE}/api/settings`)).json();
+if (settingsLocked.credentialLockdown !== true) fail('settings should report credentialLockdown');
+const patchOff = await fetch(`${BASE}/api/settings`, {
+  method: 'PATCH', headers: credHeaders, body: JSON.stringify({ credentialLockdown: false }),
+});
+if (patchOff.status !== 200 || (await (await fetch(`${BASE}/api/lockdown`)).json()).enabled !== true)
+  fail('PATCH /api/settings must not be a back door that turns lockdown off');
+ok('lockdown turns on with the master token, and the settings PATCH cannot turn it off');
+
+const lockedInit = await mcp(allowed.token, 'initialize', {
+  protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'smoke-locked', version: '0' },
+});
+const lockedInstructions = lockedInit.body?.result?.instructions ?? '';
+if (!lockedInstructions.includes('credential lockdown is on') || !lockedInstructions.includes('hypergate run'))
+  fail(`locked instructions should switch to the run-only wording: ${lockedInstructions.slice(0, 200)}`);
+const lockedEnv = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_env', arguments: { id: cred.id } });
+const lockedText = lockedEnv.body?.result?.content?.[0]?.text ?? '';
+if (lockedText.includes(SECRET_VALUE)) fail('credential_env leaked a value under lockdown');
+const lockedPayload = JSON.parse(lockedText || '{}');
+if (lockedPayload.lockdown !== true || !String(lockedPayload.run).includes(`--with ${cred.id}`) || !lockedPayload.envVars?.includes('SMOKE_TOKEN'))
+  fail(`credential_env under lockdown should return names and the run line: ${lockedText}`);
+ok('under lockdown an agent is told how to run the command, never handed the value');
+
+const resolveLocked = (body, token = master) =>
+  fetch(`${BASE}/api/credentials/resolve`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+const noProgram = await resolveLocked({ agent: 'echo-agent' });
+if (noProgram.status !== 400) fail(`a resolve without a program should 400 under lockdown, got ${noProgram.status}`);
+const viaShell = await resolveLocked({ agent: 'echo-agent', program: join(DIR, 'sh'), args: ['-c', 'env'] });
+if (viaShell.status !== 403 || (await viaShell.json()).code !== 'interpreter') fail('a shell must be refused under lockdown');
+const printer = await resolveLocked({ agent: 'echo-agent', program: join(DIR, 'gh'), args: ['auth', 'token'] });
+if (printer.status !== 403 || (await printer.json()).code !== 'token_printer') fail('gh auth token must be refused under lockdown');
+const unbound = await resolveLocked({ agent: 'echo-agent', ids: [cred.id], program: join(DIR, 'curl') });
+if (unbound.status !== 403 || (await unbound.json()).code !== 'not_bound') fail('an unbound program must be refused under lockdown');
+ok('lockdown refuses a missing program, shells, token printers, and unbound programs');
+
+const GIT = onPath('git');
+if (GIT) {
+  const bind = await (await fetch(`${BASE}/api/credentials/${cred.id}/programs`, {
+    method: 'POST', headers: credHeaders, body: JSON.stringify({ programs: ['git'] }),
+  })).json();
+  if (JSON.stringify(bind.programs) !== '["git"]') fail(`binding programs: ${JSON.stringify(bind)}`);
+  const viaGit = await (await resolveLocked({ agent: 'echo-agent', program: GIT, args: ['status'] })).json();
+  if (viaGit.env?.SMOKE_TOKEN !== SECRET_VALUE) fail(`the bound program should receive the key: ${JSON.stringify(viaGit.used)}`);
+  // A file merely *named* git is not git.
+  writeFileSync(join(DIR, process.platform === 'win32' ? 'git.exe' : 'git'), '');
+  const lookalike = await resolveLocked({ agent: 'echo-agent', program: join(DIR, process.platform === 'win32' ? 'git.exe' : 'git') });
+  if (lookalike.status !== 403 || (await lookalike.json()).code !== 'program_mismatch') fail('a lookalike program must be refused');
+  // Bare master needs a person; here the prompt is unavailable, so it falls back.
+  const bareMaster = await (await resolveLocked({ program: GIT, args: ['status'] })).json();
+  if (bareMaster.env?.SMOKE_TOKEN !== SECRET_VALUE) fail(`bare master with no prompt available should fall back: ${JSON.stringify(bareMaster)}`);
+  await fetch(`${BASE}/api/credentials/${cred.id}/programs`, { method: 'POST', headers: credHeaders, body: JSON.stringify({ programs: null }) });
+  ok('a bound program gets the key, and a lookalike with the same name does not');
+} else {
+  ok('git is not on PATH here; skipped the bound-program checks');
+}
+
+const lockdownOff = await (await fetch(`${BASE}/api/lockdown`, {
+  method: 'POST', headers: credHeaders, body: JSON.stringify({ enabled: false }),
+})).json();
+if (lockdownOff.enabled !== false || lockdownOff.consent !== 'unavailable') fail(`turning lockdown off: ${JSON.stringify(lockdownOff)}`);
+const unlockedEnv = await mcp(allowed.token, 'tools/call', { name: 'hypergate__credential_env', arguments: { id: cred.id } });
+if (JSON.parse(unlockedEnv.body?.result?.content?.[0]?.text ?? '{}').env?.SMOKE_TOKEN !== SECRET_VALUE)
+  fail('credential_env should hand out the value again once lockdown is off');
+ok('turning lockdown off reports that no prompt could be shown, and restores the old behaviour');
 
 // Roll: value replaced in place, the referencing server restarted onto it.
 const ROLLED_VALUE = 'smoke_fly_v2_fedcba9876543210';

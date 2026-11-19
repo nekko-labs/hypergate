@@ -107,4 +107,14 @@ describe('CredentialVault', () => {
     expect(used).toEqual([gh.id]);
     expect(vault.get(gh.id)?.lastUsedAt).toBeDefined();
   });
+
+  it('binds programs, persists them, and clears back to the guide default', () => {
+    const dir = freshDir();
+    const vault = new CredentialVault(dir, noKeychain);
+    const gh = vault.create({ name: 'GitHub', value: 'ghp_x', service: 'github' });
+    expect(vault.setPrograms(gh.id, ['gh', 'git'])?.programs).toEqual(['gh', 'git']);
+    expect(new CredentialVault(dir, noKeychain).get(gh.id)?.programs).toEqual(['gh', 'git']);
+    expect(vault.setPrograms(gh.id, undefined)?.programs).toBeUndefined();
+    expect(vault.setPrograms('missing', ['gh'])).toBeUndefined();
+  });
 });

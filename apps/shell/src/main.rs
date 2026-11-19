@@ -24,6 +24,7 @@ mod daemon;
 mod icon;
 mod logging;
 mod menu;
+mod notify;
 mod paths;
 mod sandbox;
 mod secrets;
@@ -232,10 +233,30 @@ enum Command {
         #[command(subcommand)]
         action: AutostartAction,
     },
+    /// Tell agent harnesses about Hypergate in their global instruction files.
+    ///
+    /// Adds a short, marker-delimited block to `~/.claude/CLAUDE.md`,
+    /// `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md` and the like: keys come from
+    /// the vault through `hypergate run`, and a missing key, CLI or server is
+    /// requested rather than worked around. Nothing outside the markers changes.
+    Instructions {
+        #[command(subcommand)]
+        action: InstructionsAction,
+    },
     /// Manage the credential vault: API keys and tokens for CLIs and MCP servers.
     Cred {
         #[command(subcommand)]
         action: CredAction,
+    },
+    /// Credential lockdown: agents never receive a key's value.
+    ///
+    /// On, `hypergate run` is the only way a key reaches a command, and only a
+    /// program the key is bound to (never a shell, an interpreter, or a
+    /// subcommand that prints tokens). Turning it off asks the OS to confirm
+    /// it is you.
+    Lockdown {
+        #[command(subcommand)]
+        action: LockdownAction,
     },
     /// Run a command with stored credentials injected into its environment.
     ///
@@ -265,6 +286,16 @@ enum Command {
         /// Print which prompt this machine can show, and exit without asking.
         #[arg(long)]
         check: bool,
+    },
+    /// Show one OS notification (used by the daemon's watcher).
+    ///
+    /// Exits 0 when shown, 1 when the platform's mechanism failed, and 3 when
+    /// this machine has no way to show one.
+    Notify {
+        #[arg(long)]
+        title: String,
+        #[arg(long, default_value = "")]
+        body: String,
     },
     /// Read and write Hypergate's secrets in the OS keychain.
     Secret {
@@ -402,6 +433,65 @@ enum CredAction {
     Allow { agent: String, id: String },
     /// Revoke one agent's access to one credential.
     Deny { agent: String, id: String },
+    /// Bind a credential to the programs `hypergate run` may inject it into.
+    ///
+    /// With no programs and no flag, prints the current binding. Under
+    /// lockdown, changing it asks the OS to confirm it is you.
+    Programs {
+        id: String,
+        /// Program names, e.g. `gh git`. Replaces the current binding.
+        programs: Vec<String>,
+        /// Restore the default: the CLIs the credential's guide names.
+        #[arg(long, conflicts_with = "programs")]
+        default: bool,
+        /// Bind to no program at all (it can then only reach managed servers).
+        #[arg(long, conflicts_with_all = ["programs", "default"])]
+        none: bool,
+    },
+    /// Find logins tools keep outside the vault (rc files, CLI configs, keyrings).
+    ///
+    /// Lists what it finds, masked. `--import <id>` moves one into the vault
+    /// and takes it out at the source (after a backup); `--all` does that for
+    /// every finding Hypergate can remove.
+    Sweep {
+        #[arg(long, conflicts_with = "all")]
+        import: Option<String>,
+        #[arg(long)]
+        all: bool,
+    },
+}
+
+#[derive(Clone, Subcommand)]
+enum LockdownAction {
+    /// Turn credential lockdown on.
+    On,
+    /// Turn credential lockdown off (asks the OS to confirm it is you).
+    Off,
+    /// Show whether lockdown is on and whether this machine can confirm it is you.
+    Status,
+}
+
+#[derive(Clone, Subcommand)]
+enum InstructionsAction {
+    /// Which harnesses were found, and whether each has the current block.
+    Status,
+    /// Add (or update) the block for one harness, or every detected one.
+    Install {
+        /// Harness id from `status` (`claude-code`, `codex`, `gemini`, ...).
+        harness: Option<String>,
+        /// Every harness detected on this machine.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Take the block out again, leaving the rest of each file untouched.
+    #[command(alias = "rm")]
+    Remove {
+        /// Harness id from `status`.
+        harness: Option<String>,
+        /// Every harness that has the block.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Clone, Subcommand)]
@@ -523,6 +613,16 @@ fn dispatch_json(command: &Command) -> Result<ExitCode, String> {
         }
         Command::Cli { action } => commands::cli_json(action)?,
         Command::Cred { action } => commands::cred_json(action)?,
+        Command::Lockdown { action } => commands::lockdown_json(action)?,
+        Command::Instructions { action } => match action {
+            InstructionsAction::Status => api::instructions_status()?,
+            InstructionsAction::Install { harness, all } => {
+                commands::instructions_write_json(&commands::instructions_target(harness.as_deref(), *all)?, false)?
+            }
+            InstructionsAction::Remove { harness, all } => {
+                commands::instructions_write_json(&commands::instructions_target(harness.as_deref(), *all)?, true)?
+            }
+        },
         Command::Start {
             no_open,
             no_shortcut,
@@ -553,8 +653,15 @@ fn dispatch_json(command: &Command) -> Result<ExitCode, String> {
     let failed_call =
         matches!(command, Command::Call { .. }) && data.get("isError").and_then(Value::as_bool).unwrap_or(false);
     let doctor_failed = matches!(command, Command::Doctor) && data["problems"].as_bool().unwrap_or(false);
+    // A write that could not change a file exits 1, like the human path does.
+    let instructions_failed = matches!(
+        command,
+        Command::Instructions {
+            action: InstructionsAction::Install { .. } | InstructionsAction::Remove { .. }
+        }
+    ) && data["ok"].as_bool() == Some(false);
     println!("{}", serde_json::to_string(&envelope(data)).map_err(|e| e.to_string())?);
-    Ok(if failed_call || doctor_failed {
+    Ok(if failed_call || doctor_failed || instructions_failed {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
@@ -906,6 +1013,24 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
                 println!("Denied {id} for {agent}");
                 Ok(ExitCode::SUCCESS)
             }
+            CredAction::Programs {
+                id,
+                programs,
+                default,
+                none,
+            } => commands::cred_programs_human(&id, &programs, default, none),
+            CredAction::Sweep { import, all } => commands::cred_sweep_human(import.as_deref(), all),
+        },
+
+        Command::Lockdown { action } => commands::lockdown_human(&action),
+        Command::Instructions { action } => match action {
+            InstructionsAction::Status => commands::instructions_status_human(),
+            InstructionsAction::Install { harness, all } => {
+                commands::instructions_write_human(harness.as_deref(), all, false)
+            }
+            InstructionsAction::Remove { harness, all } => {
+                commands::instructions_write_human(harness.as_deref(), all, true)
+            }
         },
 
         Command::Run { agent, with, argv } => commands::run_with_credentials(agent.as_deref(), &with, &argv),
@@ -1035,6 +1160,8 @@ Click it to turn Hypergate on. `hypergate autostart on` starts it at login inste
             }
             Ok(ExitCode::from(verdict.exit_code() as u8))
         }
+
+        Command::Notify { title, body } => Ok(ExitCode::from(notify::show(&title, &body) as u8)),
 
         Command::Secret { action } => match action {
             SecretAction::Get { key } => match secrets::get(&key)? {

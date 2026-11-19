@@ -116,6 +116,19 @@ export const autostartEnabled = (): boolean => run(['autostart', 'status'])?.tri
 export const setAutostart = (on: boolean): boolean =>
   run(['autostart', on ? 'on' : 'off']) !== undefined;
 
+// ── notifications ───────────────────────────────────────────────────────────
+
+/**
+ * Show an OS notification through `hypergate notify`. Returns whether one was
+ * shown; false with no shell binary, an older one without the subcommand, or a
+ * desktop with no notification service. `HYPERGATE_NO_NOTIFY=1` keeps test
+ * daemons from popping banners on a developer's screen.
+ */
+export const notify = (title: string, body: string): boolean => {
+  if (process.env.HYPERGATE_NO_NOTIFY === '1') return false;
+  return run(['notify', '--title', title, '--body', body]) !== undefined;
+};
+
 // ── updates ─────────────────────────────────────────────────────────────────
 
 /**

@@ -74,18 +74,38 @@ import {
   decodeJwtClaims,
   userinfoEndpoint,
   type OAuthStore,
+  type InstructionsHarness,
 } from '@hypergate/core';
 import { registryConnections } from '@hypergate/shared';
 import { openStore } from './store.ts';
 import { CredentialVault } from './vault.ts';
+import { AgentInstructions } from './instructions.ts';
 import { CredentialRequestStore } from './requests.ts';
 import { ServerInstallRequestStore } from './server-requests.ts';
 import { CliInstallRequestStore } from './cli-requests.ts';
 import { CliJobRunner } from './cli-jobs.ts';
+import { createAmbientService } from './ambient-service.ts';
+import { hostname, userInfo } from 'node:os';
 import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
 import { Updater } from './updater.ts';
 import { isAllowedHost, isAllowedMutationRequest } from './security.ts';
+import { presenceGate, programPathError, runReason } from './lockdown.ts';
+import {
+  checkLockdownRun,
+  defaultProgramsFor,
+  gatewayInstructions,
+  guideForService,
+  lockdownRunLine,
+  normalisePrograms,
+} from '@hypergate/core';
+import type {
+  CredentialMeta,
+  LockdownStatus,
+  SetCredentialProgramsRequest,
+  SetLockdownRequest,
+  SetLockdownResponse,
+} from '@hypergate/shared';
 import type { CuratedScript } from '@hypergate/core';
 import type {
   ManagedServerConfig,
@@ -128,6 +148,9 @@ import type {
   ApplyUpdateResponse,
   InstallChannel,
   ServerAccount,
+  InstructionsStatusResponse,
+  InstructionsWriteRequest,
+  InstructionsWriteResponse,
 } from '@hypergate/shared';
 
 /**
@@ -174,7 +197,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.27.0';
+const VERSION = '1.28.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -731,6 +754,11 @@ const settingsInfo = (): SettingsInfo => {
     startupCommand: autostart.startupCommand(),
     skippedUpdate: s.skippedUpdate,
     agentsSeeAllCredentialNames: s.agentsSeeAllCredentialNames !== false,
+    credentialLockdown: s.credentialLockdown === true,
+    autoQuarantine: s.autoQuarantine === true,
+    alertWebhookFormat: s.alertWebhookFormat ?? 'json',
+    instructionsPromptDismissed: s.instructionsPromptDismissed === true,
+    ...ambient.settingsInfo(),
     // Probed rather than assumed: a Mac with no Touch ID sensor and a Linux box
     // with no polkit both need the reveal button disabled with a reason, and
     // only the shell binary can tell us which case we are in.
@@ -1003,6 +1031,41 @@ const credentialRequests = new CredentialRequestStore();
 const requestUrl = (credentialId: string): string =>
   `http://localhost:${PORT}/#credentials/${encodeURIComponent(credentialId)}/request`;
 
+// ── credential lockdown ───────────────────────────────────────────────────────
+// Read live from settings on every use: flipping the switch changes the very
+// next gateway session and the very next `hypergate run`, with nothing to
+// restart. Policy lives in core's lockdown.ts; the IO half in ./lockdown.ts.
+const lockdownOn = (): boolean => loadSettings().credentialLockdown === true;
+
+/** The programs a credential gets when nobody bound it: its guide's CLIs. */
+const defaultProgramsOf = (row: CredentialMeta): string[] =>
+  defaultProgramsFor(row.service ? guideForService(row.service)?.clis : undefined, (id) =>
+    KNOWN_CLIS.find((c) => c.id === id)?.command,
+  );
+
+/** A lockdown refusal, in analytics beside every other vault door. */
+const recordLockdownRefusal = (tool: string, client: string, error: string): void =>
+  supervisor.record({
+    at: new Date().toISOString(),
+    serverId: BUILTIN_NS,
+    server: 'Hypergate',
+    tool,
+    client,
+    ok: false,
+    ms: 0,
+    bytesIn: 0,
+    bytesOut: 0,
+    error,
+  });
+
+/** Under lockdown, an action that hands out or widens access needs a person. */
+const requirePresence = presenceGate({
+  authorize: (reason) => shell.authorize(reason),
+  recordRefusal: recordLockdownRefusal,
+});
+
+const lockdownStatus = (): LockdownStatus => ({ enabled: lockdownOn(), presence: shell.authorizeCapability() });
+
 /**
  * The gateway's own credential tools, built per request with the caller's
  * scope closed over. Master reaches everything; an agent reaches exactly its
@@ -1033,6 +1096,7 @@ const credentialBuiltins = (
     });
     return requestUrl(credentialId);
   };
+  const lockdown = lockdownOn();
 
   return [
     {
@@ -1071,9 +1135,10 @@ const credentialBuiltins = (
     },
     {
       name: 'credential_env',
-      title: 'Fetch a credential as environment variables',
-      description:
-        'Fetch one allowed credential as environment variables. Returns {env: {VAR: value, …}, value}. Set the env on the process that needs the key (e.g. before re-running a CLI) instead of asking the user to re-authenticate by hand. If access has not been granted, this files a request and tells you the URL to give the user.',
+      title: lockdown ? 'How to run a command with a credential' : 'Fetch a credential as environment variables',
+      description: lockdown
+        ? 'Credential lockdown is on: this never returns a value. For one allowed credential it returns the env var names it supplies and the exact "hypergate run" line that injects it into the command that needs it. If access has not been granted, this files a request and tells you the URL to give the user.'
+        : 'Fetch one allowed credential as environment variables. Returns {env: {VAR: value, …}, value}. Set the env on the process that needs the key (e.g. before re-running a CLI) instead of asking the user to re-authenticate by hand. If access has not been granted, this files a request and tells you the URL to give the user.',
       // Deliberately not read-only. It stamps the credential's last-used time
       // and files a request when access was refused, and more to the point it
       // hands back a live secret: a client that read `readOnlyHint: true` could
@@ -1098,6 +1163,23 @@ const credentialBuiltins = (
               ? `Not permitted: this client may not fetch credential "${id}". A request has been filed. Ask the user to approve it at ${url}, then try again.`
               : `Not permitted: this client may not fetch credential "${id}". The user can grant it in Hypergate.`,
           );
+        }
+        if (lockdown) {
+          // The names, never the values: env var names are what an agent needs
+          // to reason about a failing CLI, and the run line is the only way a
+          // value moves. The value is not even read, and the credential is not
+          // stamped as used, because nothing was handed out.
+          const programs = row.programs ?? defaultProgramsOf(row);
+          return {
+            id,
+            lockdown: true,
+            envVars: Object.keys(credentialEnv(row, '')),
+            programs,
+            run: lockdownRunLine(id, asker?.id),
+            message: `Credential lockdown is on, so the value is not returned. Run the command that needs it through Hypergate: ${lockdownRunLine(id, asker?.id)}${
+              programs.length ? ` (it is injected only into: ${programs.join(', ')})` : ' (it is not bound to any program yet; the user can bind one in Hypergate)'
+            }.`,
+          };
         }
         const value = vault.value(id);
         if (value === undefined) throw new Error(`Credential "${id}" has no stored value. Roll it in Hypergate.`);
@@ -1657,6 +1739,88 @@ const supervisor = new Supervisor({
   },
 });
 let servers = loadConfig();
+
+// ── ambient credentials, watch and alerts ──────────────────────────────────
+// The sweep finds logins tools keep outside the vault, the watcher notices new
+// ones (and new CLIs) appearing, and alerts tell the person and, when a webhook
+// is configured, their team. See ambient-service.ts; index.ts only wires it.
+// HYPERGATE_AMBIENT_HOME points the sweep at a scratch home (smoke tests), and
+// then reads no inherited environment either, so a test never sees real keys.
+const AMBIENT_HOME = process.env.HYPERGATE_AMBIENT_HOME;
+const ambient = createAmbientService({
+  dataDir: DATA_DIR,
+  home: AMBIENT_HOME ?? homedir(),
+  platform: process.platform,
+  env: AMBIENT_HOME ? {} : process.env,
+  vault,
+  catalog: KNOWN_CLIS.map((c) => ({ id: c.id, name: c.name, command: c.command })),
+  resolve: (command) => resolveOnPath(command),
+  npmPrefix: async () => {
+    const npm = resolveOnPath('npm');
+    if (!npm) return undefined;
+    try {
+      const viaCmd = WIN && /\.(cmd|bat)$/i.test(npm);
+      const { stdout } = viaCmd
+        ? await pexecFile(process.env.ComSpec ?? 'cmd.exe', ['/c', npm, 'prefix', '-g'], { timeout: 8000, windowsHide: true })
+        : await pexecFile(npm, ['prefix', '-g'], { timeout: 8000, windowsHide: true });
+      return stdout.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  },
+  run: async (cmd) => {
+    // Vendor commands (`gh auth token`, `gh auth logout`) by resolved path,
+    // never through a shell. stdout can be a token: it is returned, not logged.
+    const file = resolveOnPath(cmd.file);
+    if (!file) return { ok: false, stdout: '' };
+    try {
+      const { stdout } = await pexecFile(file, cmd.args, { timeout: 20_000, windowsHide: true, maxBuffer: 1_000_000 });
+      return { ok: true, stdout };
+    } catch {
+      return { ok: false, stdout: '' };
+    }
+  },
+  notify: (title, body) => shell.notify(title, body),
+  keychain: {
+    available: () => useKeychain(),
+    get: (k) => shell.secretGet(k),
+    set: (k, v) => shell.secretSet(k, v),
+    delete: (k) => shell.secretDelete(k),
+  },
+  settings: () => loadSettings(),
+  post: async (url, body) => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.ok;
+  },
+  origin: { host: hostname(), user: userInfo().username, platform: process.platform, version: VERSION },
+  rolled: async (credentialId) => {
+    for (const cfg of servers) {
+      if (!Object.values(cfg.credentialRefs ?? {}).includes(credentialId)) continue;
+      if (supervisor.status(cfg.id)?.state === 'ready') await supervisor.restart(cfg);
+    }
+  },
+  record: (tool, ok, error) =>
+    supervisor.record({
+      at: new Date().toISOString(),
+      serverId: BUILTIN_NS,
+      server: 'Hypergate',
+      tool,
+      client: 'manager UI',
+      ok,
+      ms: 0,
+      bytesIn: 0,
+      bytesOut: 0,
+      ...(error ? { error } : {}),
+    }),
+  log: (line) => process.stderr.write(`${line}\n`),
+  intervalMs: Number(process.env.HYPERGATE_WATCH_INTERVAL_MS ?? 30_000),
+  windowMs: Number(process.env.HYPERGATE_ALERT_WINDOW_MS ?? 5_000),
+});
 const statusFor = (cfg: ManagedServerConfig): ServerStatus | undefined => {
   const status = supervisor.status(cfg.id);
   if (!status || cfg.runtime !== 'remote') return status;
@@ -1864,7 +2028,11 @@ if (STDIO_MODE) {
       supervisor,
       { name: 'hypergate-gateway', version: VERSION },
       // A local stdio spawn is the user's own process: master-equivalent scope.
-      { caller: 'stdio (local)', builtins: [...credentialBuiltins('*'), ...cliBuiltins()] },
+      {
+        caller: 'stdio (local)',
+        builtins: [...credentialBuiltins('*'), ...cliBuiltins()],
+        instructions: gatewayInstructions({ lockdown: lockdownOn() }),
+      },
     );
     await gateway.connect(new StdioServerTransport());
     // stdout is the MCP channel now; logs must go to stderr only.
@@ -1909,6 +2077,19 @@ if (STDIO_MODE) {
   // Connected agents (scoped gateway tokens). Bumping lastUsed is debounced.
   let clients = loadClients();
   const persistClients = debounce(() => saveClients(clients), 1500);
+
+  // Agent instruction files (see instructions.ts). The key a harness's block
+  // names is the stable stem of the agent connected *as* that harness, so the
+  // `hypergate run --agent` line keeps resolving after the agent is re-created;
+  // with no such agent, the harness id, which `--agent` resolves once one is
+  // connected under that name.
+  const agentInstructions = new AgentInstructions(homedir(), join(DATA_DIR, 'instructions-backup'));
+  const instructionsAgentKey = (h: InstructionsHarness): string => {
+    const byTarget = clients.find((c) => c.target && h.targets.includes(c.target));
+    const byName = matchAgents(clients, h.id);
+    const agent = byTarget ?? (byName.length === 1 ? byName[0] : undefined);
+    return agent ? agent.id.replace(/-[0-9a-f]{4}$/, '') : h.id;
+  };
 
   // Repair PATH before anything reads it.
   //
@@ -2211,7 +2392,12 @@ if (STDIO_MODE) {
         const gateway = createGateway(
           supervisor,
           { name: 'hypergate-gateway', version: VERSION },
-          { caller, allowServer, builtins: [...credentialBuiltins(credScope, asker), ...cliBuiltins(asker), ...serverBuiltins(asker)] },
+          {
+            caller,
+            allowServer,
+            builtins: [...credentialBuiltins(credScope, asker), ...cliBuiltins(asker), ...serverBuiltins(asker)],
+            instructions: gatewayInstructions({ lockdown: lockdownOn() }),
+          },
         );
         res.on('close', () => {
           void transport.close();
@@ -2512,6 +2698,14 @@ if (STDIO_MODE) {
         else if (typeof b.skippedUpdate === 'string' && /^[\w.+-]{1,64}$/.test(b.skippedUpdate)) cur.skippedUpdate = b.skippedUpdate;
         if (typeof b.agentsSeeAllCredentialNames === 'boolean')
           cur.agentsSeeAllCredentialNames = b.agentsSeeAllCredentialNames;
+        if (typeof b.instructionsPromptDismissed === 'boolean')
+          cur.instructionsPromptDismissed = b.instructionsPromptDismissed;
+        try {
+          ambient.applySettings(b, cur, authScope(req)?.kind === 'master');
+        } catch (e) {
+          const status = (e as { status?: number }).status ?? 400;
+          return json(res, status, { error: e instanceof Error ? e.message : 'invalid' });
+        }
         if (typeof b.runOnStartup === 'boolean') {
           // Let the OS error surface: "could not write the Run key" is a far
           // better answer than a toggle that silently springs back.
@@ -2633,6 +2827,15 @@ if (STDIO_MODE) {
     }
 
     // ── connected agents (scoped gateway tokens) ─────────────────────────────
+    // ── ambient credentials, watch and alerts (ambient-service.ts) ─────────
+    {
+      const reply = await ambient.route(req.method ?? 'GET', pathname, {
+        master: authScope(req)?.kind === 'master',
+        body: () => readBody(req),
+      });
+      if (reply) return json(res, reply.status, reply.body);
+    }
+
     // ── the credential vault ──────────────────────────────────────────────
     // Reads return metadata + masked hints only. Mutations need the master
     // token on top of the global same-origin guard (the /api/shutdown and
@@ -2640,6 +2843,7 @@ if (STDIO_MODE) {
     // key must not be reachable by any local page that guesses the shape.
     const credentialInfo = (r: ReturnType<CredentialVault['list']>[number]): CredentialInfo => ({
       ...r,
+      defaultPrograms: defaultProgramsOf(r),
       storage: vault.storage(),
       usedBy: {
         servers: servers.filter((s) => Object.values(s.credentialRefs ?? {}).includes(r.id)).map((s) => s.id),
@@ -2663,6 +2867,14 @@ if (STDIO_MODE) {
       if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
       try {
         const body = JSON.parse(await readBody(req)) as CreateCredentialRequest;
+        if (lockdownOn()) {
+          const gate = await requirePresence(
+            `add the credential "${shell.consentSafeName(String(body.name ?? ''))}" to the vault`,
+            'credential_create',
+            'manager UI',
+          );
+          if (!gate.ok) return json(res, gate.status, gate.body);
+        }
         const meta = vault.create(body);
         return json(res, 200, credentialInfo(meta));
       } catch (e) {
@@ -2703,6 +2915,44 @@ if (STDIO_MODE) {
           if (denied !== undefined) return json(res, 403, { error: `not permitted: ${denied}` });
           wanted = body.ids;
         }
+        if (lockdownOn()) {
+          // Grants decided *which* keys this caller may have; lockdown decides
+          // which *program* may have them, and whether a person must say so.
+          const args = Array.isArray(body.args) ? body.args.filter((a): a is string => typeof a === 'string') : [];
+          const candidates = allowedIds.flatMap((id) => {
+            const row = vault.get(id);
+            return row ? [{ id, programs: row.programs, defaultPrograms: defaultProgramsOf(row) }] : [];
+          });
+          const verdict = checkLockdownRun({
+            program: typeof body.program === 'string' ? body.program : undefined,
+            args,
+            requestedIds: Array.isArray(body.ids) && body.ids.length ? body.ids : undefined,
+            candidates,
+          });
+          if (!verdict.ok) {
+            recordLockdownRefusal('credential_env', caller, verdict.error);
+            return json(res, verdict.status, { error: verdict.error, code: verdict.code });
+          }
+          const pathError = programPathError(String(body.program), verdict.program, resolveOnPath);
+          if (pathError) {
+            recordLockdownRefusal('credential_env', caller, pathError);
+            return json(res, 403, { error: pathError, code: 'program_mismatch' });
+          }
+          wanted = verdict.ids;
+          // The bare master token is public on this machine (see ./lockdown.ts),
+          // so resolving with it alone is not proof of anything. An agent's
+          // scope (its own token, or master naming an agent) stays within that
+          // agent's grants and needs no prompt; "every key, as master" does.
+          if (scope.kind === 'master' && !body.agent && wanted.length) {
+            const names = wanted.map((id) => shell.consentSafeName(vault.get(id)?.name ?? id));
+            const gate = await requirePresence(
+              runReason(shell.consentSafeName(verdict.program), names),
+              'credential_env',
+              caller,
+            );
+            if (!gate.ok) return json(res, gate.status, gate.body);
+          }
+        }
         const { env, used } = vault.envFor(wanted);
         if (used.length) {
           supervisor.record({
@@ -2723,12 +2973,80 @@ if (STDIO_MODE) {
       }
     }
 
+    // ── credential lockdown ────────────────────────────────────────────────
+    // On is one call with the master token: it only ever narrows what agents
+    // get. Off widens it again, so under lockdown it needs a person, otherwise
+    // the first thing a determined agent does is switch it off.
+    if (pathname === '/api/lockdown' && req.method === 'GET') return json(res, 200, lockdownStatus());
+    if (pathname === '/api/lockdown' && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}') as SetLockdownRequest;
+        if (typeof body.enabled !== 'boolean') return json(res, 400, { error: 'enabled must be true or false' });
+        const cur = loadSettings();
+        let consent: SetLockdownResponse['consent'] = 'not-needed';
+        if (!body.enabled && cur.credentialLockdown === true) {
+          const gate = await requirePresence('turn off credential lockdown', 'lockdown_off', 'manager UI');
+          if (!gate.ok) return json(res, gate.status, gate.body);
+          consent = gate.consent;
+        }
+        cur.credentialLockdown = body.enabled;
+        saveSettings(cur);
+        const out: SetLockdownResponse = { ok: true, consent, ...lockdownStatus() };
+        return json(res, 200, out);
+      } catch {
+        return json(res, 400, { error: 'invalid_json' });
+      }
+    }
+
+    // Bind a credential to the programs `hypergate run` may inject it into.
+    // Binding is how a key reaches a program under lockdown, so changing it
+    // there needs a person, like a grant does.
+    const credProgramsM = /^\/api\/credentials\/([^/]+)\/programs$/.exec(pathname);
+    if (credProgramsM && req.method === 'POST') {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      const id = decodeURIComponent(credProgramsM[1]);
+      const existing = vault.get(id);
+      if (!existing) return json(res, 404, { error: 'not_found' });
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}') as SetCredentialProgramsRequest;
+        if (body.programs !== null && !Array.isArray(body.programs))
+          return json(res, 400, { error: 'programs must be a list of program names, or null' });
+        const programs = body.programs === null ? undefined : normalisePrograms(body.programs);
+        if (lockdownOn()) {
+          const label = programs === undefined ? 'its default programs' : programs.length ? programs.join(', ') : 'no programs';
+          const gate = await requirePresence(
+            `bind the credential "${shell.consentSafeName(existing.name)}" to ${shell.consentSafeName(label, 80)}`,
+            'credential_programs',
+            'manager UI',
+          );
+          if (!gate.ok) return json(res, gate.status, gate.body);
+        }
+        const meta = vault.setPrograms(id, programs);
+        if (!meta) return json(res, 404, { error: 'not_found' });
+        return json(res, 200, credentialInfo(meta));
+      } catch {
+        return json(res, 400, { error: 'invalid_json' });
+      }
+    }
+
     const credRollM = /^\/api\/credentials\/([^/]+)\/roll$/.exec(pathname);
     if (credRollM && req.method === 'POST') {
       if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
       try {
         const body = JSON.parse(await readBody(req)) as RollCredentialRequest;
-        const meta = vault.roll(decodeURIComponent(credRollM[1]), body.value);
+        const rollId = decodeURIComponent(credRollM[1]);
+        if (lockdownOn()) {
+          const existing = vault.get(rollId);
+          if (!existing) return json(res, 404, { error: 'not_found' });
+          const gate = await requirePresence(
+            `replace the value of the credential "${shell.consentSafeName(existing.name)}"`,
+            'credential_roll',
+            'manager UI',
+          );
+          if (!gate.ok) return json(res, gate.status, gate.body);
+        }
+        const meta = vault.roll(rollId, body.value);
         if (!meta) return json(res, 404, { error: 'not_found' });
         // A roll should be complete in one step: every running server that
         // references this credential restarts onto the new value now, instead
@@ -2751,6 +3069,16 @@ if (STDIO_MODE) {
     if (credM && req.method === 'DELETE') {
       if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
       const id = decodeURIComponent(credM[1]);
+      if (lockdownOn()) {
+        const existing = vault.get(id);
+        if (!existing) return json(res, 404, { error: 'not_found' });
+        const gate = await requirePresence(
+          `delete the credential "${shell.consentSafeName(existing.name)}"`,
+          'credential_delete',
+          'manager UI',
+        );
+        if (!gate.ok) return json(res, gate.status, gate.body);
+      }
       if (!vault.delete(id)) return json(res, 404, { error: 'not_found' });
       // Delete means deleted (the v0.16.1 rule): the value, the metadata, every
       // agent grant, every server reference, and every pending request go
@@ -2917,6 +3245,16 @@ if (STDIO_MODE) {
         // Granting needs a credential that exists; revoking never does, so a
         // stale grant to a deleted credential is always clearable.
         if (b.allowed && !vault.get(credId)) return json(res, 404, { error: 'unknown_credential' });
+        // Under lockdown a grant needs a person, the same prompt approving a
+        // request shows. Revoking never does: taking access away is always safe.
+        if (b.allowed && lockdownOn() && !isCredentialAllowed(agent.credentials, credId)) {
+          const gate = await requirePresence(
+            shell.grantReason(agent.name, vault.get(credId)?.name ?? credId),
+            'credential_grant',
+            agent.name,
+          );
+          if (!gate.ok) return json(res, gate.status, gate.body);
+        }
         agent.credentials = setCredentialAllowed(agent.credentials, credId, b.allowed, vault.ids());
         saveClients(clients);
         return json(res, 200, agentInfo(agent));
@@ -3000,6 +3338,41 @@ if (STDIO_MODE) {
         targets: await connectTargetsCached(),
       };
       return json(res, 200, info);
+    }
+
+    // ── agent instruction files ─────────────────────────────────────────────
+    // A Hypergate block in each harness's global instruction file. Reading the
+    // status is free; writing changes a file the user owns, so it needs the
+    // master token (plus the global same-origin guard) like every other
+    // mutation of something that is not Hypergate's.
+    if (pathname === '/api/instructions' && req.method === 'GET') {
+      // The CLI forwards its own CLAUDE_CONFIG_DIR / CODEX_HOME here exactly as
+      // it does for install and remove, so status reads the same files a write
+      // would change. Only the known keys are honoured (instructions.ts).
+      const homes: Record<string, string> = {};
+      for (const k of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME']) {
+        const v = url.searchParams.get(k);
+        if (v) homes[k] = v;
+      }
+      const out: InstructionsStatusResponse = agentInstructions.status(instructionsAgentKey, homes);
+      return json(res, 200, out);
+    }
+    const instrM = /^\/api\/instructions\/([a-z0-9-]+)$/.exec(pathname);
+    if (instrM && (req.method === 'POST' || req.method === 'DELETE')) {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      try {
+        const raw = await readBody(req);
+        const body = (raw ? JSON.parse(raw) : {}) as InstructionsWriteRequest;
+        const homes = body.homes && typeof body.homes === 'object' ? body.homes : undefined;
+        const results =
+          req.method === 'POST'
+            ? agentInstructions.install(instrM[1], instructionsAgentKey, homes)
+            : agentInstructions.remove(instrM[1], homes);
+        const out: InstructionsWriteResponse = { ok: results.every((r) => !r.error), results };
+        return json(res, 200, out);
+      } catch (e) {
+        return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
+      }
     }
 
     // ── connecting an agent to a harness ─────────────────────────────────────
@@ -3358,6 +3731,7 @@ if (STDIO_MODE) {
     if (shuttingDown) return;
     shuttingDown = true;
     process.stdout.write(`hypergated stopping: ${reason}\n`);
+    ambient.stop();
     server.close();
     void supervisor
       .stopAll()
@@ -3372,6 +3746,7 @@ if (STDIO_MODE) {
   };
 
   server.listen(PORT, LISTEN_HOST, () => {
+    if (process.env.HYPERGATE_NO_WATCH !== '1') ambient.start();
     if (process.env.HYPERGATE_NO_AUTH === '1') {
       process.stderr.write(
         '!!! WARNING: HYPERGATE_NO_AUTH=1 disables authentication; this is intended for local tests only. !!!\n',
