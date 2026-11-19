@@ -1517,3 +1517,79 @@ export interface GatewayInfo {
   /** The daemon's own web UI, served at the daemon root. */
   uiUrl?: string;
 }
+
+// ── credential lockdown ──
+// Declaration merging keeps every lockdown field in this one block, so the
+// interfaces above read as they did before the feature and merges stay clean.
+
+export interface DaemonSettings {
+  /**
+   * Credential lockdown. When on, no agent ever receives a credential's value:
+   * `credential_env` returns the `hypergate run` line instead, `hypergate run`
+   * injects a key only into a program it is bound to (never a shell or
+   * interpreter, never a token-printing subcommand), and anything that hands a
+   * value to the bare master token or widens access needs a person at the
+   * keyboard. Off by default; turning it off needs a person too.
+   */
+  credentialLockdown?: boolean;
+}
+
+export interface CredentialMeta {
+  /**
+   * Programs this credential may be injected into by `hypergate run` under
+   * lockdown, as bare names (`gh`, `flyctl`). Absent means the guide's CLIs
+   * (see `CredentialInfo.defaultPrograms`); an explicit list replaces them.
+   */
+  programs?: string[];
+}
+
+export interface CredentialInfo {
+  /** The programs this credential gets when `programs` is unset (from its guide). */
+  defaultPrograms: string[];
+}
+
+export interface ResolveCredentialsRequest {
+  /**
+   * The program `hypergate run` is about to start, as an absolute path. Required
+   * under lockdown: the daemon checks it is the same file its own PATH resolves
+   * that name to, and that the credentials are bound to it.
+   */
+  program?: string;
+  /** The program's arguments, checked against the token-printing table. */
+  args?: string[];
+}
+
+/** `GET /api/lockdown`. */
+export interface LockdownStatus {
+  enabled: boolean;
+  /**
+   * Whether this machine can ask for a person at the keyboard. Without it,
+   * lockdown still withholds values from agents, but everything it would have
+   * gated behind a prompt falls back to the master token alone, which any local
+   * process can read; the UI says so rather than implying a lock.
+   */
+  presence: AuthorizeCapability;
+}
+
+/** `POST /api/lockdown` (master token; turning it off needs user presence). */
+export interface SetLockdownRequest {
+  enabled: boolean;
+}
+
+/**
+ * What a presence-gated door said. `approved` a person confirmed; `unavailable`
+ * this machine cannot ask and the master token was accepted alone; `not-needed`
+ * the action needs no confirmation (turning lockdown on, revoking access).
+ */
+export type PresenceConsent = 'approved' | 'unavailable' | 'not-needed';
+
+export interface SetLockdownResponse extends LockdownStatus {
+  ok: boolean;
+  consent: PresenceConsent;
+}
+
+/** `POST /api/credentials/:id/programs` (master token; presence under lockdown). */
+export interface SetCredentialProgramsRequest {
+  /** Bare program names; an empty list unbinds every program. `null` restores the guide default. */
+  programs: string[] | null;
+}
