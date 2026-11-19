@@ -75,6 +75,47 @@ describe('gh hosts.yml', () => {
     expect(ghe.hint).not.toContain(GH_TOKEN.slice(5, 30));
   });
 
+  it('multi-account hosts read the active token from gh, never a nested account', () => {
+    const NESTED = 'gho_nestedaliceaccount000000000000000000';
+    const hits = byRule(
+      scanAmbient(
+        ctxWith({
+          [`${HOME}/.config/gh/hosts.yml`]: [
+            'github.com:',
+            '    users:',
+            '        alice:',
+            `            oauth_token: ${NESTED}`,
+            '        bob:',
+            `            oauth_token: ${GH_TOKEN}`,
+            '    git_protocol: https',
+            `    oauth_token: ${GH_TOKEN}`,
+            '    user: bob',
+          ].join('\n'),
+        }),
+      ),
+      'gh-hosts',
+    );
+    expect(hits).toHaveLength(1);
+    const [h] = hits;
+    expect(h.value).toBeUndefined();
+    expect(h.valueCommand).toEqual({ file: 'gh', args: ['auth', 'token', '--hostname', 'github.com'] });
+    expect(h.logout?.args).toEqual(['auth', 'logout', '--hostname', 'github.com', '--user', 'bob']);
+    expect(h.storage).toBe('plaintext');
+  });
+
+  it('a nested oauth_token is never taken as the host token in the single-user layout either', () => {
+    const [h] = byRule(
+      scanAmbient(
+        ctxWith({
+          [`${HOME}/.config/gh/hosts.yml`]: ['github.com:', '    user: bob', '    extra:', `        oauth_token: ${GH_TOKEN}`].join('\n'),
+        }),
+      ),
+      'gh-hosts',
+    );
+    expect(h.value).toBeUndefined();
+    expect(h.storage).toBe('keyring');
+  });
+
   it('honours GH_CONFIG_DIR', () => {
     const hits = scanAmbient(ctxWith({ '/cfg/hosts.yml': 'github.com:\n    user: a\n' }, { GH_CONFIG_DIR: '/cfg' }));
     expect(byRule(hits, 'gh-hosts')[0].location).toBe('/cfg/hosts.yml');
@@ -116,8 +157,22 @@ describe('file-based CLIs', () => {
     expect(hits).toHaveLength(1);
     expect(hits[0].service).toBe('npm');
     const out = removeAmbient(text, hits[0], '2026-11-19')!;
-    expect(out.split('\n')[0].startsWith('; hypergate:')).toBe(true);
+    // Rewritten to an env reference npm expands, so `hypergate run -- npm ...`
+    // keeps authenticating with the injected NPM_TOKEN.
+    expect(out.split('\n')[0]).toBe('//registry.npmjs.org/:_authToken=${NPM_TOKEN}');
+    expect(out).not.toContain('npm_abcdefghijklmnopqrstuvwxyz');
     expect(out).toContain('${GH}');
+    expect(hits[0].envVar).toBe('NPM_TOKEN');
+    // The rewritten line is a reference, so the next scan finds nothing.
+    expect(byRule(scanAmbient(ctxWith({ [file]: out })), 'npmrc')).toHaveLength(0);
+  });
+
+  it('JSON keys are only removed while they still hold the scanned value', () => {
+    const file = `${HOME}/.local/share/com.vercel.cli/auth.json`;
+    const text = JSON.stringify({ token: 'vercel_tok_abcdefghijklmnop' });
+    const [h] = byRule(scanAmbient(ctxWith({ [file]: text })), 'vercel-auth');
+    expect(removeAmbient(JSON.stringify({ token: 'vercel_tok_changedsincescan99' }), h, 'd')).toBeUndefined();
+    expect(JSON.parse(removeAmbient(text, h, 'd')!)).toEqual({});
   });
 
   it('vercel auth.json token is deleted from the JSON', () => {
@@ -216,6 +271,36 @@ describe('model providers', () => {
     const [h] = byRule(scanAmbient(ctxWith({ [file]: text })), 'shell-rc');
     const out = removeAmbient(text, h, '2026-11-19')!;
     expect(out).toBe(`alias ll='ls -l'\n  # hypergate: OPENAI_API_KEY moved to the Hypergate vault on 2026-11-19\necho hi\n`);
+  });
+
+  it('a compound line is reported for a manual fix and never edited', () => {
+    const file = `${HOME}/.bashrc`;
+    const compound = [
+      `export OPENAI_API_KEY=${OPENAI}; echo ready`,
+      `export ANTHROPIC_API_KEY="sk-ant-api03-0123456789abcdef" && source ~/.aliases`,
+      `GEMINI_API_KEY=AIzaSyA0123456789abcdefghij some-command --flag`,
+      `export OPENROUTER_API_KEY=sk-or-v1-0123456789abcdef|tee /dev/null`,
+    ];
+    const hits = byRule(scanAmbient(ctxWith({ [file]: compound.join('\n') })), 'shell-rc');
+    expect(hits).toHaveLength(4);
+    for (const h of hits) {
+      expect(h.importable).toBe(false);
+      expect(h.removal).toBe('manual');
+      expect(h.edit).toBeUndefined();
+      expect(h.manualStep).toMatch(/by hand/);
+    }
+    // The secret check and the hint see the key alone, not the command after it.
+    expect(hits.find((h) => h.envVar === 'OPENAI_API_KEY')!.value).toBe(OPENAI);
+  });
+
+  it('a single assignment with a trailing comment stays importable', () => {
+    const file = `${HOME}/.bashrc`;
+    const text = [`export OPENAI_API_KEY="${OPENAI}" # work`, `GEMINI_API_KEY='AIzaSyA0123456789abcdefghij'`].join('\n');
+    const hits = byRule(scanAmbient(ctxWith({ [file]: text })), 'shell-rc');
+    expect(hits.map((h) => [h.envVar, h.importable, h.removal])).toEqual([
+      ['OPENAI_API_KEY', true, 'edit'],
+      ['GEMINI_API_KEY', true, 'edit'],
+    ]);
   });
 
   it('refuses to edit when the line changed since the scan', () => {

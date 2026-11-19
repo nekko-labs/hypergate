@@ -70,6 +70,23 @@ describe('importAmbient', () => {
     expect(r).toMatchObject({ ok: true, removed: true, vault: 'created' });
     expect(vault.value(r.credentialId!)).toBe('gho_fromkeyring0123456789');
     expect(ran.map((c) => c.args.slice(0, 2).join(' '))).toEqual(['auth token', 'auth logout']);
+    // hosts.yml is backed up before gh's logout rewrites it.
+    expect(readFileSync(r.backup!, 'utf8')).toContain('user: octo');
+  });
+
+  it('a source that cannot be written keeps the key in the vault and says so, without throwing', async () => {
+    const { home, vault, deps, scan } = setup();
+    writeFileSync(join(home, '.zshrc'), `export OPENAI_API_KEY="${OPENAI}"\n`);
+    const r = await importAmbient(scan()[0], {
+      ...deps,
+      writeFile: () => {
+        throw new Error('EACCES: permission denied');
+      },
+    });
+    expect(r).toMatchObject({ ok: true, removed: false, vault: 'created' });
+    expect(r.error).toMatch(/the key is in the vault/);
+    expect(r.error).toMatch(/EACCES/);
+    expect(vault.value(r.credentialId!)).toBe(OPENAI);
   });
 
   it('supabase access-token is backed up and deleted', async () => {

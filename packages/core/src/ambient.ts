@@ -43,7 +43,9 @@ export type AmbientEdit =
   /** Drop one line outright (formats that allow no comments, e.g. git-credentials). */
   | { kind: 'drop-line'; line: number }
   /** JSON document: delete the key, or set it to null. */
-  | { kind: 'json-key'; key: string; to: 'delete' | 'null' };
+  | { kind: 'json-key'; key: string; to: 'delete' | 'null' }
+  /** Replace one line with this exact text (e.g. an env reference in place of the literal). */
+  | { kind: 'replace-line'; line: number; text: string };
 
 /** A finding plus what only the daemon's import path may see. */
 export interface AmbientHit extends AmbientFinding {
@@ -242,16 +244,50 @@ interface Assignment {
   name: string;
   value: string;
   line: number;
+  /**
+   * The line is exactly one assignment: a quoted value, or a single unquoted
+   * token, then at most a trailing `# comment`. Anything else on the line (a
+   * `;`, `&&`, `||`, `|`, a backtick, or a command after the value) makes it
+   * compound, and a compound line is reported but never edited, because
+   * commenting it out would also remove whatever else the line runs.
+   */
+  simple: boolean;
 }
+
+/** Shell control characters that put a second statement on the line. */
+const SHELL_CONTROL = /[;&|`]/;
+
+/** Whether the right-hand side of an assignment is one value and nothing more. */
+export const isSimpleAssignmentValue = (rhs: string, powershell = false): boolean => {
+  let t = rhs.trim();
+  if (powershell) t = t.replace(/;\s*$/, '').trim();
+  let rest: string;
+  if (t.startsWith('"') || t.startsWith("'")) {
+    const end = t.indexOf(t[0], 1);
+    if (end < 0) return false;
+    rest = t.slice(end + 1);
+  } else {
+    const m = /^(\S*)(.*)$/.exec(t)!;
+    if (SHELL_CONTROL.test(m[1])) return false;
+    rest = m[2];
+  }
+  rest = rest.trim();
+  return rest === '' || /^#/.test(rest);
+};
 
 const parseAssignments = (text: string): Assignment[] => {
   const out: Assignment[] = [];
   lines(text).forEach((raw, line) => {
     if (/^\s*#/.test(raw)) return;
-    for (const re of ASSIGNMENT) {
+    for (const [i, re] of ASSIGNMENT.entries()) {
       const m = re.exec(raw);
       if (!m) continue;
-      out.push({ name: m[1], value: unquote(stripInlineComment(m[2])), line });
+      const simple = isSimpleAssignmentValue(m[2], i === 2);
+      const v = stripInlineComment(m[2]);
+      // A compound line's value is cut at the first control character so the
+      // hint and the secret check see the key, not the command after it.
+      const value = unquote(simple ? v : v.split(SHELL_CONTROL)[0].trim().split(/\s+/)[0] ?? '');
+      out.push({ name: m[1], value, line, simple });
       return;
     }
   });
@@ -304,8 +340,15 @@ const ghHosts: AmbientRule = {
     let host: string | undefined;
     let user: string | undefined;
     let token: string | undefined;
+    let childIndent: number | undefined;
+    let multi = false;
     const flush = (): void => {
       if (!host) return;
+      // With a `users:` block the file holds several accounts' tokens. Only
+      // `gh auth token` is sure to answer for the active one, which is the one
+      // the logout below removes, so the value always comes from gh then.
+      const inFile = token !== undefined;
+      if (multi) token = undefined;
       const service = host === 'github.com' ? 'github' : undefined;
       const logout: AmbientCommand = {
         file: 'gh',
@@ -317,7 +360,7 @@ const ghHosts: AmbientRule = {
           location: file,
           key: host,
           detail: user ? `${host} (${user})` : host,
-          storage: token ? 'plaintext' : 'keyring',
+          storage: inFile ? 'plaintext' : 'keyring',
           value: token,
           valueCommand: token ? undefined : { file: 'gh', args: ['auth', 'token', '--hostname', host] },
           service,
@@ -335,12 +378,20 @@ const ghHosts: AmbientRule = {
         host = top[1].trim();
         user = undefined;
         token = undefined;
+        childIndent = undefined;
+        multi = false;
         continue;
       }
+      if (!host) continue;
+      const indent = /^\s*/.exec(raw)![0].length;
+      childIndent ??= indent;
+      // Only the host's own keys count; `users.<login>.*` sit deeper.
+      if (indent !== childIndent) continue;
+      if (/^\s+users:\s*$/.test(raw)) multi = true;
       const u = /^\s+user:\s*(\S+)\s*$/.exec(raw);
-      if (u && host) user = unquote(u[1]);
+      if (u) user = unquote(u[1]);
       const t = /^\s+oauth_token:\s*(\S+)\s*$/.exec(raw);
-      if (t && host && !token && isLiteralSecret(unquote(t[1]))) token = unquote(t[1]);
+      if (t && !token && isLiteralSecret(unquote(t[1]))) token = unquote(t[1]);
     }
     flush();
     return out;
@@ -554,7 +605,7 @@ const npmrc: AmbientRule = {
   verifiedFrom:
     'https://docs.npmjs.com/cli/v10/configuring-npm/npmrc ($HOME/.npmrc or the userconfig param; `//registry.npmjs.org/:_authToken=` scoped key)',
   caveat:
-    '`${NPM_TOKEN}` style references hold no token and are skipped. `npm logout` revokes the token at the registry, so Hypergate edits the line out instead of running it.',
+    '`${NPM_TOKEN}` style references hold no token and are skipped. `npm logout` revokes the token at the registry, so Hypergate rewrites the line to `${NPM_TOKEN}` instead of running it; npm then reads the token `hypergate run` injects.',
   scan(ctx) {
     const p = pathFor(ctx.platform);
     const file = ctx.env.NPM_CONFIG_USERCONFIG || ctx.env.npm_config_userconfig || p.join(ctx.home, '.npmrc');
@@ -579,7 +630,10 @@ const npmrc: AmbientRule = {
           service,
           importable: Boolean(service),
           removal: 'edit',
-          edit: { kind: 'comment-line', line, prefix: ';' },
+          // npm expands \${VAR} in .npmrc, so the line keeps working for
+          // `hypergate run -- npm ...`, which injects NPM_TOKEN. Commenting it
+          // out would leave npm with no way to find the injected token.
+          edit: { kind: 'replace-line', line, text: `${m[1]}:_authToken=\${NPM_TOKEN}` },
         }),
       );
     });
@@ -779,8 +833,13 @@ const scanAssignments = (
         value: a.value,
         service: cls.service,
         envVar: cls.service ? cls.envVar : a.name,
-        removal: 'edit',
-        edit: { kind: 'comment-line', line: a.line, prefix: '#' },
+        ...(a.simple
+          ? { removal: 'edit' as const, edit: { kind: 'comment-line' as const, line: a.line, prefix: '#' } }
+          : {
+              importable: false,
+              removal: 'manual' as const,
+              manualStep: `Line ${a.line + 1} sets ${a.name} together with other commands. Store the key in Hypergate, then remove the assignment from that line by hand so the rest of it keeps running.`,
+            }),
       }),
     );
   }
@@ -1008,7 +1067,10 @@ export const removeAmbient = (text: string, h: AmbientHit, date: string): string
   if (!edit) return undefined;
   if (edit.kind === 'json-key') {
     const doc = readJson(text);
-    if (!doc || !(edit.key in doc)) return undefined;
+    // The value must still be the one that was scanned (and stored): a login
+    // that changed since would otherwise be deleted with only the backup
+    // holding the new value.
+    if (!doc || !(edit.key in doc) || (h.value !== undefined && doc[edit.key] !== h.value)) return undefined;
     if (edit.to === 'delete') delete doc[edit.key];
     else doc[edit.key] = null;
     return `${JSON.stringify(doc, null, 2)}\n`;
@@ -1022,6 +1084,7 @@ export const removeAmbient = (text: string, h: AmbientHit, date: string): string
   if (h.value !== undefined && !ls[edit.line].includes(h.value) && !ls[edit.line].includes(encodeURIComponent(h.value)))
     return undefined;
   if (edit.kind === 'drop-line') ls.splice(edit.line, 1);
+  else if (edit.kind === 'replace-line') ls[edit.line] = edit.text;
   else {
     const indent = /^\s*/.exec(ls[edit.line])?.[0] ?? '';
     const what = h.detail ?? h.envVar ?? 'credential';

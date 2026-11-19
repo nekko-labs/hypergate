@@ -138,19 +138,60 @@ export const importAmbient = async (h: AmbientHit, deps: ImportDeps): Promise<Am
   const date = now.toISOString().slice(0, 10);
   if (h.removal === 'manual') return { ok: true, credentialId, vault, removed: false, manualStep: h.manualStep };
 
+  try {
+    return await removeAtSource(h, deps, credentialId, vault, now, date);
+  } catch (e) {
+    // The key is already in the vault; only the source could not be changed
+    // (a read-only dotfile, a file another process holds). Say both halves
+    // rather than failing as though nothing happened.
+    return {
+      ok: true,
+      credentialId,
+      vault,
+      removed: false,
+      error: `the key is in the vault, but ${h.location} could not be changed (${e instanceof Error ? e.message : 'error'})`,
+      manualStep: `Remove ${h.detail ?? 'the value'} from ${h.location} by hand.`,
+    };
+  }
+};
+
+const removeAtSource = async (
+  h: AmbientHit,
+  deps: ImportDeps,
+  credentialId: string,
+  vault: AmbientImportResult['vault'],
+  now: Date,
+  date: string,
+): Promise<AmbientImportResult> => {
   if (h.removal === 'vendor-logout' && h.logout) {
+    // The vendor's logout rewrites its own file (gh edits hosts.yml), so the
+    // file is backed up first like any other edit.
+    let backup: string | undefined;
+    if (existsSync(h.location)) {
+      try {
+        backup = backupFile(h.location, deps.backupDir, now);
+      } catch (e) {
+        return {
+          ok: true,
+          credentialId,
+          vault,
+          removed: false,
+          error: `could not back up ${h.location}, so the logout was not run (${e instanceof Error ? e.message : 'error'})`,
+        };
+      }
+    }
     const out = await deps.run(h.logout);
     return out.ok
-      ? { ok: true, credentialId, vault, removed: true }
+      ? { ok: true, credentialId, vault, removed: true, backup }
       : {
           ok: true,
           credentialId,
           vault,
           removed: false,
+          backup,
           manualStep: `Run \`${[h.logout.file, ...h.logout.args].join(' ')}\` yourself; it did not complete from Hypergate.`,
         };
   }
-
   if (!existsSync(h.location)) return { ok: true, credentialId, vault, removed: true };
   let backup: string;
   try {

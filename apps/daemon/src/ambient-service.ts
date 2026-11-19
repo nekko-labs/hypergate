@@ -84,16 +84,13 @@ export const createAmbientService = (d: AmbientServiceDeps) => {
   });
 
   const doImport = async (h: AmbientHit): Promise<AmbientImportResult> => {
-    const result = await importAmbient(h, {
-      vault: d.vault,
-      readFile: fs.readFile,
-      writeFile: (p, t) => writeFileSync(p, t),
-      deleteFile: (p) => rmSync(p, { force: true }),
-      run: d.run,
-      backupDir,
-      now: () => new Date(),
-      rolled: d.rolled,
-    });
+    let result: AmbientImportResult;
+    try {
+      result = await runImport(h);
+    } catch (e) {
+      // Never let one import take the daemon (or a watch pass) down with it.
+      result = { ok: false, removed: false, error: e instanceof Error ? e.message : 'import failed' };
+    }
     d.record('ambient_import', result.ok, result.error);
     if (result.ok) {
       // Only a finding that is gone at the source leaves the baseline: one that
@@ -107,6 +104,18 @@ export const createAmbientService = (d: AmbientServiceDeps) => {
     }
     return result;
   };
+
+  const runImport = (h: AmbientHit): Promise<AmbientImportResult> =>
+    importAmbient(h, {
+      vault: d.vault,
+      readFile: fs.readFile,
+      writeFile: (p, t) => writeFileSync(p, t),
+      deleteFile: (p) => rmSync(p, { force: true }),
+      run: d.run,
+      backupDir,
+      now: () => new Date(),
+      rolled: d.rolled,
+    });
 
   let timer: ReturnType<typeof setInterval> | undefined;
   let purgeTimer: ReturnType<typeof setInterval> | undefined;
@@ -124,6 +133,8 @@ export const createAmbientService = (d: AmbientServiceDeps) => {
           // Only what Hypergate can actually take out: quarantining a value it
           // must leave in place would just copy it and call that safe.
           if (!h?.importable || h.removal === 'manual') continue;
+          // doImport never throws, so one failed quarantine still leaves every
+          // event of this pass to be alerted below.
           const r = await doImport(h);
           if (r.ok && r.removed) {
             e.quarantined = true;
