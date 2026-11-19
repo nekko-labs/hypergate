@@ -1766,9 +1766,9 @@ function CredentialsSection({ agents, token, onAgentsChange, authorize, requests
       </div>
       <p className="small muted section-sub">
         API keys and access tokens for the CLIs and MCP servers your agents use, kept in the OS keychain instead of
-        config files. Grant each agent only the keys it needs; an allowed agent fetches them itself through the
-        gateway's <span className="mono">hypergate__credential_env</span> tool or <span className="mono">hypergate run</span>,
-        instead of stopping to ask you to sign in.
+        config files. Grant each agent only the keys it needs; an allowed agent runs its commands through{' '}
+        <span className="mono">hypergate run</span> instead of stopping to ask you to sign in, and with lockdown off it
+        can also fetch a key through the gateway's <span className="mono">hypergate__credential_env</span> tool.
       </p>
       <LockdownToggle token={token} />
       {requests.length > 0 && (
