@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hypergate: every MCP server, one secure gate</title>
-  <meta name="description" content="Connect your agents to GitHub, Vercel, Slack, or Google Drive without handing them your keys. Hypergate runs the MCP servers on your machine. Local-first, open source, MIT." />
+  <title>Hypergate: connect everything once, for all</title>
+  <meta name="description" content="Connect every MCP server, connector, agent, and skill to Hypergate once, and everyone who connects gets all of it. One-click setup, permissions per human or per agent, and an audit log of everything your agents touch. Open source, MIT." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="canonical" href="https://hypergate.app/" />
-  <meta property="og:title" content="Hypergate: every MCP server, one secure gate" />
-  <meta property="og:description" content="Connect Claude Code, Codex, Cursor, or any agent to GitHub, Vercel, Slack, and Google Drive safely. Hypergate runs the MCP servers on your machine and keeps keys and permissions out of an agent's hands." />
+  <meta property="og:title" content="Hypergate: connect everything once, for all" />
+  <meta property="og:description" content="Connect every MCP server, connector, agent, and skill once. Everyone who connects to Hypergate gets it: one-click setup, different permissions for each person, model, or agent, and full visibility into what your agents access." />
   <meta property="og:image" content="https://hypergate.app/og.png" />
   <meta property="og:image:width" content="2560" />
   <meta property="og:image:height" content="1200" />
@@ -19,8 +19,8 @@
   <meta property="og:site_name" content="Hypergate" />
   <meta property="og:locale" content="en_US" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Hypergate: every MCP server, one secure gate" />
-  <meta name="twitter:description" content="Connect Claude Code, Codex, Cursor, or any agent to GitHub, Vercel, Slack, and Google Drive safely. Hypergate runs the MCP servers on your machine and keeps keys and permissions out of an agent's hands." />
+  <meta name="twitter:title" content="Hypergate: connect everything once, for all" />
+  <meta name="twitter:description" content="Connect every MCP server, connector, agent, and skill once. Everyone who connects to Hypergate gets it: one-click setup, different permissions for each person, model, or agent, and full visibility into what your agents access." />
   <meta name="twitter:image" content="https://hypergate.app/og.png" />
   <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
   <link rel="preload" href="/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
@@ -49,7 +49,7 @@
         "@id": "https://hypergate.app/#website",
         "url": "https://hypergate.app/",
         "name": "Hypergate",
-        "description": "Local-first runtime and manager for MCP servers: connect any agent to the services you already use, with authentication, keys, and permissions held by Hypergate rather than by the agent.",
+        "description": "Connect every MCP server, connector, agent, and skill to Hypergate once, and everyone who connects gets it: one-click setup, permissions per human or per agent, and visibility into everything your agents access, with keys held by Hypergate rather than by the agent.",
         "inLanguage": "en",
         "publisher": { "@id": "https://nekkolabs.com/#organization" }
       },
@@ -105,9 +105,9 @@
       <span>Hypergate</span>
     </a>
     <nav class="nav-links">
-      <a href="#features" data-scroll>Features</a>
-      <a href="#control" data-scroll>Security</a>
-      <a href="#analytics" data-scroll>Analytics</a>
+      <a href="#once" data-scroll>Connect once</a>
+      <a href="#control" data-scroll>Permissions</a>
+      <a href="#analytics" data-scroll>Visibility</a>
       <a href="/release-notes.html">Release notes</a>
       <a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">GitHub ↗</a>
     </nav>
@@ -124,16 +124,16 @@
     <section class="hero">
       <canvas id="gate" aria-hidden="true"></canvas>
       <div class="hero-in">
-        <p class="hero-kicker fly">Local-first MCP runtime &amp; manager · open source · MIT</p>
+        <p class="hero-kicker fly">MCP servers · connectors · agents · skills · open source · MIT</p>
         <h1 class="hero-h1">
-          <span class="line fly" data-delay="60">Every MCP server.</span>
-          <span class="line grad fly" data-delay="130">One secure gate.</span>
+          <span class="line fly" data-delay="60">Connect everything once.</span>
+          <span class="line grad fly" data-delay="130">For All.</span>
         </h1>
         <p class="hero-sub fly" data-delay="210">
-          Want to easily and safely connect your agents (Claude Code, Codex, Nekko Agent,
-          Cursor, Devin, etc.) to services like GitHub, Vercel, Slack, or Google Drive?
-          Hypergate makes it easy, and provides a safety layer where the authentication,
-          keys, and permissions aren't in the hands of an agent if things go bad.
+          Connect every MCP server, connector, agent, and skill to Hypergate once.
+          You, your team, and every agent you run (Claude Code, Codex, Nekko Agent,
+          Cursor, Devin) get all of it the moment they connect. You decide who can
+          reach what, and you see everything they touch.
         </p>
         <div class="hero-ctas fly" data-delay="270">
           <div class="download-control" data-download-group>
@@ -162,35 +162,128 @@
 
     <!-- ═══════════ ORBIT STRIP ═══════════ -->
     <section class="strip">
-      <p>Speaks standard MCP, so every harness already knows the way in</p>
+      <p>Connect once, and every harness already knows the way in</p>
       <div class="strip-row">
         <span>Claude Code</span><i>✦</i><span>Cursor</span><i>✦</i><span>Nekko Agent</span><i>✦</i><span>Codex</span><i>✦</i><span>VS Code</span>
+      </div>
+    </section>
+
+    <!-- ═══════════ CONNECT ONCE ═══════════ -->
+    <section id="once" class="once">
+      <div class="iso-head reveal">
+        <p class="feat-k">Connect once</p>
+        <h2>Set it up once. Everyone gets it.</h2>
+        <p>Stop pasting the same config into five tools and walking a teammate through it
+           again. Connect your MCP servers, connectors, agents, and skills to Hypergate one
+           time. Anyone who connects to Hypergate, human or agent, gets all of it.</p>
+      </div>
+      <div class="hub reveal" aria-label="Everything you connect flows through Hypergate to everyone who connects to it">
+        <ul class="hub-col">
+          <li>MCP servers</li><li>Connectors</li><li>Agents</li><li>Skills</li>
+        </ul>
+        <div class="hub-gate" aria-hidden="true">
+          <span class="hub-wire"></span>
+          <svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="none" stroke="url(#hbG)" stroke-width="4.5"/>
+            <defs><linearGradient id="hbG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6d5efc"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs></svg>
+          <span class="hub-wire"></span>
+        </div>
+        <ul class="hub-col hub-out">
+          <li>You</li><li>Your team</li><li>Claude Code</li><li>Codex &amp; more</li>
+        </ul>
+      </div>
+      <div class="pillars">
+        <div class="pillar reveal">
+          <h3>Connect once</h3>
+          <p>Add a server, connector, agent, or skill one time. Every person and every agent
+             connected to Hypergate can use it the moment you do.</p>
+        </div>
+        <div class="pillar reveal" data-delay="80">
+          <h3>Easy</h3>
+          <p>One-click setup for yourself and for anyone else. Connecting Claude Code,
+             Codex, or Cursor is a button, not a config file.</p>
+        </div>
+        <div class="pillar reveal" data-delay="160">
+          <h3>Permissions</h3>
+          <p>Set access per human or per agent. Don't trust a certain model or company?
+             Give it different permissions than another.</p>
+        </div>
+        <div class="pillar reveal" data-delay="240">
+          <h3>Visibility</h3>
+          <p>See what your agents use, with an audit log of every access, guards against
+             malicious requests, and an AI that reads it and tells you what matters.</p>
+        </div>
       </div>
     </section>
 
     <!-- ═══════════ FEATURES ═══════════ -->
     <section id="features" class="features">
 
-      <article class="feat" id="control">
+      <article class="feat" id="setup">
         <div class="feat-copy reveal">
-          <p class="feat-k">Security</p>
-          <h2>Control what every agent can reach</h2>
-          <p>Agents accumulate MCP servers quietly, and most setups can't answer the basic
-             questions: which servers are installed, what is actually being called, and
-             which agent is doing the calling. Every call runs through a gate you own, so
-             those answers are always one screen away, and access is a switch you flip
-             rather than a config file you go hunting for.</p>
+          <p class="feat-k">Easy</p>
+          <h2>One click, for you and anyone else</h2>
+          <p>Pick a server from the catalog and OAuth servers sign in with one click: the
+             browser opens, you approve, Hypergate connects. Connecting an agent is one
+             button, and bringing someone else in is the same single click for them. No
+             keys to copy, no configs to hand around.</p>
           <ul>
-            <li>Per-agent allow-lists: grant, scope, or revoke a server in one click</li>
-            <li>Every tool call attributed to an agent, timed, and logged on your machine</li>
-            <li>Server credentials and OAuth tokens stay in Hypergate, never in agent configs</li>
-            <li>Each agent gets its own bearer token, so revoking one leaves the rest running</li>
+            <li>One-click connect for Claude Code, Codex, Cursor, Nekko Agent, and more</li>
+            <li>One-click OAuth: Context7, Supabase, Linear, Figma, GitHub</li>
+            <li>✓ Official and Community trust chips on every catalog entry</li>
+            <li>The whole official MCP registry, a search box away</li>
+          </ul>
+        </div>
+        <figure class="shot reveal" data-parallax="0.05" data-title="Add a server">
+          <picture>
+            <source type="image/webp" srcset="/demos/catalog-680.webp 680w, /demos/catalog.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
+            <img src="/demos/catalog.png" srcset="/demos/catalog-680.png 680w, /demos/catalog.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate catalog with official OAuth servers and recommended connection guidance for Context7, Supabase, Linear, Figma, and GitHub" width="1360" height="850" loading="lazy" />
+          </picture>
+        </figure>
+      </article>
+
+      <article class="feat flip" id="control">
+        <div class="feat-copy reveal">
+          <p class="feat-k">Permissions</p>
+          <h2>Per human. Per agent. Your call.</h2>
+          <p>Not every model deserves the same keys. Don't trust a certain model or company?
+             Give it different permissions than another. Every person and every agent that
+             connects gets its own token, scoped to exactly what you allow, and access is a
+             switch you flip rather than a config file you go hunting for.</p>
+          <ul>
+            <li>Easy permissions per human or per agent, granted or revoked in one click</li>
+            <li>A narrower set for the model or vendor you trust less</li>
+            <li>Credentials and OAuth tokens stay in Hypergate, never in agent configs</li>
+            <li>Revoke one token and everyone else keeps working</li>
           </ul>
         </div>
         <figure class="shot reveal" data-parallax="0.05" data-title="Access control">
           <picture>
             <source type="image/webp" srcset="/demos/gateway-680.webp 680w, /demos/gateway.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
             <img src="/demos/gateway.png" srcset="/demos/gateway-680.png 680w, /demos/gateway.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate access-control view with Claude Code expanded to show its masked token and access to GitHub, Filesystem, Postgres, and Vercel" width="1360" height="850" loading="lazy" />
+          </picture>
+        </figure>
+      </article>
+
+      <article class="feat" id="analytics">
+        <div class="feat-copy reveal">
+          <p class="feat-k">Visibility</p>
+          <h2>See everything your agents touch</h2>
+          <p>Every call runs through the gate, so you get an audit log of what each agent
+             accessed without wiring anything: which tool, called by whom, how long it took,
+             and how much data moved. Hypergate guards against malicious requests and agents
+             holding more access than they need, and an AI reads the trail so it can tell
+             you what's worth knowing.</p>
+          <ul>
+            <li>Audit log of every access, per human and per agent</li>
+            <li>Guards against malicious requests and too much access</li>
+            <li>An AI that understands the log and informs you</li>
+            <li>Per-server, per-tool, and per-agent breakdowns</li>
+          </ul>
+        </div>
+        <figure class="shot reveal" data-parallax="0.05" data-title="Analytics">
+          <picture>
+            <source type="image/webp" srcset="/demos/analytics-680.webp 680w, /demos/analytics.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
+            <img src="/demos/analytics.png" srcset="/demos/analytics-680.png 680w, /demos/analytics.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate analytics overview with 26 calls at 100 percent success across three agents and usage by GitHub, Filesystem, and Postgres" width="1360" height="850" loading="lazy" />
           </picture>
         </figure>
       </article>
@@ -213,49 +306,6 @@
           <picture>
             <source type="image/webp" srcset="/demos/servers-680.webp 680w, /demos/servers.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
             <img src="/demos/servers.png" srcset="/demos/servers-680.png 680w, /demos/servers.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate MCP servers view with GitHub, Filesystem, and Postgres running, Vercel awaiting a token, and per-agent access counts" width="1360" height="850" loading="lazy" />
-          </picture>
-        </figure>
-      </article>
-
-      <article class="feat" id="analytics">
-        <div class="feat-copy reveal">
-          <p class="feat-k">Analytics</p>
-          <h2>An audit trail for free</h2>
-          <p>Because every call fans through the gate, you get observability without
-             wiring anything: which tool, called by which agent, how long it took, how
-             many bytes each way. All of it stays on localhost.</p>
-          <ul>
-            <li>Per-server, per-tool, and per-agent breakdowns</li>
-            <li>24-hour call sparkline and a live recent-calls feed</li>
-            <li>Persists across daemon restarts</li>
-          </ul>
-        </div>
-        <figure class="shot reveal" data-parallax="0.05" data-title="Analytics">
-          <picture>
-            <source type="image/webp" srcset="/demos/analytics-680.webp 680w, /demos/analytics.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
-            <img src="/demos/analytics.png" srcset="/demos/analytics-680.png 680w, /demos/analytics.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate analytics overview with 26 calls at 100 percent success across three agents and usage by GitHub, Filesystem, and Postgres" width="1360" height="850" loading="lazy" />
-          </picture>
-        </figure>
-      </article>
-
-      <article class="feat flip">
-        <div class="feat-copy reveal">
-          <p class="feat-k">The catalog</p>
-          <h2>A catalog that signs you in</h2>
-          <p>Curated first-party servers, ranked by real npm and GitHub popularity, with
-             trust chips so you can tell official from community at a glance. OAuth
-             servers add with one click: the browser opens, you approve, Hypergate
-             connects. The whole official MCP registry is a search box away.</p>
-          <ul>
-            <li>✓ Official and Community trust chips</li>
-            <li>One-click OAuth: Context7, Supabase, Linear, Figma, GitHub</li>
-            <li>Registry search mapped straight into add-ready entries</li>
-          </ul>
-        </div>
-        <figure class="shot reveal" data-parallax="0.05" data-title="Add a server">
-          <picture>
-            <source type="image/webp" srcset="/demos/catalog-680.webp 680w, /demos/catalog.webp 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" />
-            <img src="/demos/catalog.png" srcset="/demos/catalog-680.png 680w, /demos/catalog.png 1360w" sizes="(max-width: 900px) calc(100vw - 40px), 58vw" alt="Hypergate catalog with official OAuth servers and recommended connection guidance for Context7, Supabase, Linear, Figma, and GitHub" width="1360" height="850" loading="lazy" />
           </picture>
         </figure>
       </article>
@@ -349,9 +399,9 @@
 <span class="c-out">hypergated listening on http://localhost:7777</span>
 <span class="c-out">gateway → http://localhost:7777/mcp</span></code></pre>
         </div>
-        <p class="start-note">Then open <code>localhost:7777</code>, add servers from the
-           catalog, and paste the gateway snippet into your agent. That's the whole
-           setup.</p>
+        <p class="start-note">Then open <code>localhost:7777</code>, connect your servers
+           once, and hand the gateway to every agent and person who needs it. That's the
+           whole setup.</p>
         <div class="hero-ctas">
           <div class="download-control" data-download-group>
             <a class="btn btn-primary download-primary" href="https://github.com/nekko-labs/hypergate/releases/latest" data-download-primary>
