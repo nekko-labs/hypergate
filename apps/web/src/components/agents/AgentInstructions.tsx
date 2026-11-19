@@ -126,7 +126,7 @@ function HarnessRow({ h, busy, onWrite }: { h: InstructionsHarnessInfo; busy: bo
           <b>{h.name}</b> {state}{' '}
           <a className="small muted" href={h.source} target="_blank" rel="noreferrer">docs ↗</a>
         </div>
-        <div className="small muted"><code>{h.path}</code></div>
+        <div className="small muted" style={{ overflowWrap: 'anywhere' }}><code>{h.path}</code></div>
         {h.note && <div className="small" style={{ color: 'var(--warning)' }}>{h.note}</div>}
       </div>
       <div className="row wrap-gap">
@@ -176,7 +176,7 @@ export function InstructionsOffer({ target }: { target?: string }) {
         {busy ? 'Adding…' : h.installed ? 'Update Hypergate instructions' : 'Add Hypergate instructions'}
       </button>
       <span className="small muted">
-        Puts a short block in <code>{h.path}</code> so every {h.name} session uses the vault and asks before working
+        Puts a short block in <code style={{ overflowWrap: 'anywhere' }}>{h.path}</code> so every {h.name} session uses the vault and asks before working
         around Hypergate.
       </span>
     </div>

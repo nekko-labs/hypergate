@@ -86,7 +86,9 @@ export function AmbientPanel({ token, onImported }: { token?: string; onImported
                   <div className="row wrap-gap" style={{ gap: 8, flex: 1, minWidth: 220 }}>
                     <span className="server-name">{f.tool}</span>
                     {f.detail && <span className="chip">{f.detail}</span>}
-                    <span className="small muted mono" title={f.location}>{shortPath(f.location)}</span>
+                    <span className="small muted mono" title={f.location} style={{ overflowWrap: 'anywhere', minWidth: 0 }}>
+                      {shortPath(f.location)}
+                    </span>
                     {f.hint && <span className="small muted mono">{f.hint}</span>}
                     {f.storage === 'keyring' && <span className="chip">OS keyring</span>}
                   </div>
@@ -128,7 +130,7 @@ export function AmbientPanel({ token, onImported }: { token?: string; onImported
               <div key={e.id} className="list-row small">
                 <span className="chip">{EVENT_LABEL[e.kind]}</span>{' '}
                 <span>{e.detail ? `${e.tool} (${e.detail})` : e.tool}</span>{' '}
-                <span className="muted mono">{shortPath(e.location)}</span>{' '}
+                <span className="muted mono" style={{ overflowWrap: 'anywhere' }}>{shortPath(e.location)}</span>{' '}
                 {e.quarantined && <span className="chip">quarantined</span>}{' '}
                 <span className="muted">{new Date(e.at).toLocaleString()}</span>
               </div>
