@@ -337,6 +337,89 @@ pub fn cred_set(key: &str, env_override: Option<&str>) -> Result<ExitCode, Strin
 /// every field of every entry. Eight (the v1.7.0 catalog) still prints in full.
 const SUMMARY_THRESHOLD: usize = 12;
 
+/// One line saying what an import did, for a person.
+fn describe_import(id: &str, r: &Value) -> String {
+    let cred = r["credentialId"].as_str().unwrap_or("?");
+    let vault = match r["vault"].as_str() {
+        Some("rolled") => "rolled into",
+        Some("unchanged") => "already in",
+        _ => "stored as",
+    };
+    let mut line = format!("{id}: {vault} vault credential {cred}");
+    if r["removed"].as_bool().unwrap_or(false) {
+        line.push_str(", removed at the source");
+    }
+    if let Some(b) = r["backup"].as_str() {
+        line.push_str(&format!(" (backup: {b})"));
+    }
+    if let Some(step) = r["manualStep"].as_str() {
+        line.push_str(&format!("\n  still to do: {step}"));
+    }
+    line
+}
+
+/// `hypergate cred sweep`: list ambient logins, or import one or all of them.
+pub fn cred_sweep_human(import: Option<&str>, all: bool) -> Result<ExitCode, String> {
+    if let Some(id) = import {
+        let r = api::ambient_import(id)?;
+        println!("{}", describe_import(id, &r));
+        return Ok(ExitCode::SUCCESS);
+    }
+    let scan = api::ambient()?;
+    let rows = scan["findings"].as_array().ok_or("unexpected sweep response")?;
+    if rows.is_empty() {
+        println!("No logins found outside the vault in the places Hypergate knows to look.");
+        return Ok(ExitCode::SUCCESS);
+    }
+    if all {
+        let mut failed = 0;
+        for row in rows {
+            let removable = row["importable"].as_bool().unwrap_or(false) && row["removal"].as_str() != Some("manual");
+            if !removable {
+                continue;
+            }
+            let id = row["id"].as_str().unwrap_or_default();
+            match api::ambient_import(id) {
+                Ok(r) => println!("{}", describe_import(id, &r)),
+                Err(e) => {
+                    failed += 1;
+                    eprintln!("{id}: {e}");
+                }
+            }
+        }
+        return Ok(if failed == 0 {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(1)
+        });
+    }
+    let id_w = width(rows.iter().filter_map(|v| v["id"].as_str()).map(str::len), 2);
+    let tool_w = width(rows.iter().filter_map(|v| v["tool"].as_str()).map(str::len), 4);
+    println!("{:<id_w$}  {:<tool_w$}  {:<10}  WHERE", "ID", "TOOL", "ACTION");
+    for row in rows {
+        let action = if !row["importable"].as_bool().unwrap_or(false) {
+            "report"
+        } else if row["removal"].as_str() == Some("manual") {
+            "copy"
+        } else {
+            "import"
+        };
+        let detail = row["detail"].as_str().map(|d| format!(" ({d})")).unwrap_or_default();
+        println!(
+            "{:<id_w$}  {:<tool_w$}  {:<10}  {}{}",
+            row["id"].as_str().unwrap_or("?"),
+            row["tool"].as_str().unwrap_or("?"),
+            action,
+            row["location"].as_str().unwrap_or("?"),
+            detail,
+        );
+    }
+    println!(
+        "\n`hypergate cred sweep --import <id>` moves one into the vault (backing up the file first); `--all` moves every \"import\" row. \"report\" rows need a manual step; `--json` shows it."
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
 pub fn cred_guide_human(service: Option<&str>) -> Result<ExitCode, String> {
     let value = api::credential_guides()?;
     let rows = value.as_array().ok_or("unexpected guide response")?;
@@ -434,6 +517,23 @@ pub fn cred_json(action: &CredAction) -> Result<Value, String> {
         CredAction::Rm { id } => api::delete_credential(id)?,
         CredAction::Allow { agent, id } => api::set_agent_credential(agent, id, true)?,
         CredAction::Deny { agent, id } => api::set_agent_credential(agent, id, false)?,
+        CredAction::Sweep { import: Some(id), .. } => api::ambient_import(id)?,
+        CredAction::Sweep { all: true, .. } => {
+            let scan = api::ambient()?;
+            let mut results = Vec::new();
+            for row in scan["findings"].as_array().cloned().unwrap_or_default() {
+                let removable =
+                    row["importable"].as_bool().unwrap_or(false) && row["removal"].as_str() != Some("manual");
+                if !removable {
+                    continue;
+                }
+                let id = row["id"].as_str().unwrap_or_default().to_string();
+                let result = api::ambient_import(&id).unwrap_or_else(|e| json!({ "ok": false, "error": e }));
+                results.push(json!({ "id": id, "result": result }));
+            }
+            json!({ "imported": results })
+        }
+        CredAction::Sweep { .. } => api::ambient()?,
         // Set reads stdin and prints its own confirmation; keep it human-only
         // rather than inventing a JSON stdin protocol nothing consumes yet.
         CredAction::Set { .. } => return Err("`cred set` does not support --json".into()),
