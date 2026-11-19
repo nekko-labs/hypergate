@@ -314,6 +314,21 @@ const noSecret = await appPost({ origin: BASE, authorization: `Bearer ${master}`
 if (noSecret.status !== 400) fail(`GitHub requires a client secret; POST without one should 400, got ${noSecret.status}`);
 ok('OAuth app setup reports this port’s callback, 404s an unknown provider, demands GitHub’s secret, and refuses no-token / cross-origin writes');
 
+// ── agent instruction files (read + the guards; never writes the real home) ──
+const instr = await (await fetch(`${BASE}/api/instructions`)).json();
+if (instr.blockVersion !== 1 || !Array.isArray(instr.harnesses) || !instr.harnesses.length)
+  fail(`instructions status malformed: ${JSON.stringify(instr).slice(0, 200)}`);
+if (!instr.harnesses.every((h) => typeof h.path === 'string' && h.source.startsWith('https://')))
+  fail('every instructions harness must name its file and cite a vendor source');
+const instrNoToken = await fetch(`${BASE}/api/instructions/all`, { method: 'POST' });
+if (instrNoToken.status !== 401) fail(`installing instructions without the master token should 401, got ${instrNoToken.status}`);
+const instrForeign = await fetch(`${BASE}/api/instructions/all`, {
+  method: 'DELETE',
+  headers: { authorization: `Bearer ${master}`, origin: 'https://evil.example' },
+});
+if (instrForeign.status !== 403) fail(`a cross-origin page must not remove instructions, got ${instrForeign.status}`);
+ok(`instructions status lists ${instr.harnesses.length} harnesses; writes refuse no-token and cross-origin callers`);
+
 // ── the credential vault ─────────────────────────────────────────────────────
 // Store → gate → hand out → roll → delete, end to end. Values must reach
 // exactly three places (a spawned server's env, an allowed agent's

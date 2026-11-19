@@ -12,6 +12,7 @@ export * from './cli-actions.js';
 export * from './advice.js';
 export * from './connect.js';
 export * from './agents.js';
+export * from './agent-instructions.js';
 export * from './credentials.js';
 export * from './oauth.js';
 export * from './account.js';

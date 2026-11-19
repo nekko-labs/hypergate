@@ -232,6 +232,16 @@ enum Command {
         #[command(subcommand)]
         action: AutostartAction,
     },
+    /// Tell agent harnesses about Hypergate in their global instruction files.
+    ///
+    /// Adds a short, marker-delimited block to `~/.claude/CLAUDE.md`,
+    /// `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md` and the like: keys come from
+    /// the vault through `hypergate run`, and a missing key, CLI or server is
+    /// requested rather than worked around. Nothing outside the markers changes.
+    Instructions {
+        #[command(subcommand)]
+        action: InstructionsAction,
+    },
     /// Manage the credential vault: API keys and tokens for CLIs and MCP servers.
     Cred {
         #[command(subcommand)]
@@ -405,6 +415,29 @@ enum CredAction {
 }
 
 #[derive(Clone, Subcommand)]
+enum InstructionsAction {
+    /// Which harnesses were found, and whether each has the current block.
+    Status,
+    /// Add (or update) the block for one harness, or every detected one.
+    Install {
+        /// Harness id from `status` (`claude-code`, `codex`, `gemini`, ...).
+        harness: Option<String>,
+        /// Every harness detected on this machine.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Take the block out again, leaving the rest of each file untouched.
+    #[command(alias = "rm")]
+    Remove {
+        /// Harness id from `status`.
+        harness: Option<String>,
+        /// Every harness that has the block.
+        #[arg(long)]
+        all: bool,
+    },
+}
+
+#[derive(Clone, Subcommand)]
 enum SecretAction {
     /// Print a secret's value to stdout.
     Get { key: String },
@@ -523,6 +556,15 @@ fn dispatch_json(command: &Command) -> Result<ExitCode, String> {
         }
         Command::Cli { action } => commands::cli_json(action)?,
         Command::Cred { action } => commands::cred_json(action)?,
+        Command::Instructions { action } => match action {
+            InstructionsAction::Status => api::instructions_status()?,
+            InstructionsAction::Install { harness, all } => {
+                commands::instructions_write_json(&commands::instructions_target(harness.as_deref(), *all)?, false)?
+            }
+            InstructionsAction::Remove { harness, all } => {
+                commands::instructions_write_json(&commands::instructions_target(harness.as_deref(), *all)?, true)?
+            }
+        },
         Command::Start {
             no_open,
             no_shortcut,
@@ -905,6 +947,16 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
                 api::set_agent_credential(&agent, &id, false)?;
                 println!("Denied {id} for {agent}");
                 Ok(ExitCode::SUCCESS)
+            }
+        },
+
+        Command::Instructions { action } => match action {
+            InstructionsAction::Status => commands::instructions_status_human(),
+            InstructionsAction::Install { harness, all } => {
+                commands::instructions_write_human(harness.as_deref(), all, false)
+            }
+            InstructionsAction::Remove { harness, all } => {
+                commands::instructions_write_human(harness.as_deref(), all, true)
             }
         },
 

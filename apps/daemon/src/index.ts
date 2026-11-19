@@ -74,10 +74,12 @@ import {
   decodeJwtClaims,
   userinfoEndpoint,
   type OAuthStore,
+  type InstructionsHarness,
 } from '@hypergate/core';
 import { registryConnections } from '@hypergate/shared';
 import { openStore } from './store.ts';
 import { CredentialVault } from './vault.ts';
+import { AgentInstructions } from './instructions.ts';
 import { CredentialRequestStore } from './requests.ts';
 import { ServerInstallRequestStore } from './server-requests.ts';
 import { CliInstallRequestStore } from './cli-requests.ts';
@@ -128,6 +130,9 @@ import type {
   ApplyUpdateResponse,
   InstallChannel,
   ServerAccount,
+  InstructionsStatusResponse,
+  InstructionsWriteRequest,
+  InstructionsWriteResponse,
 } from '@hypergate/shared';
 
 /**
@@ -1910,6 +1915,19 @@ if (STDIO_MODE) {
   let clients = loadClients();
   const persistClients = debounce(() => saveClients(clients), 1500);
 
+  // Agent instruction files (see instructions.ts). The key a harness's block
+  // names is the stable stem of the agent connected *as* that harness, so the
+  // `hypergate run --agent` line keeps resolving after the agent is re-created;
+  // with no such agent, the harness id, which `--agent` resolves once one is
+  // connected under that name.
+  const agentInstructions = new AgentInstructions(homedir(), join(DATA_DIR, 'instructions-backup'));
+  const instructionsAgentKey = (h: InstructionsHarness): string => {
+    const byTarget = clients.find((c) => c.target && h.targets.includes(c.target));
+    const byName = matchAgents(clients, h.id);
+    const agent = byTarget ?? (byName.length === 1 ? byName[0] : undefined);
+    return agent ? agent.id.replace(/-[0-9a-f]{4}$/, '') : h.id;
+  };
+
   // Repair PATH before anything reads it.
   //
   // Started by launchd (the macOS login item) or a desktop session, this process
@@ -2512,6 +2530,8 @@ if (STDIO_MODE) {
         else if (typeof b.skippedUpdate === 'string' && /^[\w.+-]{1,64}$/.test(b.skippedUpdate)) cur.skippedUpdate = b.skippedUpdate;
         if (typeof b.agentsSeeAllCredentialNames === 'boolean')
           cur.agentsSeeAllCredentialNames = b.agentsSeeAllCredentialNames;
+        if (typeof b.instructionsPromptDismissed === 'boolean')
+          cur.instructionsPromptDismissed = b.instructionsPromptDismissed;
         if (typeof b.runOnStartup === 'boolean') {
           // Let the OS error surface: "could not write the Run key" is a far
           // better answer than a toggle that silently springs back.
@@ -3000,6 +3020,33 @@ if (STDIO_MODE) {
         targets: await connectTargetsCached(),
       };
       return json(res, 200, info);
+    }
+
+    // ── agent instruction files ─────────────────────────────────────────────
+    // A Hypergate block in each harness's global instruction file. Reading the
+    // status is free; writing changes a file the user owns, so it needs the
+    // master token (plus the global same-origin guard) like every other
+    // mutation of something that is not Hypergate's.
+    if (pathname === '/api/instructions' && req.method === 'GET') {
+      const out: InstructionsStatusResponse = agentInstructions.status(instructionsAgentKey);
+      return json(res, 200, out);
+    }
+    const instrM = /^\/api\/instructions\/([a-z0-9-]+)$/.exec(pathname);
+    if (instrM && (req.method === 'POST' || req.method === 'DELETE')) {
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      try {
+        const raw = await readBody(req);
+        const body = (raw ? JSON.parse(raw) : {}) as InstructionsWriteRequest;
+        const homes = body.homes && typeof body.homes === 'object' ? body.homes : undefined;
+        const results =
+          req.method === 'POST'
+            ? agentInstructions.install(instrM[1], instructionsAgentKey, homes)
+            : agentInstructions.remove(instrM[1], homes);
+        const out: InstructionsWriteResponse = { ok: results.every((r) => !r.error), results };
+        return json(res, 200, out);
+      } catch (e) {
+        return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
+      }
     }
 
     // ── connecting an agent to a harness ─────────────────────────────────────

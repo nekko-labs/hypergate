@@ -1528,7 +1528,147 @@ pub fn start(opts: &StartOptions) -> Result<(), String> {
     {
         println!("Update    v{latest} available — run `hypergate update --apply`");
     }
+
+    // 5. A suggestion, never a write: agents that have not been told about
+    //    Hypergate in their global instructions. Same cached-and-local rule as
+    //    the update line, so a start never waits on it.
+    if let Ok(status) = api::instructions_status()
+        && let Some(line) = instructions_hint(&status)
+    {
+        println!("{line}");
+    }
     Ok(())
+}
+
+// ── agent instruction files ─────────────────────────────────────────────────
+//
+// A Hypergate block in each harness's global instruction file. The daemon does
+// the writing (core's agent-instructions.ts holds the rules); this is the
+// terminal surface for it. The CLI forwards its own `CLAUDE_CONFIG_DIR` and
+// `CODEX_HOME`, because a daemon the OS started never sees a shell's exports.
+
+/// The config-home overrides this shell knows about, for the daemon to honour.
+pub fn instruction_homes() -> serde_json::Map<String, Value> {
+    let mut homes = serde_json::Map::new();
+    for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME"] {
+        if let Ok(v) = std::env::var(key)
+            && !v.trim().is_empty()
+        {
+            homes.insert(key.into(), Value::String(v));
+        }
+    }
+    homes
+}
+
+/// The `hypergate start` line, when some detected harness has no block anywhere.
+pub fn instructions_hint(status: &Value) -> Option<String> {
+    let rows = status["harnesses"].as_array()?;
+    let installed = rows.iter().any(|h| h["installed"].as_bool().unwrap_or(false));
+    let detected: Vec<&str> = rows
+        .iter()
+        .filter(|h| h["detected"].as_bool().unwrap_or(false))
+        .filter_map(|h| h["name"].as_str())
+        .collect();
+    if installed || detected.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Agents    {} not told about Hypergate yet: `hypergate instructions install --all`",
+        detected.join(", ")
+    ))
+}
+
+pub fn instructions_status_human() -> Result<ExitCode, String> {
+    let status = api::instructions_status()?;
+    let rows = status["harnesses"]
+        .as_array()
+        .ok_or("unexpected instructions response")?;
+    println!("{:<14}  {:<14}  FILE", "HARNESS", "STATE");
+    for h in rows {
+        let state = if h["damaged"].as_bool().unwrap_or(false) {
+            "needs hand fix"
+        } else if h["current"].as_bool().unwrap_or(false) {
+            "installed"
+        } else if h["installed"].as_bool().unwrap_or(false) {
+            "out of date"
+        } else if h["detected"].as_bool().unwrap_or(false) {
+            "not installed"
+        } else {
+            "not detected"
+        };
+        println!(
+            "{:<14}  {:<14}  {}",
+            h["id"].as_str().unwrap_or("?"),
+            state,
+            h["path"].as_str().unwrap_or("")
+        );
+        if let Some(note) = h["note"].as_str() {
+            println!("{:<14}  {:<14}  note: {note}", "", "");
+        }
+    }
+    if let Some(skipped) = status["skipped"].as_array() {
+        for s in skipped {
+            println!(
+                "skipped: {} ({})",
+                s["name"].as_str().unwrap_or("?"),
+                s["reason"].as_str().unwrap_or("")
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `install` / `remove` for one harness id, or `all`.
+pub fn instructions_write_json(target: &str, remove: bool) -> Result<Value, String> {
+    let body = json!({ "homes": Value::Object(instruction_homes()) });
+    if remove {
+        api::remove_instructions(target, &body)
+    } else {
+        api::install_instructions(target, &body)
+    }
+}
+
+pub fn instructions_write_human(harness: Option<&str>, all: bool, remove: bool) -> Result<ExitCode, String> {
+    let target = instructions_target(harness, all)?;
+    let out = instructions_write_json(&target, remove)?;
+    let results = out["results"].as_array().cloned().unwrap_or_default();
+    if results.is_empty() {
+        println!(
+            "{}",
+            if remove {
+                "No Hypergate instructions to remove."
+            } else {
+                "No agent harnesses detected on this machine."
+            }
+        );
+    }
+    let mut failed = false;
+    for r in &results {
+        let path = r["path"].as_str().unwrap_or("");
+        let id = r["id"].as_str().unwrap_or("?");
+        if let Some(err) = r["error"].as_str() {
+            failed = true;
+            println!("{id:<14}  failed     {path}: {err}");
+        } else if r["changed"].as_bool().unwrap_or(false) {
+            println!("{id:<14}  {}  {path}", if remove { "removed  " } else { "written  " });
+            if let Some(b) = r["backup"].as_str() {
+                println!("{:<14}  backup     {b}", "");
+            }
+        } else {
+            println!("{id:<14}  unchanged  {path}");
+        }
+    }
+    Ok(if failed { ExitCode::from(1) } else { ExitCode::SUCCESS })
+}
+
+/// One harness id or `--all`, never both and never neither.
+pub fn instructions_target(harness: Option<&str>, all: bool) -> Result<String, String> {
+    match (harness, all) {
+        (Some(_), true) => Err("pass a harness id or --all, not both".into()),
+        (Some(h), false) => Ok(h.to_string()),
+        (None, true) => Ok("all".into()),
+        (None, false) => Err("pass a harness id (see `hypergate instructions status`) or --all".into()),
+    }
 }
 
 // ── mcp-headers: the credential a client fetches instead of storing ─────────
@@ -1590,6 +1730,35 @@ fn explain_resolve(key: &str, err: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn instructions_hint_only_when_detected_and_nothing_installed() {
+        let none = json!({ "harnesses": [
+            { "name": "Claude Code", "detected": true, "installed": false },
+            { "name": "Codex", "detected": true, "installed": false },
+            { "name": "OpenCode", "detected": false, "installed": false },
+        ]});
+        let line = instructions_hint(&none).expect("a hint");
+        assert!(line.contains("Claude Code, Codex"));
+        assert!(line.contains("hypergate instructions install --all"));
+        assert!(!line.contains("OpenCode"));
+
+        let some = json!({ "harnesses": [
+            { "name": "Claude Code", "detected": true, "installed": true },
+            { "name": "Codex", "detected": true, "installed": false },
+        ]});
+        assert_eq!(instructions_hint(&some), None);
+        assert_eq!(instructions_hint(&json!({ "harnesses": [] })), None);
+        assert_eq!(instructions_hint(&json!({})), None);
+    }
+
+    #[test]
+    fn instructions_target_needs_exactly_one_of_id_or_all() {
+        assert_eq!(instructions_target(Some("codex"), false).unwrap(), "codex");
+        assert_eq!(instructions_target(None, true).unwrap(), "all");
+        assert!(instructions_target(Some("codex"), true).is_err());
+        assert!(instructions_target(None, false).is_err());
+    }
 
     fn entry() -> RegistryEntry {
         serde_json::from_value(json!({

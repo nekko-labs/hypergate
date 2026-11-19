@@ -34,6 +34,8 @@ import type {
   UpdateProgress,
   UpdateResult,
   ApplyUpdateResponse,
+  InstructionsStatusResponse,
+  InstructionsWriteResponse,
 } from '@hypergate/shared';
 
 // Dev proxies /api → daemon; in a packaged build set VITE_DAEMON_URL.
@@ -217,6 +219,20 @@ export const api = {
   connectInfo: (id: string) => j<AgentConnectInfo>(`/api/clients/${id}/connect`),
   connect: (id: string, target: string) =>
     j<ConnectResult>(`/api/clients/${id}/connect`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target }) }),
+  // Agent instruction files: a Hypergate block in each harness's global
+  // instructions. Reading is free; writing touches the user's files, so it
+  // carries the master token. `id` may be `all`.
+  instructions: () => j<InstructionsStatusResponse>('/api/instructions'),
+  installInstructions: (id: string, token: string) =>
+    j<InstructionsWriteResponse>(`/api/instructions/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  removeInstructions: (id: string, token: string) =>
+    j<InstructionsWriteResponse>(`/api/instructions/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    }),
   settings: () => j<SettingsInfo>('/api/settings'),
   updateSettings: (patch: UpdateSettingsRequest) =>
     j<SettingsInfo>('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
