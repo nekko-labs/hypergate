@@ -48,16 +48,18 @@ describe('importAmbient', () => {
     expect(scan()).toHaveLength(0);
   });
 
-  it('an existing credential for the service is rolled, or left alone when the value matches', async () => {
+  it('a different value never replaces a stored credential; a matching one is reused', async () => {
     const { home, vault, deps, scan } = setup();
     const existing = vault.create({ name: 'OpenAI', value: 'sk-old-0123456789abcdef', service: 'openai' });
     writeFileSync(join(home, '.zshrc'), `export OPENAI_API_KEY=${OPENAI}\n`);
-    const rolled: string[] = [];
-    const r = await importAmbient(scan()[0], { ...deps, rolled: async (id) => void rolled.push(id) });
-    expect(r).toMatchObject({ credentialId: existing.id, vault: 'rolled' });
-    expect(rolled).toEqual([existing.id]);
+    const r = await importAmbient(scan()[0], deps);
+    expect(r).toMatchObject({ vault: 'created' });
+    expect(r.credentialId).not.toBe(existing.id);
+    expect(vault.value(existing.id)).toBe('sk-old-0123456789abcdef');
+    expect(vault.get(r.credentialId!)?.name).toMatch(/\(imported\)$/);
     writeFileSync(join(home, '.bashrc'), `export OPENAI_API_KEY=${OPENAI}\n`);
-    expect((await importAmbient(scan()[0], deps)).vault).toBe('unchanged');
+    const again = await importAmbient(scan()[0], deps);
+    expect(again).toMatchObject({ vault: 'unchanged', credentialId: r.credentialId });
   });
 
   it('gh keyring login: value from `gh auth token`, removal by `gh auth logout`', async () => {

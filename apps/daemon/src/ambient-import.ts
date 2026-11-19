@@ -106,17 +106,23 @@ export const importAmbient = async (h: AmbientHit, deps: ImportDeps): Promise<Am
   let credentialId: string;
   let vault: AmbientImportResult['vault'];
   const existing = existingFor(deps.vault, h);
-  if (existing) {
-    credentialId = existing.id;
-    if (deps.vault.value(existing.id) === value) vault = 'unchanged';
-    else {
-      deps.vault.roll(existing.id, value);
-      vault = 'rolled';
-      await deps.rolled?.(existing.id);
-    }
+  // Any credential for the same service or env var already holding this exact
+  // value (an earlier import, or the key the user stored by hand) is reused.
+  const same = deps.vault
+    .list()
+    .filter((r) => (h.service ? r.service === h.service : !r.service && r.envVar === h.envVar))
+    .find((r) => deps.vault.value(r.id) === value);
+  if (same) {
+    credentialId = same.id;
+    vault = 'unchanged';
   } else {
+    // A different value never replaces a stored one. Whatever wrote this file
+    // runs as the user, agents included, so rolling here would let anything
+    // that can edit ~/.zshrc swap the vault's real key for one it chose (and
+    // auto-quarantine would do it unattended). A new credential starts with no
+    // agent grants, so it changes nothing until a person decides to use it.
     const meta = deps.vault.create({
-      name: ambientCredentialName(h),
+      name: existing ? `${ambientCredentialName(h)} (imported)` : ambientCredentialName(h),
       value,
       kind: /KEY$/.test(h.envVar ?? '') ? 'api-key' : 'token',
       service: h.service,
