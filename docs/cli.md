@@ -60,6 +60,9 @@ cli ls
 cli search <query>
 cli check <command>
 cli install <id> [--run|--yes]
+instructions status
+instructions install <harness>|--all
+instructions remove <harness>|--all
 usage
 doctor
 ```
@@ -77,7 +80,7 @@ without executing it; a failed executed installer returns 1.
 
 `--json` is global and may appear before or after the subcommand. It applies to
 status, list, logs, catalog, search, tools, call, gateway, usage, doctor,
-agent, cli, targets, connect, start, stop, restart, update, add, rm,
+agent, cli, instructions, targets, connect, start, stop, restart, update, add, rm,
 server start|stop|restart, mcp-headers, secret check, shortcut status, and
 autostart status. `app`, `tray`, `open`, `icon`, and `sandbox-exec` deliberately
 remain human/interactive-only. `status --json` still succeeds when the daemon is
@@ -113,6 +116,29 @@ that restriction rather than exposing a raw HTTP 409.
 `targets` reports detected harnesses. `connect <target>` creates or
 reuses the target's agent. Runnable CLI targets are invoked by the daemon
 without a shell. Non-runnable targets print their configuration snippet.
+
+## Agent instruction files
+
+`instructions` puts a short Hypergate block into each agent harness's global
+instruction file: Claude Code (`~/.claude/CLAUDE.md`, or under
+`CLAUDE_CONFIG_DIR`), Codex (`~/.codex/AGENTS.md`, or under `CODEX_HOME`),
+Gemini CLI and Antigravity (`~/.gemini/GEMINI.md`), OpenCode
+(`~/.config/opencode/AGENTS.md`, or the Claude Code file it falls back to), and
+Devin Desktop (`~/.devin/global_rules.md`). The block tells every session that
+keys come from the vault through `hypergate run`, that keys are never written
+down or pasted, and that a missing key, CLI or server is requested rather than
+worked around, whichever model the harness runs on.
+
+The block sits between `<!-- hypergate:begin vN -->` and
+`<!-- hypergate:end -->`; nothing outside the markers changes. `install` is
+idempotent and upgrades an older block in place. `--all` installs for every
+harness whose config directory exists, and removes from every file that has a
+block. Before Hypergate first changes an existing file, the original is copied
+to `~/.hypergate/instructions-backup/`. A file with a begin marker and no end
+marker is reported and left alone. `hypergate start` suggests
+`instructions install --all` when it finds harnesses with no block, and never
+writes on its own. `install` and `remove` exit 1 if any file could not be
+written.
 
 ## Curated CLI installation
 

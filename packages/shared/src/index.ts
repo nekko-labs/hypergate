@@ -1593,3 +1593,100 @@ export interface SetCredentialProgramsRequest {
   /** Bare program names; an empty list unbinds every program. `null` restores the guide default. */
   programs: string[] | null;
 }
+
+// ── agent instruction files ──
+//
+// A short, marker-delimited Hypergate block written (with consent) into each
+// agent harness's *global* instruction file, so every session of every harness
+// is told how credentials, CLIs and servers work on this machine, whether or
+// not it ever connects to the gateway. MCP `instructions` only reach connected
+// clients, and several harnesses ignore them.
+//
+// The settings fields below use interface merging so this feature's additions
+// stay in this one block.
+
+export interface DaemonSettings {
+  /**
+   * The user dismissed the one-time "tell your agents about Hypergate" offer.
+   * The Agents section keeps offering it; only the banner goes away.
+   */
+  instructionsPromptDismissed?: boolean;
+}
+
+export interface UpdateSettingsRequest {
+  instructionsPromptDismissed?: boolean;
+}
+
+/** One harness row in `GET /api/instructions`. */
+export interface InstructionsHarnessInfo {
+  /** Stable id (`claude-code`, `codex`, `gemini`, `opencode`, `devin-desktop`). */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** Connect-catalog target ids this file serves (`CONNECT_TARGETS`). */
+  targets: string[];
+  /** Absolute path of the file Hypergate writes for this harness on this machine. */
+  path: string;
+  /** The harness looks installed here (its config directory exists). */
+  detected: boolean;
+  /** A Hypergate block is present in the file. */
+  installed: boolean;
+  /** Version of the installed block, when there is one. */
+  version?: number;
+  /** Installed and identical to what Hypergate would write now. */
+  current: boolean;
+  /** The agent key the block's `hypergate run --agent` line names. */
+  agentKey: string;
+  /** The vendor documentation the path was verified against. */
+  source: string;
+  /** Something the user should know about this file (a shared file, shadowing). */
+  note?: string;
+  /** A begin marker without an end marker: Hypergate will not touch the file. */
+  damaged?: boolean;
+}
+
+/** A harness Hypergate deliberately does not write to, and why. */
+export interface InstructionsSkippedHarness {
+  name: string;
+  reason: string;
+}
+
+/** `GET /api/instructions`. */
+export interface InstructionsStatusResponse {
+  /** The block version this daemon writes. */
+  blockVersion: number;
+  harnesses: InstructionsHarnessInfo[];
+  skipped: InstructionsSkippedHarness[];
+}
+
+/**
+ * Body of `POST /api/instructions/:harness` and `DELETE /api/instructions/:harness`.
+ * `:harness` may be `all`: every detected harness on install, every installed
+ * one on remove.
+ */
+export interface InstructionsWriteRequest {
+  /**
+   * Config homes as the caller's shell sees them (`CLAUDE_CONFIG_DIR`,
+   * `CODEX_HOME`). A daemon started by the OS never inherits these, so the CLI
+   * forwards its own. Only these keys are honoured, and only for an existing
+   * directory inside the user's home.
+   */
+  homes?: Record<string, string>;
+}
+
+/** One file's outcome in an instructions write. */
+export interface InstructionsWriteResult {
+  id: string;
+  path: string;
+  /** The file changed (false when it already said exactly this). */
+  changed: boolean;
+  /** Where the original was copied before Hypergate first wrote to it. */
+  backup?: string;
+  /** Set when this harness could not be written. */
+  error?: string;
+}
+
+export interface InstructionsWriteResponse {
+  ok: boolean;
+  results: InstructionsWriteResult[];
+}

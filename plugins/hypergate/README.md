@@ -64,6 +64,19 @@ with the tool and a short reason; a badge appears on **CLI tools** in the manage
 and **Install & approve** runs the install there, log on screen. Claude Code never
 installs anything itself, and **Deny** runs nothing.
 
+## The rules, in Claude Code's own words
+
+The plugin ships a `hypergate` skill with the rules above in short form: run CLIs
+that need keys through `hypergate run --agent claude-code`, never write a key down
+or sign a CLI in, and request what is missing instead of working around it. Claude
+Code loads it when a task looks like it needs a key, a login or an install.
+
+To have the rules in **every** session rather than only the ones that look
+relevant, run `hypergate instructions install claude-code` (or press **Install**
+under **Agent instructions** in the manager). That adds the same block to your
+global `CLAUDE.md`, between markers, and `hypergate instructions remove
+claude-code` takes it out again.
+
 ## Requirements
 
 - Hypergate installed, with `hypergate` on your `PATH` (`npm i -g hypergated`, or

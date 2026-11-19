@@ -58,6 +58,7 @@ import { WindowButtons } from './components/WindowButtons';
 import { connectClient, inShell, onTitleBarMouseDown, shell } from './lib/shell';
 import { OAuthAppDialog } from './components/servers/OAuthAppDialog';
 import { TokenDialog } from './components/servers/TokenDialog';
+import { AgentInstructionsSection, InstructionsOffer } from './components/agents/AgentInstructions';
 import { useToast } from './toast';
 
 type View = 'servers' | 'analytics' | 'settings';
@@ -737,6 +738,7 @@ export function App() {
 
                 <section id="agents" className="dashboard-section">
                   <ConnectedAgents agents={agents} servers={servers ?? []} onChange={refreshAgents} />
+                  <AgentInstructionsSection token={gateway?.token} />
                 </section>
 
                 <section id="mcp-servers" className="dashboard-section">
@@ -4233,6 +4235,9 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
               {result.output && <pre className="snippet">{result.output}</pre>}
             </div>
           )}
+          {/* Once it's connected (or, for a paste-it-yourself client, while you
+              connect it), offer the global-instructions block for its harness. */}
+          {(t.method !== 'cli' || result?.ok) && <InstructionsOffer target={t.id} />}
         </div>
       )}
     </div>

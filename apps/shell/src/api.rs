@@ -328,6 +328,53 @@ fn patch(path: &str, body: &serde_json::Value) -> Result<String, String> {
     check(status, text, path, true)
 }
 
+/// DELETE with a JSON body, returning the raw reply (the plain `delete` above
+/// discards it).
+fn delete_json(path: &str, body: &serde_json::Value) -> Result<String, String> {
+    let url = format!("{}{}", paths::base_url(), path);
+    let mut req = agent(TIMEOUT).delete(&url).force_send_body();
+    if let Some(token) = crate::secrets::gateway_token() {
+        req = req.header("Authorization", &format!("Bearer {token}"));
+    }
+    let mut res = req.send_json(body).map_err(|e| format!("{e}"))?;
+    let status = res.status().as_u16();
+    let text = res.body_mut().read_to_string().map_err(|e| format!("{e}"))?;
+    check(status, text, path, true)
+}
+
+/// Which harnesses have a Hypergate block in their global instructions. Local
+/// file reads only, so `hypergate start` can afford to ask.
+pub fn instructions_status() -> Result<serde_json::Value, String> {
+    get("/api/instructions")
+}
+
+/// The route for one harness id (or `all`). Ids are plain slugs, checked here
+/// so nothing else can ride into the path.
+fn instructions_path(harness: &str) -> Result<String, String> {
+    if harness.is_empty()
+        || !harness
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(format!(
+            "`{harness}` is not a harness id (see `hypergate instructions status`)"
+        ));
+    }
+    Ok(format!("/api/instructions/{harness}"))
+}
+
+pub fn install_instructions(harness: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let path = instructions_path(harness)?;
+    let text = send(&path, Some(body), TIMEOUT)?;
+    serde_json::from_str(&text).map_err(|e| format!("unexpected response from {path}: {e}"))
+}
+
+pub fn remove_instructions(harness: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let path = instructions_path(harness)?;
+    let text = delete_json(&path, body)?;
+    serde_json::from_str(&text).map_err(|e| format!("unexpected response from {path}: {e}"))
+}
+
 pub fn health() -> Result<Health, String> {
     // The daemon deliberately leaves this probe unauthenticated. Apart from
     // being sufficient to answer "is it alive?", keeping it token-free means
