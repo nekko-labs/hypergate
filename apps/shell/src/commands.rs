@@ -13,7 +13,7 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use crate::api::{self, RegistryEntry};
-use crate::{AutostartAction, Command, CredAction, SecretAction, ServerAction, ShortcutAction};
+use crate::{AutostartAction, Command, CredAction, LockdownAction, SecretAction, ServerAction, ShortcutAction};
 
 /// Parse only the small, safe subset of curated install instructions that can
 /// be executed without invoking a shell. URLs, prose, and shell syntax remain
@@ -337,6 +337,89 @@ pub fn cred_set(key: &str, env_override: Option<&str>) -> Result<ExitCode, Strin
 /// every field of every entry. Eight (the v1.7.0 catalog) still prints in full.
 const SUMMARY_THRESHOLD: usize = 12;
 
+/// One line saying what an import did, for a person.
+fn describe_import(id: &str, r: &Value) -> String {
+    let cred = r["credentialId"].as_str().unwrap_or("?");
+    let vault = match r["vault"].as_str() {
+        Some("rolled") => "rolled into",
+        Some("unchanged") => "already in",
+        _ => "stored as",
+    };
+    let mut line = format!("{id}: {vault} vault credential {cred}");
+    if r["removed"].as_bool().unwrap_or(false) {
+        line.push_str(", removed at the source");
+    }
+    if let Some(b) = r["backup"].as_str() {
+        line.push_str(&format!(" (backup: {b})"));
+    }
+    if let Some(step) = r["manualStep"].as_str() {
+        line.push_str(&format!("\n  still to do: {step}"));
+    }
+    line
+}
+
+/// `hypergate cred sweep`: list ambient logins, or import one or all of them.
+pub fn cred_sweep_human(import: Option<&str>, all: bool) -> Result<ExitCode, String> {
+    if let Some(id) = import {
+        let r = api::ambient_import(id)?;
+        println!("{}", describe_import(id, &r));
+        return Ok(ExitCode::SUCCESS);
+    }
+    let scan = api::ambient()?;
+    let rows = scan["findings"].as_array().ok_or("unexpected sweep response")?;
+    if rows.is_empty() {
+        println!("No logins found outside the vault in the places Hypergate knows to look.");
+        return Ok(ExitCode::SUCCESS);
+    }
+    if all {
+        let mut failed = 0;
+        for row in rows {
+            let removable = row["importable"].as_bool().unwrap_or(false) && row["removal"].as_str() != Some("manual");
+            if !removable {
+                continue;
+            }
+            let id = row["id"].as_str().unwrap_or_default();
+            match api::ambient_import(id) {
+                Ok(r) => println!("{}", describe_import(id, &r)),
+                Err(e) => {
+                    failed += 1;
+                    eprintln!("{id}: {e}");
+                }
+            }
+        }
+        return Ok(if failed == 0 {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(1)
+        });
+    }
+    let id_w = width(rows.iter().filter_map(|v| v["id"].as_str()).map(str::len), 2);
+    let tool_w = width(rows.iter().filter_map(|v| v["tool"].as_str()).map(str::len), 4);
+    println!("{:<id_w$}  {:<tool_w$}  {:<10}  WHERE", "ID", "TOOL", "ACTION");
+    for row in rows {
+        let action = if !row["importable"].as_bool().unwrap_or(false) {
+            "report"
+        } else if row["removal"].as_str() == Some("manual") {
+            "copy"
+        } else {
+            "import"
+        };
+        let detail = row["detail"].as_str().map(|d| format!(" ({d})")).unwrap_or_default();
+        println!(
+            "{:<id_w$}  {:<tool_w$}  {:<10}  {}{}",
+            row["id"].as_str().unwrap_or("?"),
+            row["tool"].as_str().unwrap_or("?"),
+            action,
+            row["location"].as_str().unwrap_or("?"),
+            detail,
+        );
+    }
+    println!(
+        "\n`hypergate cred sweep --import <id>` moves one into the vault (backing up the file first); `--all` moves every \"import\" row. \"report\" rows need a manual step; `--json` shows it."
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
 pub fn cred_guide_human(service: Option<&str>) -> Result<ExitCode, String> {
     let value = api::credential_guides()?;
     let rows = value.as_array().ok_or("unexpected guide response")?;
@@ -434,6 +517,32 @@ pub fn cred_json(action: &CredAction) -> Result<Value, String> {
         CredAction::Rm { id } => api::delete_credential(id)?,
         CredAction::Allow { agent, id } => api::set_agent_credential(agent, id, true)?,
         CredAction::Deny { agent, id } => api::set_agent_credential(agent, id, false)?,
+        CredAction::Programs {
+            id,
+            programs,
+            default,
+            none,
+        } => match programs_change(programs, *default, *none) {
+            Some(change) => api::set_credential_programs(id, change.as_deref())?,
+            None => credential_row(id)?,
+        },
+        CredAction::Sweep { import: Some(id), .. } => api::ambient_import(id)?,
+        CredAction::Sweep { all: true, .. } => {
+            let scan = api::ambient()?;
+            let mut results = Vec::new();
+            for row in scan["findings"].as_array().cloned().unwrap_or_default() {
+                let removable =
+                    row["importable"].as_bool().unwrap_or(false) && row["removal"].as_str() != Some("manual");
+                if !removable {
+                    continue;
+                }
+                let id = row["id"].as_str().unwrap_or_default().to_string();
+                let result = api::ambient_import(&id).unwrap_or_else(|e| json!({ "ok": false, "error": e }));
+                results.push(json!({ "id": id, "result": result }));
+            }
+            json!({ "imported": results })
+        }
+        CredAction::Sweep { .. } => api::ambient()?,
         // Set reads stdin and prints its own confirmation; keep it human-only
         // rather than inventing a JSON stdin protocol nothing consumes yet.
         CredAction::Set { .. } => return Err("`cred set` does not support --json".into()),
@@ -443,15 +552,26 @@ pub fn cred_json(action: &CredAction) -> Result<Value, String> {
 /// Run a command with vault credentials in its env. The values ride only in
 /// the child's environment: never argv, never printed, never logged.
 pub fn run_with_credentials(agent: Option<&str>, with: &[String], argv: &[String]) -> Result<ExitCode, String> {
-    let resolved = api::resolve_credentials(agent, with)?;
-    let env = resolved["env"].as_object().cloned().unwrap_or_default();
-    let used = resolved["used"].as_array().map(Vec::len).unwrap_or(0);
     let (program, rest) = argv
         .split_first()
         .ok_or("nothing to run — pass the command after `--`")?;
+    // Resolve the program ourselves, then run exactly that file. Under
+    // credential lockdown the daemon checks this path is the real program the
+    // key is bound to, so what it approves and what we start must be the same.
+    let path = resolve_program(
+        program,
+        std::env::var_os("PATH").as_deref(),
+        &std::env::current_dir().unwrap_or_default(),
+        &path_exts(),
+    )
+    .ok_or_else(|| format!("could not find `{program}` on PATH"))?;
+    let path_str = path.to_string_lossy().into_owned();
+    let resolved = api::resolve_credentials(agent, with, Some(&path_str), rest)?;
+    let env = resolved["env"].as_object().cloned().unwrap_or_default();
+    let used = resolved["used"].as_array().map(Vec::len).unwrap_or(0);
     // Name the count, never the contents: this line may end up in a CI log.
     eprintln!("hypergate run: injecting {used} credential(s) into `{program}`");
-    let mut child = std::process::Command::new(program);
+    let mut child = std::process::Command::new(&path);
     child.args(rest);
     for (k, v) in &env {
         if let Some(val) = v.as_str() {
@@ -464,6 +584,170 @@ pub fn run_with_credentials(agent: Option<&str>, with: &[String], argv: &[String
         Some(code) => ExitCode::from(u8::try_from(code.clamp(0, 255)).unwrap_or(1)),
         None => ExitCode::from(1),
     })
+}
+
+/// Executable extensions to try for a bare name: PATHEXT on Windows (then the
+/// bare name), nothing on POSIX.
+fn path_exts() -> Vec<String> {
+    if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+            .split(';')
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty())
+            .chain(std::iter::once(String::new()))
+            .collect()
+    } else {
+        vec![String::new()]
+    }
+}
+
+/// Turn `argv[0]` into the absolute path a shell would run.
+///
+/// A name with a path separator is taken as a path (made absolute against
+/// `cwd`); a bare name is looked up on `path_var`, in order, the way a shell
+/// does. Unlike `paths::find_on_path` this never looks beside the hypergate
+/// binary first: the program has to be the one the user's PATH means.
+pub fn resolve_program(
+    argv0: &str,
+    path_var: Option<&std::ffi::OsStr>,
+    cwd: &std::path::Path,
+    exts: &[String],
+) -> Option<std::path::PathBuf> {
+    let has_sep = argv0.contains('/') || (cfg!(windows) && argv0.contains('\\'));
+    if has_sep {
+        let p = std::path::Path::new(argv0);
+        let abs = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+        return abs.is_file().then_some(abs);
+    }
+    for dir in std::env::split_paths(path_var?) {
+        for ext in exts {
+            let candidate = dir.join(format!("{argv0}{ext}"));
+            // A file without an execute bit is not a command on POSIX: the
+            // shell (and execvp) would skip it and keep searching, so do we.
+            if candidate.is_file() && is_executable(&candidate) {
+                // A relative PATH entry (`.`, `bin`) resolves against cwd, the
+                // same way the shell would have run it.
+                return Some(if candidate.is_absolute() {
+                    candidate
+                } else {
+                    cwd.join(candidate)
+                });
+            }
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
+fn is_executable(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p)
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// Windows decides by extension (PATHEXT), which the caller already applied.
+#[cfg(not(unix))]
+fn is_executable(_: &std::path::Path) -> bool {
+    true
+}
+
+/// What `cred programs` asked for: `Some(Some(list))` bind exactly these,
+/// `Some(None)` restore the default, `None` just show the binding.
+fn programs_change(programs: &[String], default: bool, none: bool) -> Option<Option<Vec<String>>> {
+    if default {
+        Some(None)
+    } else if none {
+        Some(Some(Vec::new()))
+    } else if programs.is_empty() {
+        None
+    } else {
+        Some(Some(programs.to_vec()))
+    }
+}
+
+/// One credential's metadata row, by id.
+fn credential_row(id: &str) -> Result<Value, String> {
+    let all = api::credentials()?;
+    all.as_array()
+        .and_then(|rows| rows.iter().find(|r| r["id"].as_str() == Some(id)).cloned())
+        .ok_or_else(|| format!("no credential with id `{id}` (see `hypergate cred ls`)"))
+}
+
+/// How a credential's binding reads: the explicit list, or the default.
+fn describe_programs(row: &Value) -> String {
+    let names = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default()
+    };
+    if row.get("programs").is_some_and(Value::is_array) {
+        let list = names(&row["programs"]);
+        if list.is_empty() {
+            "no programs".into()
+        } else {
+            list.join(", ")
+        }
+    } else {
+        let list = names(&row["defaultPrograms"]);
+        if list.is_empty() {
+            "no programs (no default; bind one with `hypergate cred programs <id> <program>`)".into()
+        } else {
+            format!("{} (default)", list.join(", "))
+        }
+    }
+}
+
+pub fn cred_programs_human(id: &str, programs: &[String], default: bool, none: bool) -> Result<ExitCode, String> {
+    let row = match programs_change(programs, default, none) {
+        Some(change) => api::set_credential_programs(id, change.as_deref())?,
+        None => credential_row(id)?,
+    };
+    println!("{id}: {}", describe_programs(&row));
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn lockdown_json(action: &LockdownAction) -> Result<Value, String> {
+    match action {
+        LockdownAction::On => api::set_lockdown(true),
+        LockdownAction::Off => api::set_lockdown(false),
+        LockdownAction::Status => api::lockdown_status(),
+    }
+}
+
+/// The status block, in words. Says plainly when this machine cannot confirm
+/// it is you, because lockdown without that is a much weaker lock.
+fn describe_lockdown(v: &Value) -> String {
+    let on = v["enabled"].as_bool().unwrap_or(false);
+    let presence = &v["presence"];
+    let mut out = format!("Credential lockdown: {}", if on { "on" } else { "off" });
+    if presence["available"].as_bool().unwrap_or(false) {
+        out.push_str(&format!(
+            "\nConfirmation: {} (asked before anything widens access)",
+            presence["method"].as_str().unwrap_or("available")
+        ));
+    } else {
+        out.push_str("\nConfirmation: unavailable on this machine");
+        if let Some(d) = presence["detail"].as_str() {
+            out.push_str(&format!(" ({d})"));
+        }
+        if on {
+            out.push_str(
+                "\nAgents still never receive values, but grants, key changes and turning lockdown off fall back to the master token alone.",
+            );
+        }
+    }
+    if v["consent"].as_str() == Some("unavailable") {
+        out.push_str("\nNo confirmation prompt was shown: this machine cannot ask.");
+    }
+    out
+}
+
+pub fn lockdown_human(action: &LockdownAction) -> Result<ExitCode, String> {
+    let v = lockdown_json(action)?;
+    println!("{}", describe_lockdown(&v));
+    Ok(ExitCode::SUCCESS)
 }
 
 pub fn targets_human() -> Result<ExitCode, String> {
@@ -1528,7 +1812,147 @@ pub fn start(opts: &StartOptions) -> Result<(), String> {
     {
         println!("Update    v{latest} available — run `hypergate update --apply`");
     }
+
+    // 5. A suggestion, never a write: agents that have not been told about
+    //    Hypergate in their global instructions. Same cached-and-local rule as
+    //    the update line, so a start never waits on it.
+    if let Ok(status) = api::instructions_status()
+        && let Some(line) = instructions_hint(&status)
+    {
+        println!("{line}");
+    }
     Ok(())
+}
+
+// ── agent instruction files ─────────────────────────────────────────────────
+//
+// A Hypergate block in each harness's global instruction file. The daemon does
+// the writing (core's agent-instructions.ts holds the rules); this is the
+// terminal surface for it. The CLI forwards its own `CLAUDE_CONFIG_DIR` and
+// `CODEX_HOME`, because a daemon the OS started never sees a shell's exports.
+
+/// The config-home overrides this shell knows about, for the daemon to honour.
+pub fn instruction_homes() -> serde_json::Map<String, Value> {
+    let mut homes = serde_json::Map::new();
+    for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME"] {
+        if let Ok(v) = std::env::var(key)
+            && !v.trim().is_empty()
+        {
+            homes.insert(key.into(), Value::String(v));
+        }
+    }
+    homes
+}
+
+/// The `hypergate start` line, when some detected harness has no block anywhere.
+pub fn instructions_hint(status: &Value) -> Option<String> {
+    let rows = status["harnesses"].as_array()?;
+    let installed = rows.iter().any(|h| h["installed"].as_bool().unwrap_or(false));
+    let detected: Vec<&str> = rows
+        .iter()
+        .filter(|h| h["detected"].as_bool().unwrap_or(false))
+        .filter_map(|h| h["name"].as_str())
+        .collect();
+    if installed || detected.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Agents    {} not told about Hypergate yet: `hypergate instructions install --all`",
+        detected.join(", ")
+    ))
+}
+
+pub fn instructions_status_human() -> Result<ExitCode, String> {
+    let status = api::instructions_status()?;
+    let rows = status["harnesses"]
+        .as_array()
+        .ok_or("unexpected instructions response")?;
+    println!("{:<14}  {:<14}  FILE", "HARNESS", "STATE");
+    for h in rows {
+        let state = if h["damaged"].as_bool().unwrap_or(false) {
+            "needs hand fix"
+        } else if h["current"].as_bool().unwrap_or(false) {
+            "installed"
+        } else if h["installed"].as_bool().unwrap_or(false) {
+            "out of date"
+        } else if h["detected"].as_bool().unwrap_or(false) {
+            "not installed"
+        } else {
+            "not detected"
+        };
+        println!(
+            "{:<14}  {:<14}  {}",
+            h["id"].as_str().unwrap_or("?"),
+            state,
+            h["path"].as_str().unwrap_or("")
+        );
+        if let Some(note) = h["note"].as_str() {
+            println!("{:<14}  {:<14}  note: {note}", "", "");
+        }
+    }
+    if let Some(skipped) = status["skipped"].as_array() {
+        for s in skipped {
+            println!(
+                "skipped: {} ({})",
+                s["name"].as_str().unwrap_or("?"),
+                s["reason"].as_str().unwrap_or("")
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `install` / `remove` for one harness id, or `all`.
+pub fn instructions_write_json(target: &str, remove: bool) -> Result<Value, String> {
+    let body = json!({ "homes": Value::Object(instruction_homes()) });
+    if remove {
+        api::remove_instructions(target, &body)
+    } else {
+        api::install_instructions(target, &body)
+    }
+}
+
+pub fn instructions_write_human(harness: Option<&str>, all: bool, remove: bool) -> Result<ExitCode, String> {
+    let target = instructions_target(harness, all)?;
+    let out = instructions_write_json(&target, remove)?;
+    let results = out["results"].as_array().cloned().unwrap_or_default();
+    if results.is_empty() {
+        println!(
+            "{}",
+            if remove {
+                "No Hypergate instructions to remove."
+            } else {
+                "No agent harnesses detected on this machine."
+            }
+        );
+    }
+    let mut failed = false;
+    for r in &results {
+        let path = r["path"].as_str().unwrap_or("");
+        let id = r["id"].as_str().unwrap_or("?");
+        if let Some(err) = r["error"].as_str() {
+            failed = true;
+            println!("{id:<14}  failed     {path}: {err}");
+        } else if r["changed"].as_bool().unwrap_or(false) {
+            println!("{id:<14}  {}  {path}", if remove { "removed  " } else { "written  " });
+            if let Some(b) = r["backup"].as_str() {
+                println!("{:<14}  backup     {b}", "");
+            }
+        } else {
+            println!("{id:<14}  unchanged  {path}");
+        }
+    }
+    Ok(if failed { ExitCode::from(1) } else { ExitCode::SUCCESS })
+}
+
+/// One harness id or `--all`, never both and never neither.
+pub fn instructions_target(harness: Option<&str>, all: bool) -> Result<String, String> {
+    match (harness, all) {
+        (Some(_), true) => Err("pass a harness id or --all, not both".into()),
+        (Some(h), false) => Ok(h.to_string()),
+        (None, true) => Ok("all".into()),
+        (None, false) => Err("pass a harness id (see `hypergate instructions status`) or --all".into()),
+    }
 }
 
 // ── mcp-headers: the credential a client fetches instead of storing ─────────
@@ -1590,6 +2014,200 @@ fn explain_resolve(key: &str, err: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── credential lockdown ──
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("hypergate-run-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// An empty file that PATH search will accept: executable on unix.
+    fn exe(p: std::path::PathBuf) {
+        std::fs::write(&p, b"").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_program_skips_a_non_executable_namesake() {
+        let root = scratch("noexec");
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        // A text file named `git` earlier on PATH, the real one later.
+        std::fs::write(first.join("git"), b"not a program").unwrap();
+        exe(second.join("git"));
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        let got = resolve_program("git", Some(&path), &root, &[String::new()]).unwrap();
+        assert_eq!(got, second.join("git"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn instructions_status_forwards_the_same_homes_as_writes() {
+        let mut homes = serde_json::Map::new();
+        assert_eq!(api::instructions_status_path(&homes), "/api/instructions");
+        homes.insert("CLAUDE_CONFIG_DIR".into(), json!("/home/me/alt claude"));
+        homes.insert("CODEX_HOME".into(), json!("/home/me/.codex-work"));
+        assert_eq!(
+            api::instructions_status_path(&homes),
+            "/api/instructions?CLAUDE_CONFIG_DIR=%2Fhome%2Fme%2Falt%20claude&CODEX_HOME=%2Fhome%2Fme%2F.codex-work"
+        );
+    }
+
+    #[test]
+    fn resolve_program_walks_path_in_order() {
+        let root = scratch("order");
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        exe(second.join("tool"));
+        exe(first.join("tool"));
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        let got = resolve_program("tool", Some(&path), &root, &[String::new()]).unwrap();
+        assert_eq!(got, first.join("tool"));
+        assert!(got.is_absolute());
+        assert!(resolve_program("missing", Some(&path), &root, &[String::new()]).is_none());
+        assert!(resolve_program("tool", None, &root, &[String::new()]).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_program_takes_a_path_as_a_path() {
+        let root = scratch("path");
+        std::fs::write(root.join("local-tool"), b"").unwrap();
+        // Relative to cwd, made absolute; PATH is never consulted.
+        let got = resolve_program("./local-tool", None, &root, &[String::new()]).unwrap();
+        assert!(got.is_absolute());
+        assert!(got.ends_with("local-tool"));
+        let abs = root.join("local-tool");
+        assert_eq!(
+            resolve_program(abs.to_str().unwrap(), None, &root, &[String::new()]).unwrap(),
+            abs
+        );
+        assert!(resolve_program("./nope", None, &root, &[String::new()]).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_program_tries_extensions_in_order() {
+        let root = scratch("ext");
+        // Fixture names match the extensions exactly, so the test holds on a
+        // case-sensitive filesystem too (Linux CI); on Windows PATHEXT is
+        // upper case and the filesystem answers either spelling.
+        exe(root.join("gh.CMD"));
+        exe(root.join("gh.EXE"));
+        let path = std::env::join_paths([&root]).unwrap();
+        let exts = vec![".EXE".to_string(), ".CMD".to_string(), String::new()];
+        let got = resolve_program("gh", Some(&path), &root, &exts).unwrap();
+        assert!(got.to_string_lossy().to_lowercase().ends_with("gh.exe"), "{got:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_body_carries_program_and_args_only_when_known() {
+        let body = api::resolve_body(
+            Some("claude-code"),
+            &["github".into()],
+            Some("/usr/bin/gh"),
+            &["repo".into(), "list".into()],
+        );
+        assert_eq!(
+            body,
+            json!({ "agent": "claude-code", "ids": ["github"], "program": "/usr/bin/gh", "args": ["repo", "list"] })
+        );
+        assert_eq!(api::resolve_body(None, &[], None, &["x".into()]), json!({}));
+    }
+
+    #[test]
+    fn programs_change_reads_the_flags() {
+        assert_eq!(programs_change(&[], false, false), None);
+        assert_eq!(programs_change(&[], true, false), Some(None));
+        assert_eq!(programs_change(&[], false, true), Some(Some(vec![])));
+        assert_eq!(
+            programs_change(&["gh".into(), "git".into()], false, false),
+            Some(Some(vec!["gh".to_string(), "git".to_string()]))
+        );
+        assert_eq!(api::programs_body(None), json!({ "programs": null }));
+        assert_eq!(
+            api::programs_body(Some(&["gh".to_string()])),
+            json!({ "programs": ["gh"] })
+        );
+    }
+
+    #[test]
+    fn describe_programs_says_whether_it_is_the_default() {
+        assert_eq!(
+            describe_programs(&json!({ "programs": ["gh", "git"], "defaultPrograms": ["gh"] })),
+            "gh, git"
+        );
+        assert_eq!(
+            describe_programs(&json!({ "programs": [], "defaultPrograms": ["gh"] })),
+            "no programs"
+        );
+        assert_eq!(
+            describe_programs(&json!({ "defaultPrograms": ["flyctl", "fly"] })),
+            "flyctl, fly (default)"
+        );
+        assert!(describe_programs(&json!({ "defaultPrograms": [] })).starts_with("no programs (no default"));
+    }
+
+    #[test]
+    fn describe_lockdown_is_plain_about_a_missing_prompt() {
+        let on_with_touch_id = json!({ "enabled": true, "presence": { "available": true, "method": "touch-id" } });
+        let text = describe_lockdown(&on_with_touch_id);
+        assert!(text.contains("Credential lockdown: on"));
+        assert!(text.contains("touch-id"));
+        let on_without =
+            json!({ "enabled": true, "presence": { "available": false, "method": "none", "detail": "no polkit" } });
+        let text = describe_lockdown(&on_without);
+        assert!(text.contains("unavailable on this machine (no polkit)"));
+        assert!(text.contains("fall back to the master token alone"));
+        let off =
+            json!({ "enabled": false, "presence": { "available": false, "method": "none" }, "consent": "unavailable" });
+        let text = describe_lockdown(&off);
+        assert!(text.contains("Credential lockdown: off"));
+        assert!(!text.contains("fall back"));
+        assert!(text.contains("cannot ask"));
+    }
+
+    #[test]
+    fn instructions_hint_only_when_detected_and_nothing_installed() {
+        let none = json!({ "harnesses": [
+            { "name": "Claude Code", "detected": true, "installed": false },
+            { "name": "Codex", "detected": true, "installed": false },
+            { "name": "OpenCode", "detected": false, "installed": false },
+        ]});
+        let line = instructions_hint(&none).expect("a hint");
+        assert!(line.contains("Claude Code, Codex"));
+        assert!(line.contains("hypergate instructions install --all"));
+        assert!(!line.contains("OpenCode"));
+
+        let some = json!({ "harnesses": [
+            { "name": "Claude Code", "detected": true, "installed": true },
+            { "name": "Codex", "detected": true, "installed": false },
+        ]});
+        assert_eq!(instructions_hint(&some), None);
+        assert_eq!(instructions_hint(&json!({ "harnesses": [] })), None);
+        assert_eq!(instructions_hint(&json!({})), None);
+    }
+
+    #[test]
+    fn instructions_target_needs_exactly_one_of_id_or_all() {
+        assert_eq!(instructions_target(Some("codex"), false).unwrap(), "codex");
+        assert_eq!(instructions_target(None, true).unwrap(), "all");
+        assert!(instructions_target(Some("codex"), true).is_err());
+        assert!(instructions_target(None, false).is_err());
+    }
 
     fn entry() -> RegistryEntry {
         serde_json::from_value(json!({

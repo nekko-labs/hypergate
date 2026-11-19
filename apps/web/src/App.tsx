@@ -52,12 +52,16 @@ import { Dialog } from './components/Dialog';
 import { EmptyState } from './components/EmptyState';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogConsole } from './components/LogConsole';
+import { LockdownToggle } from './components/LockdownToggle';
 import { ThemeSwitch } from './components/ThemeSwitch';
 import { WindowButtons } from './components/WindowButtons';
 import { connectClient, inShell, onTitleBarMouseDown, shell } from './lib/shell';
 import { OAuthAppDialog } from './components/servers/OAuthAppDialog';
 import { TokenDialog } from './components/servers/TokenDialog';
+import { AgentInstructionsSection, InstructionsOffer } from './components/agents/AgentInstructions';
 import { useToast } from './toast';
+import { AmbientPanel } from './components/AmbientPanel';
+import { AlertSettings } from './components/AlertSettings';
 
 type View = 'servers' | 'analytics' | 'settings';
 type ServerSection = 'agents' | 'mcp-servers' | 'cli' | 'credentials';
@@ -736,6 +740,7 @@ export function App() {
 
                 <section id="agents" className="dashboard-section">
                   <ConnectedAgents agents={agents} servers={servers ?? []} onChange={refreshAgents} />
+                  <AgentInstructionsSection token={gateway?.token} />
                 </section>
 
                 <section id="mcp-servers" className="dashboard-section">
@@ -1761,13 +1766,15 @@ function CredentialsSection({ agents, token, onAgentsChange, authorize, requests
       </div>
       <p className="small muted section-sub">
         API keys and access tokens for the CLIs and MCP servers your agents use, kept in the OS keychain instead of
-        config files. Grant each agent only the keys it needs; an allowed agent fetches them itself through the
-        gateway's <span className="mono">hypergate__credential_env</span> tool or <span className="mono">hypergate run</span>,
-        instead of stopping to ask you to sign in.
+        config files. Grant each agent only the keys it needs; an allowed agent runs its commands through{' '}
+        <span className="mono">hypergate run</span> instead of stopping to ask you to sign in, and with lockdown off it
+        can also fetch a key through the gateway's <span className="mono">hypergate__credential_env</span> tool.
       </p>
+      <LockdownToggle token={token} />
       {requests.length > 0 && (
         <PendingRequests requests={requests} token={token} onChange={() => { onRequestsChange(); load(); onAgentsChange(); }} />
       )}
+      <AmbientPanel token={token} onImported={load} />
       {adding && <AddCredentialPanel guides={guides} creds={creds ?? []} token={token} onAdded={() => { setAdding(false); load(); }} />}
       <div className="list">
         {!creds ? (
@@ -1925,6 +1932,29 @@ function PendingRequests({ requests, token, onChange }: {
           Waiting for the daemon's master token — answering is disabled until it loads.
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Which programs this credential is bound to, read-only. Editing stays in the
+ * terminal (`hypergate cred programs`), where the OS prompt that guards it
+ * under lockdown is already the expected interaction.
+ */
+function CredentialPrograms({ c }: { c: CredentialInfo }) {
+  const explicit = Array.isArray(c.programs);
+  const list = explicit ? c.programs! : c.defaultPrograms ?? [];
+  return (
+    <div className="row wrap-gap" style={{ gap: 6, alignItems: 'center' }}>
+      {list.length ? (
+        list.map((p) => <span key={p} className="chip mono">{p}</span>)
+      ) : (
+        <span className="small muted">{explicit ? 'No programs' : 'None by default'}</span>
+      )}
+      {!explicit && list.length > 0 && <span className="small muted">default, from its guide</span>}
+      <span className="small muted">
+        Change with <span className="mono">hypergate cred programs {c.id} &lt;program&gt;…</span>
+      </span>
     </div>
   );
 }
@@ -2088,6 +2118,9 @@ function CredentialRow({ c, guides, agents, token, authorize, highlight, onChang
       </Block>
       <Block label={<>Reveal the value <span className="dl-note">asks the OS to confirm it is you</span></>}>
         <RevealValue c={c} token={token} authorize={authorize} />
+      </Block>
+      <Block label={<>Programs <span className="dl-note">under lockdown, hypergate run injects this key only into these</span></>}>
+        <CredentialPrograms c={c} />
       </Block>
       {agents.length > 0 && (
         <Block label={<>Agents <span className="dl-count">{allowedBy}/{agents.length}</span></>}>
@@ -2742,6 +2775,15 @@ function SettingsView({ gateway, version, u }: { gateway: GatewayInfo | null; ve
         The tray keeps the daemon running in the background — right-click its icon for Open manager / Restart / Quit,
         and double-click it to open the app.
       </p>
+
+      <div className="section-title">Alerts</div>
+      <p className="small muted section-sub">
+        Hypergate watches for new logins kept outside the vault and for newly installed command-line tools, and tells
+        you when one appears. It cannot tell whether you or an agent made the change, so every alert is worth a look.
+      </p>
+      <div className="panel">
+        {s ? <AlertSettings s={s} token={gateway?.token} onChange={setS} /> : <div className="list-row small muted">Loading…</div>}
+      </div>
 
       <div className="section-title">
         This daemon
@@ -4205,6 +4247,9 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
               {result.output && <pre className="snippet">{result.output}</pre>}
             </div>
           )}
+          {/* Once it's connected (or, for a paste-it-yourself client, while you
+              connect it), offer the global-instructions block for its harness. */}
+          {(t.method !== 'cli' || result?.ok) && <InstructionsOffer target={t.id} />}
         </div>
       )}
     </div>

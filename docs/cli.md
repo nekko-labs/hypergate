@@ -60,6 +60,11 @@ cli ls
 cli search <query>
 cli check <command>
 cli install <id> [--run|--yes]
+instructions status
+instructions install <harness>|--all
+instructions remove <harness>|--all
+cred sweep [--import ID | --all]
+notify --title TITLE [--body BODY]
 usage
 doctor
 ```
@@ -77,7 +82,7 @@ without executing it; a failed executed installer returns 1.
 
 `--json` is global and may appear before or after the subcommand. It applies to
 status, list, logs, catalog, search, tools, call, gateway, usage, doctor,
-agent, cli, targets, connect, start, stop, restart, update, add, rm,
+agent, cli, instructions, targets, connect, start, stop, restart, update, add, rm,
 server start|stop|restart, mcp-headers, secret check, shortcut status, and
 autostart status. `app`, `tray`, `open`, `icon`, and `sandbox-exec` deliberately
 remain human/interactive-only. `status --json` still succeeds when the daemon is
@@ -113,6 +118,42 @@ that restriction rather than exposing a raw HTTP 409.
 `targets` reports detected harnesses. `connect <target>` creates or
 reuses the target's agent. Runnable CLI targets are invoked by the daemon
 without a shell. Non-runnable targets print their configuration snippet.
+
+## Agent instruction files
+
+`instructions` puts a short Hypergate block into each agent harness's global
+instruction file: Claude Code (`~/.claude/CLAUDE.md`, or under
+`CLAUDE_CONFIG_DIR`), Codex (`~/.codex/AGENTS.md`, or under `CODEX_HOME`),
+Gemini CLI and Antigravity (`~/.gemini/GEMINI.md`), OpenCode
+(`~/.config/opencode/AGENTS.md`, or the Claude Code file it falls back to), and
+Devin Desktop (`~/.devin/global_rules.md`). The block tells every session that
+keys come from the vault through `hypergate run`, that keys are never written
+down or pasted, and that a missing key, CLI or server is requested rather than
+worked around, whichever model the harness runs on.
+
+The block sits between `<!-- hypergate:begin vN -->` and
+`<!-- hypergate:end -->`; nothing outside the markers changes. `install` is
+idempotent and upgrades an older block in place. `--all` installs for every
+harness whose config directory exists, and removes from every file that has a
+block. Before Hypergate first changes an existing file, the original is copied
+to `~/.hypergate/instructions-backup/`. A file with a begin marker and no end
+marker is reported and left alone. `hypergate start` suggests
+`instructions install --all` when it finds harnesses with no block, and never
+writes on its own. `install` and `remove` exit 1 if any file could not be
+written.
+
+## Logins outside the vault
+
+`cred sweep` lists the logins tools keep for themselves outside the vault: CLI
+config files (GitHub CLI, Fly.io, Vercel, Supabase, npm, the Git credential
+store), model-provider keys exported from shell startup files or stored by
+agent tools (Codex, Gemini CLI, aider), and report-only entries such as AWS,
+Google Cloud, Azure, Docker and netrc credentials. Output is masked; no value is
+printed. `--import ID` moves one finding into the vault and then removes it at
+the source, after backing the file up under `~/.hypergate/ambient-backup/` for
+seven days; `--all` does that for every finding Hypergate can remove. `notify`
+shows one OS notification and exits 0 when shown, 1 when the platform mechanism
+failed, and 3 when this machine cannot show one; the daemon's watcher uses it.
 
 ## Curated CLI installation
 

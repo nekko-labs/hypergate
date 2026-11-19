@@ -84,6 +84,38 @@ MCP servers are Hypergate's job too. Before telling the user to edit a config fi
 Do not ask the user to paste a secret into this conversation, and do not ask them to re-authenticate a CLI by hand. Fetch the key, or request access to it.`;
 
 /**
+ * The credential paragraph under credential lockdown. Same three steps, with
+ * the one difference that matters: an agent never holds a value. Keys reach a
+ * command only through `hypergate run`, so the rules an agent would otherwise
+ * improvise around (save it to `.env`, export it, log in with the vendor's own
+ * CLI) are named and ruled out, because each of those is a new copy of the key
+ * outside the vault.
+ */
+const LOCKDOWN_CREDENTIALS = `This machine's API keys and access tokens live in Hypergate's credential vault, and credential lockdown is on: you never receive a key's value. When a command needs one:
+
+1. Call hypergate__credentials_list to see what exists. Rows with "allowed": true can be used by you.
+2. Run the command through Hypergate: "hypergate run --agent <your agent> --with <credential id> -- <command>". hypergate__credential_env returns the exact line. Hypergate injects the key into that one program; shells and interpreters (sh, bash, python, node, ...) and commands that print tokens are refused.
+3. If a credential you need is not allowed, call hypergate__credential_request with the id and a short reason, give the user the URL it returns, then retry.
+
+Never write a key into a file, an .env, a shell rc file, or an exported variable; never run a vendor login ("gh auth login", "fly auth login", "aws configure", ...); never ask the user to paste a key. Each of those makes a copy outside the vault. Request access instead.`;
+
+/**
+ * The instructions for one gateway session. Built per request because
+ * lockdown is a live setting: flipping it changes what the next connecting
+ * agent is told, without restarting anything.
+ */
+export const gatewayInstructions = (opts: { lockdown?: boolean } = {}): string => {
+  if (!opts.lockdown) return GATEWAY_INSTRUCTIONS;
+  const start = GATEWAY_INSTRUCTIONS.indexOf("This machine's API keys");
+  const end = GATEWAY_INSTRUCTIONS.indexOf('Command-line tools are');
+  const tail = GATEWAY_INSTRUCTIONS.slice(end).replace(
+    /\n\nDo not ask the user to paste a secret[\s\S]*$/,
+    '\n\nDo not ask the user to paste a secret into this conversation, and do not ask them to re-authenticate a CLI by hand. Request access instead.',
+  );
+  return `${GATEWAY_INSTRUCTIONS.slice(0, start)}${LOCKDOWN_CREDENTIALS}\n\n${tail}`;
+};
+
+/**
  * Build the aggregating MCP gateway: one MCP server that fans out to every
  * ready managed server. Tools are namespaced `${serverId}__${tool}` and calls
  * are routed to the owning server's client. The caller connects the returned
@@ -92,9 +124,15 @@ Do not ask the user to paste a secret into this conversation, and do not ask the
 export function createGateway(
   supervisor: Supervisor,
   info: { name: string; version: string } = { name: 'hypergate-gateway', version: '0.1.0' },
-  opts: { caller?: string; allowServer?: (serverId: string) => boolean; builtins?: GatewayBuiltinTool[] } = {},
+  opts: {
+    caller?: string;
+    allowServer?: (serverId: string) => boolean;
+    builtins?: GatewayBuiltinTool[];
+    /** Overrides the default instructions (see `gatewayInstructions`). */
+    instructions?: string;
+  } = {},
 ): Server {
-  const server = new Server(info, { capabilities: { tools: {} }, instructions: GATEWAY_INSTRUCTIONS });
+  const server = new Server(info, { capabilities: { tools: {} }, instructions: opts.instructions ?? GATEWAY_INSTRUCTIONS });
   const caller = opts.caller ?? 'unknown client';
   const builtins = opts.builtins ?? [];
   // Per-agent scoping: when provided, a server the caller isn't allowed to see

@@ -18,6 +18,12 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 /// calls, which run whatever the managed server does.
 const SLOW_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// A call the daemon may answer only after an OS consent prompt (credential
+/// lockdown): a person has to notice it, read it, and answer it. The daemon
+/// gives the prompt 120 seconds; this outlasts that so the daemon's own answer,
+/// not a client timeout, is what the user sees.
+const PROMPT_TIMEOUT: Duration = Duration::from_secs(150);
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Health {
     pub ok: bool,
@@ -322,6 +328,77 @@ fn patch(path: &str, body: &serde_json::Value) -> Result<String, String> {
     check(status, text, path, true)
 }
 
+/// DELETE with a JSON body, returning the raw reply (the plain `delete` above
+/// discards it).
+fn delete_json(path: &str, body: &serde_json::Value) -> Result<String, String> {
+    let url = format!("{}{}", paths::base_url(), path);
+    let mut req = agent(TIMEOUT).delete(&url).force_send_body();
+    if let Some(token) = crate::secrets::gateway_token() {
+        req = req.header("Authorization", &format!("Bearer {token}"));
+    }
+    let mut res = req.send_json(body).map_err(|e| format!("{e}"))?;
+    let status = res.status().as_u16();
+    let text = res.body_mut().read_to_string().map_err(|e| format!("{e}"))?;
+    check(status, text, path, true)
+}
+
+/// Which harnesses have a Hypergate block in their global instructions. Local
+/// file reads only, so `hypergate start` can afford to ask.
+pub fn instructions_status() -> Result<serde_json::Value, String> {
+    get(&instructions_status_path(&crate::commands::instruction_homes()))
+}
+
+/// `/api/instructions`, carrying the same config-home overrides a write sends,
+/// so status describes the files `install` and `remove` would touch.
+pub fn instructions_status_path(homes: &serde_json::Map<String, serde_json::Value>) -> String {
+    let query: Vec<String> = homes
+        .iter()
+        .filter_map(|(k, v)| v.as_str().map(|v| format!("{k}={}", pct(v))))
+        .collect();
+    if query.is_empty() {
+        "/api/instructions".into()
+    } else {
+        format!("/api/instructions?{}", query.join("&"))
+    }
+}
+
+/// Percent-encode a query value (RFC 3986 unreserved characters pass through).
+fn pct(v: &str) -> String {
+    v.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            other => format!("%{other:02X}"),
+        })
+        .collect()
+}
+
+/// The route for one harness id (or `all`). Ids are plain slugs, checked here
+/// so nothing else can ride into the path.
+fn instructions_path(harness: &str) -> Result<String, String> {
+    if harness.is_empty()
+        || !harness
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(format!(
+            "`{harness}` is not a harness id (see `hypergate instructions status`)"
+        ));
+    }
+    Ok(format!("/api/instructions/{harness}"))
+}
+
+pub fn install_instructions(harness: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let path = instructions_path(harness)?;
+    let text = send(&path, Some(body), TIMEOUT)?;
+    serde_json::from_str(&text).map_err(|e| format!("unexpected response from {path}: {e}"))
+}
+
+pub fn remove_instructions(harness: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let path = instructions_path(harness)?;
+    let text = delete_json(&path, body)?;
+    serde_json::from_str(&text).map_err(|e| format!("unexpected response from {path}: {e}"))
+}
+
 pub fn health() -> Result<Health, String> {
     // The daemon deliberately leaves this probe unauthenticated. Apart from
     // being sufficient to answer "is it alive?", keeping it token-free means
@@ -384,7 +461,8 @@ pub fn set_agent_credential(id: &str, credential: &str, allowed: bool) -> Result
     let body = send(
         &format!("/api/clients/{id}/credentials/{credential}"),
         Some(&serde_json::json!({ "allowed": allowed })),
-        TIMEOUT,
+        // Under lockdown, a grant waits on an OS prompt.
+        PROMPT_TIMEOUT,
     )?;
     serde_json::from_str(&body).map_err(|e| format!("unexpected response from credential permission update: {e}"))
 }
@@ -473,6 +551,22 @@ pub fn credentials() -> Result<serde_json::Value, String> {
     get("/api/credentials")
 }
 
+/// Logins kept outside the vault, as the daemon's sweep finds them (masked).
+pub fn ambient() -> Result<serde_json::Value, String> {
+    get("/api/ambient")
+}
+
+/// Move one ambient login into the vault. Finding ids are `rule-hex`, so they
+/// go into the path as they are; anything else is refused before the request.
+pub fn ambient_import(id: &str) -> Result<serde_json::Value, String> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(format!("`{id}` is not a finding id; `hypergate cred sweep` lists them"));
+    }
+    let path = format!("/api/ambient/{id}/import");
+    let text = send(&path, None, SLOW_TIMEOUT)?;
+    serde_json::from_str(&text).map_err(|e| format!("unexpected response from {path}: {e}"))
+}
+
 pub fn credential_guides() -> Result<serde_json::Value, String> {
     get("/api/credentials/guides")
 }
@@ -486,7 +580,8 @@ pub fn add_credential(
     let body = send(
         "/api/credentials",
         Some(&serde_json::json!({ "name": name, "value": value, "service": service, "envVar": env_var })),
-        TIMEOUT,
+        // Under lockdown, adding a key waits on an OS prompt.
+        PROMPT_TIMEOUT,
     )?;
     serde_json::from_str(&body).map_err(|e| format!("unexpected response from /api/credentials: {e}"))
 }
@@ -503,7 +598,8 @@ pub fn roll_credential(id: &str, value: &str) -> Result<serde_json::Value, Strin
 
 pub fn delete_credential(id: &str) -> Result<serde_json::Value, String> {
     let url = format!("{}/api/credentials/{id}", paths::base_url());
-    let mut req = agent(TIMEOUT).delete(&url);
+    // Under lockdown, deleting a key waits on an OS prompt.
+    let mut req = agent(PROMPT_TIMEOUT).delete(&url);
     if let Some(token) = crate::secrets::gateway_token() {
         req = req.header("Authorization", &format!("Bearer {token}"));
     }
@@ -514,11 +610,17 @@ pub fn delete_credential(id: &str) -> Result<serde_json::Value, String> {
     serde_json::from_str(&body).map_err(|e| format!("unexpected response from credential delete: {e}"))
 }
 
-/// Resolve allowed credentials into env vars. `agent` narrows the master scope
-/// to one agent's allow-list (and attributes the fetch to it); `ids` narrows to
-/// specific credentials. The values are in the reply: hand them straight to a
-/// child process's env and nowhere else.
-pub fn resolve_credentials(agent_key: Option<&str>, ids: &[String]) -> Result<serde_json::Value, String> {
+/// The body of a resolve call. `program` is the absolute path `hypergate run` is
+/// about to start and `args` its arguments: under credential lockdown the daemon
+/// checks both (the program must be the real one and bound to the credential,
+/// and the arguments must not be a token-printing subcommand). Outside lockdown
+/// the daemon ignores them, so sending them always is harmless.
+pub fn resolve_body(
+    agent_key: Option<&str>,
+    ids: &[String],
+    program: Option<&str>,
+    args: &[String],
+) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     if let Some(a) = agent_key {
         body.insert("agent".into(), serde_json::Value::String(a.into()));
@@ -529,12 +631,68 @@ pub fn resolve_credentials(agent_key: Option<&str>, ids: &[String]) -> Result<se
             serde_json::Value::Array(ids.iter().cloned().map(serde_json::Value::String).collect()),
         );
     }
+    if let Some(p) = program {
+        body.insert("program".into(), serde_json::Value::String(p.into()));
+        body.insert(
+            "args".into(),
+            serde_json::Value::Array(args.iter().cloned().map(serde_json::Value::String).collect()),
+        );
+    }
+    serde_json::Value::Object(body)
+}
+
+/// Resolve allowed credentials into env vars. `agent` narrows the master scope
+/// to one agent's allow-list (and attributes the fetch to it); `ids` narrows to
+/// specific credentials. The values are in the reply: hand them straight to a
+/// child process's env and nowhere else.
+pub fn resolve_credentials(
+    agent_key: Option<&str>,
+    ids: &[String],
+    program: Option<&str>,
+    args: &[String],
+) -> Result<serde_json::Value, String> {
     let text = send(
         "/api/credentials/resolve",
-        Some(&serde_json::Value::Object(body)),
-        TIMEOUT,
+        Some(&resolve_body(agent_key, ids, program, args)),
+        // Under lockdown a bare-master resolve waits on an OS prompt.
+        PROMPT_TIMEOUT,
     )?;
     serde_json::from_str(&text).map_err(|e| format!("unexpected response from credential resolve: {e}"))
+}
+
+// ── credential lockdown ──────────────────────────────────────────────────────
+
+pub fn lockdown_status() -> Result<serde_json::Value, String> {
+    get("/api/lockdown")
+}
+
+/// Turn lockdown on or off. Off waits on an OS prompt when lockdown is on.
+pub fn set_lockdown(enabled: bool) -> Result<serde_json::Value, String> {
+    let body = send(
+        "/api/lockdown",
+        Some(&serde_json::json!({ "enabled": enabled })),
+        PROMPT_TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from /api/lockdown: {e}"))
+}
+
+/// The body of a programs update: a list binds exactly those, `None` restores
+/// the guide default.
+pub fn programs_body(programs: Option<&[String]>) -> serde_json::Value {
+    match programs {
+        Some(list) => serde_json::json!({ "programs": list }),
+        None => serde_json::json!({ "programs": serde_json::Value::Null }),
+    }
+}
+
+/// Bind a credential to programs. Waits on an OS prompt under lockdown.
+pub fn set_credential_programs(id: &str, programs: Option<&[String]>) -> Result<serde_json::Value, String> {
+    let body = send(
+        &format!("/api/credentials/{id}/programs"),
+        Some(&programs_body(programs)),
+        PROMPT_TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from credential programs update: {e}"))
 }
 
 /// What the daemon last knew about updates. Never hits the network.

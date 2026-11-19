@@ -32,6 +32,7 @@ jobs:
       # over HTTP, and the management API end to end.
       - run: npm run smoke:http
       - run: npm run smoke:features
+      - run: npm run smoke:ambient
 
   shell:
     name: shell (${{ matrix.os }})

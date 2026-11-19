@@ -1308,7 +1308,7 @@ export type CloseAction = 'ask' | 'tray' | 'quit';
  * autostart entry); `startMinimized` is read by the tray launcher to decide
  * whether to open the manager UI on launch or just sit in the notification area.
  */
-export interface DaemonSettings {
+export interface DaemonSettings extends AlertSettings {
   /** Launch Hypergate automatically when the user signs in. */
   runOnStartup: boolean;
   /** Stay in the tray on launch instead of opening the manager UI. */
@@ -1335,7 +1335,7 @@ export interface DaemonSettings {
 }
 
 /** `/api/settings` payload: the settings plus what this platform can actually do. */
-export interface SettingsInfo extends DaemonSettings {
+export interface SettingsInfo extends DaemonSettings, AlertSettingsInfo {
   /** Host platform, e.g. `win32` / `darwin` / `linux`. */
   platform: string;
   /** Whether OS autostart integration works on this platform. */
@@ -1357,7 +1357,7 @@ export interface SettingsInfo extends DaemonSettings {
 }
 
 /** Request body to update settings (partial). */
-export interface UpdateSettingsRequest {
+export interface UpdateSettingsRequest extends UpdateAlertSettingsRequest {
   runOnStartup?: boolean;
   startMinimized?: boolean;
   closeAction?: CloseAction;
@@ -1516,4 +1516,320 @@ export interface GatewayInfo {
   stdioSnippet?: Record<string, unknown>;
   /** The daemon's own web UI, served at the daemon root. */
   uiUrl?: string;
+}
+
+// ── credential lockdown ──
+// Declaration merging keeps every lockdown field in this one block, so the
+// interfaces above read as they did before the feature and merges stay clean.
+
+export interface DaemonSettings {
+  /**
+   * Credential lockdown. When on, no agent ever receives a credential's value:
+   * `credential_env` returns the `hypergate run` line instead, `hypergate run`
+   * injects a key only into a program it is bound to (never a shell or
+   * interpreter, never a token-printing subcommand), and anything that hands a
+   * value to the bare master token or widens access needs a person at the
+   * keyboard. Off by default; turning it off needs a person too.
+   */
+  credentialLockdown?: boolean;
+}
+
+export interface CredentialMeta {
+  /**
+   * Programs this credential may be injected into by `hypergate run` under
+   * lockdown, as bare names (`gh`, `flyctl`). Absent means the guide's CLIs
+   * (see `CredentialInfo.defaultPrograms`); an explicit list replaces them.
+   */
+  programs?: string[];
+}
+
+export interface CredentialInfo {
+  /** The programs this credential gets when `programs` is unset (from its guide). */
+  defaultPrograms: string[];
+}
+
+export interface ResolveCredentialsRequest {
+  /**
+   * The program `hypergate run` is about to start, as an absolute path. Required
+   * under lockdown: the daemon checks it is the same file its own PATH resolves
+   * that name to, and that the credentials are bound to it.
+   */
+  program?: string;
+  /** The program's arguments, checked against the token-printing table. */
+  args?: string[];
+}
+
+/** `GET /api/lockdown`. */
+export interface LockdownStatus {
+  enabled: boolean;
+  /**
+   * Whether this machine can ask for a person at the keyboard. Without it,
+   * lockdown still withholds values from agents, but everything it would have
+   * gated behind a prompt falls back to the master token alone, which any local
+   * process can read; the UI says so rather than implying a lock.
+   */
+  presence: AuthorizeCapability;
+}
+
+/** `POST /api/lockdown` (master token; turning it off needs user presence). */
+export interface SetLockdownRequest {
+  enabled: boolean;
+}
+
+/**
+ * What a presence-gated door said. `approved` a person confirmed; `unavailable`
+ * this machine cannot ask and the master token was accepted alone; `not-needed`
+ * the action needs no confirmation (turning lockdown on, revoking access).
+ */
+export type PresenceConsent = 'approved' | 'unavailable' | 'not-needed';
+
+export interface SetLockdownResponse extends LockdownStatus {
+  ok: boolean;
+  consent: PresenceConsent;
+}
+
+/** `POST /api/credentials/:id/programs` (master token; presence under lockdown). */
+export interface SetCredentialProgramsRequest {
+  /** Bare program names; an empty list unbinds every program. `null` restores the guide default. */
+  programs: string[] | null;
+}
+
+// ── agent instruction files ──
+//
+// A short, marker-delimited Hypergate block written (with consent) into each
+// agent harness's *global* instruction file, so every session of every harness
+// is told how credentials, CLIs and servers work on this machine, whether or
+// not it ever connects to the gateway. MCP `instructions` only reach connected
+// clients, and several harnesses ignore them.
+//
+// The settings fields below use interface merging so this feature's additions
+// stay in this one block.
+
+export interface DaemonSettings {
+  /**
+   * The user dismissed the one-time "tell your agents about Hypergate" offer.
+   * The Agents section keeps offering it; only the banner goes away.
+   */
+  instructionsPromptDismissed?: boolean;
+}
+
+export interface UpdateSettingsRequest {
+  instructionsPromptDismissed?: boolean;
+}
+
+/** One harness row in `GET /api/instructions`. */
+export interface InstructionsHarnessInfo {
+  /** Stable id (`claude-code`, `codex`, `gemini`, `opencode`, `devin-desktop`). */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** Connect-catalog target ids this file serves (`CONNECT_TARGETS`). */
+  targets: string[];
+  /** Absolute path of the file Hypergate writes for this harness on this machine. */
+  path: string;
+  /** The harness looks installed here (its config directory exists). */
+  detected: boolean;
+  /** A Hypergate block is present in the file. */
+  installed: boolean;
+  /** Version of the installed block, when there is one. */
+  version?: number;
+  /** Installed and identical to what Hypergate would write now. */
+  current: boolean;
+  /** The agent key the block's `hypergate run --agent` line names. */
+  agentKey: string;
+  /** The vendor documentation the path was verified against. */
+  source: string;
+  /** Something the user should know about this file (a shared file, shadowing). */
+  note?: string;
+  /** A begin marker without an end marker: Hypergate will not touch the file. */
+  damaged?: boolean;
+}
+
+/** A harness Hypergate deliberately does not write to, and why. */
+export interface InstructionsSkippedHarness {
+  name: string;
+  reason: string;
+}
+
+/** `GET /api/instructions`. */
+export interface InstructionsStatusResponse {
+  /** The block version this daemon writes. */
+  blockVersion: number;
+  harnesses: InstructionsHarnessInfo[];
+  skipped: InstructionsSkippedHarness[];
+}
+
+/**
+ * Body of `POST /api/instructions/:harness` and `DELETE /api/instructions/:harness`.
+ * `:harness` may be `all`: every detected harness on install, every installed
+ * one on remove.
+ */
+export interface InstructionsWriteRequest {
+  /**
+   * Config homes as the caller's shell sees them (`CLAUDE_CONFIG_DIR`,
+   * `CODEX_HOME`). A daemon started by the OS never inherits these, so the CLI
+   * forwards its own. Only these keys are honoured, and only for an existing
+   * directory inside the user's home.
+   */
+  homes?: Record<string, string>;
+}
+
+/** One file's outcome in an instructions write. */
+export interface InstructionsWriteResult {
+  id: string;
+  path: string;
+  /** The file changed (false when it already said exactly this). */
+  changed: boolean;
+  /** Where the original was copied before Hypergate first wrote to it. */
+  backup?: string;
+  /** Set when this harness could not be written. */
+  error?: string;
+}
+
+export interface InstructionsWriteResponse {
+  ok: boolean;
+  results: InstructionsWriteResult[];
+}
+
+// ── ambient credentials, watch and alerts ──
+//
+// An "ambient" credential is a login a tool keeps for itself, outside the vault:
+// a token in `~/.config/gh/hosts.yml`, an `OPENAI_API_KEY` exported from
+// `~/.zshrc`, a key in Codex's `auth.json`. Each one is a key any process
+// running as this user can read, which is exactly what credential lockdown is
+// trying to end. The sweep finds them, the import moves one into the vault, and
+// the watcher notices new ones appearing.
+
+/** How an ambient credential is held where it was found. */
+export type AmbientStorage = 'plaintext' | 'keyring' | 'environment';
+
+/**
+ * What moving a finding into the vault does at the source.
+ *
+ * - `edit`: Hypergate rewrites the file without the value (backup first).
+ * - `delete-file`: the whole file is the credential, so it is removed (backup first).
+ * - `vendor-logout`: the tool's own logout command, used only where the vendor
+ *   documents that it removes the login locally without revoking the token.
+ * - `manual`: Hypergate cannot remove it (an inherited environment variable,
+ *   a two-part cloud credential); the finding says what to do instead.
+ */
+export type AmbientRemoval = 'edit' | 'delete-file' | 'vendor-logout' | 'manual';
+
+/** One ambient credential, as the API shows it. Never carries a value. */
+export interface AmbientFinding {
+  /** Stable id: same tool, same place, same key gives the same id across scans. */
+  id: string;
+  /** The curated rule that found it (`gh-hosts`, `shell-rc`, `codex-auth`, ...). */
+  rule: string;
+  /** Who keeps it, for a person: "GitHub CLI", "Shell startup file". */
+  tool: string;
+  /** Credential-catalog guide service this maps to, when one exists. */
+  service?: string;
+  /** The env var the value is injected as once it is in the vault. */
+  envVar?: string;
+  /** Where it was found: an absolute path, or `environment`. */
+  location: string;
+  /** What inside that place: a host, a profile, a variable name. Never a value. */
+  detail?: string;
+  storage: AmbientStorage;
+  /** Masked hint (first and last few characters), when a value was read. */
+  hint?: string;
+  /** Whether Hypergate can move this one into the vault for you. */
+  importable: boolean;
+  removal: AmbientRemoval;
+  /** The vendor command `vendor-logout` runs, shown so it is not a surprise. */
+  removeCommand?: string;
+  /** For `manual` removals: what the person has to do. */
+  manualStep?: string;
+  /** What this detection does not prove. Shown beside the row. */
+  caveat?: string;
+}
+
+export interface AmbientScanResponse {
+  findings: AmbientFinding[];
+  scannedAt: string;
+}
+
+/** `POST /api/ambient/:id/import`. */
+export interface AmbientImportResult {
+  ok: boolean;
+  /** The vault credential the value now lives in. */
+  credentialId?: string;
+  /** `created` a new credential, `rolled` an existing one, or `unchanged` (same value). */
+  vault?: 'created' | 'rolled' | 'unchanged';
+  /** Whether the value is gone from the source. */
+  removed: boolean;
+  /** Where the pre-edit copy of the source went (0600, purged after seven days). */
+  backup?: string;
+  /** What is left for the person to do, when removal is manual or failed. */
+  manualStep?: string;
+  error?: string;
+}
+
+export type WatchEventKind = 'ambient-new' | 'ambient-changed' | 'ambient-imported' | 'cli-new';
+
+/** Where a new CLI was noticed. */
+export type CliWatchSource = 'catalog' | 'npm-global' | 'user-bin';
+
+/** One thing the watcher noticed. Never carries a value or a masked hint. */
+export interface WatchEvent {
+  id: string;
+  at: string;
+  kind: WatchEventKind;
+  /** Tool or CLI name, for a person. */
+  tool: string;
+  /** Path, `environment`, or the directory a CLI appeared in. */
+  location: string;
+  detail?: string;
+  /** The ambient finding this is about, for the import button. */
+  findingId?: string;
+  /** For `cli-new`: how it was noticed. */
+  source?: CliWatchSource;
+  /** Set when auto-quarantine moved it into the vault. */
+  quarantined?: boolean;
+}
+
+export interface WatchEventsResponse {
+  events: WatchEvent[];
+  /** When the watcher last looked. Absent before the first pass. */
+  lastPassAt?: string;
+}
+
+/** Shape of the org alert webhook body. */
+export type AlertWebhookFormat = 'slack' | 'json';
+
+/** Persisted alert and watch preferences (part of DaemonSettings). */
+export interface AlertSettings {
+  /** Move a newly appeared ambient credential into the vault without asking. Default off. */
+  autoQuarantine?: boolean;
+  /** Body shape for the org webhook. Default `json`. */
+  alertWebhookFormat?: AlertWebhookFormat;
+}
+
+/**
+ * What `/api/settings` says about the webhook. The URL itself is a secret
+ * (anyone holding a Slack webhook URL can post to that channel), so it lives in
+ * the keychain and the API only ever returns a masked hint.
+ */
+export interface AlertSettingsInfo {
+  alertWebhookConfigured?: boolean;
+  alertWebhookHint?: string;
+}
+
+/** Alert fields of a settings PATCH. Changing the webhook needs the master token. */
+export interface UpdateAlertSettingsRequest {
+  autoQuarantine?: boolean;
+  /** An http(s) URL to set, or `null` to remove it. */
+  alertWebhookUrl?: string | null;
+  alertWebhookFormat?: AlertWebhookFormat;
+}
+
+/** `POST /api/alerts/test`. */
+export interface TestAlertResponse {
+  ok: boolean;
+  /** Whether the OS notification was shown (false when this machine cannot show one). */
+  notified: boolean;
+  /** Whether the webhook accepted it; absent when no webhook is configured. */
+  webhook?: boolean;
+  error?: string;
 }
