@@ -2046,12 +2046,14 @@ mod tests {
     #[test]
     fn resolve_program_tries_extensions_in_order() {
         let root = scratch("ext");
-        std::fs::write(root.join("gh.cmd"), b"").unwrap();
-        std::fs::write(root.join("gh.exe"), b"").unwrap();
+        // Fixture names match the extensions exactly, so the test holds on a
+        // case-sensitive filesystem too (Linux CI); on Windows PATHEXT is
+        // upper case and the filesystem answers either spelling.
+        std::fs::write(root.join("gh.CMD"), b"").unwrap();
+        std::fs::write(root.join("gh.EXE"), b"").unwrap();
         let path = std::env::join_paths([&root]).unwrap();
         let exts = vec![".EXE".to_string(), ".CMD".to_string(), String::new()];
         let got = resolve_program("gh", Some(&path), &root, &exts).unwrap();
-        // Case-insensitive filesystems answer ".EXE" with the ".exe" file.
         assert!(got.to_string_lossy().to_lowercase().ends_with("gh.exe"), "{got:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
