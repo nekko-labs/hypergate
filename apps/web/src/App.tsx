@@ -60,6 +60,8 @@ import { OAuthAppDialog } from './components/servers/OAuthAppDialog';
 import { TokenDialog } from './components/servers/TokenDialog';
 import { AgentInstructionsSection, InstructionsOffer } from './components/agents/AgentInstructions';
 import { useToast } from './toast';
+import { AmbientPanel } from './components/AmbientPanel';
+import { AlertSettings } from './components/AlertSettings';
 
 type View = 'servers' | 'analytics' | 'settings';
 type ServerSection = 'agents' | 'mcp-servers' | 'cli' | 'credentials';
@@ -1772,6 +1774,7 @@ function CredentialsSection({ agents, token, onAgentsChange, authorize, requests
       {requests.length > 0 && (
         <PendingRequests requests={requests} token={token} onChange={() => { onRequestsChange(); load(); onAgentsChange(); }} />
       )}
+      <AmbientPanel token={token} onImported={load} />
       {adding && <AddCredentialPanel guides={guides} creds={creds ?? []} token={token} onAdded={() => { setAdding(false); load(); }} />}
       <div className="list">
         {!creds ? (
@@ -2772,6 +2775,15 @@ function SettingsView({ gateway, version, u }: { gateway: GatewayInfo | null; ve
         The tray keeps the daemon running in the background — right-click its icon for Open manager / Restart / Quit,
         and double-click it to open the app.
       </p>
+
+      <div className="section-title">Alerts</div>
+      <p className="small muted section-sub">
+        Hypergate watches for new logins kept outside the vault and for newly installed command-line tools, and tells
+        you when one appears. It cannot tell whether you or an agent made the change, so every alert is worth a look.
+      </p>
+      <div className="panel">
+        {s ? <AlertSettings s={s} token={gateway?.token} onChange={setS} /> : <div className="list-row small muted">Loading…</div>}
+      </div>
 
       <div className="section-title">
         This daemon

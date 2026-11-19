@@ -24,6 +24,7 @@ mod daemon;
 mod icon;
 mod logging;
 mod menu;
+mod notify;
 mod paths;
 mod sandbox;
 mod secrets;
@@ -286,6 +287,16 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Show one OS notification (used by the daemon's watcher).
+    ///
+    /// Exits 0 when shown, 1 when the platform's mechanism failed, and 3 when
+    /// this machine has no way to show one.
+    Notify {
+        #[arg(long)]
+        title: String,
+        #[arg(long, default_value = "")]
+        body: String,
+    },
     /// Read and write Hypergate's secrets in the OS keychain.
     Secret {
         #[command(subcommand)]
@@ -436,6 +447,17 @@ enum CredAction {
         /// Bind to no program at all (it can then only reach managed servers).
         #[arg(long, conflicts_with_all = ["programs", "default"])]
         none: bool,
+    },
+    /// Find logins tools keep outside the vault (rc files, CLI configs, keyrings).
+    ///
+    /// Lists what it finds, masked. `--import <id>` moves one into the vault
+    /// and takes it out at the source (after a backup); `--all` does that for
+    /// every finding Hypergate can remove.
+    Sweep {
+        #[arg(long, conflicts_with = "all")]
+        import: Option<String>,
+        #[arg(long)]
+        all: bool,
     },
 }
 
@@ -990,6 +1012,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
                 default,
                 none,
             } => commands::cred_programs_human(&id, &programs, default, none),
+            CredAction::Sweep { import, all } => commands::cred_sweep_human(import.as_deref(), all),
         },
 
         Command::Lockdown { action } => commands::lockdown_human(&action),
@@ -1130,6 +1153,8 @@ Click it to turn Hypergate on. `hypergate autostart on` starts it at login inste
             }
             Ok(ExitCode::from(verdict.exit_code() as u8))
         }
+
+        Command::Notify { title, body } => Ok(ExitCode::from(notify::show(&title, &body) as u8)),
 
         Command::Secret { action } => match action {
             SecretAction::Get { key } => match secrets::get(&key)? {

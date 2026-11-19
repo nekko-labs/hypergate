@@ -527,6 +527,22 @@ pub fn credentials() -> Result<serde_json::Value, String> {
     get("/api/credentials")
 }
 
+/// Logins kept outside the vault, as the daemon's sweep finds them (masked).
+pub fn ambient() -> Result<serde_json::Value, String> {
+    get("/api/ambient")
+}
+
+/// Move one ambient login into the vault. Finding ids are `rule-hex`, so they
+/// go into the path as they are; anything else is refused before the request.
+pub fn ambient_import(id: &str) -> Result<serde_json::Value, String> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(format!("`{id}` is not a finding id; `hypergate cred sweep` lists them"));
+    }
+    let path = format!("/api/ambient/{id}/import");
+    let text = send(&path, None, SLOW_TIMEOUT)?;
+    serde_json::from_str(&text).map_err(|e| format!("unexpected response from {path}: {e}"))
+}
+
 pub fn credential_guides() -> Result<serde_json::Value, String> {
     get("/api/credentials/guides")
 }

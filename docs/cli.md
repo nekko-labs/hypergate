@@ -63,6 +63,8 @@ cli install <id> [--run|--yes]
 instructions status
 instructions install <harness>|--all
 instructions remove <harness>|--all
+cred sweep [--import ID | --all]
+notify --title TITLE [--body BODY]
 usage
 doctor
 ```
@@ -139,6 +141,19 @@ marker is reported and left alone. `hypergate start` suggests
 `instructions install --all` when it finds harnesses with no block, and never
 writes on its own. `install` and `remove` exit 1 if any file could not be
 written.
+
+## Logins outside the vault
+
+`cred sweep` lists the logins tools keep for themselves outside the vault: CLI
+config files (GitHub CLI, Fly.io, Vercel, Supabase, npm, the Git credential
+store), model-provider keys exported from shell startup files or stored by
+agent tools (Codex, Gemini CLI, aider), and report-only entries such as AWS,
+Google Cloud, Azure, Docker and netrc credentials. Output is masked; no value is
+printed. `--import ID` moves one finding into the vault and then removes it at
+the source, after backing the file up under `~/.hypergate/ambient-backup/` for
+seven days; `--all` does that for every finding Hypergate can remove. `notify`
+shows one OS notification and exits 0 when shown, 1 when the platform mechanism
+failed, and 3 when this machine cannot show one; the daemon's watcher uses it.
 
 ## Curated CLI installation
 
