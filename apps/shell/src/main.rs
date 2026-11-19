@@ -237,6 +237,16 @@ enum Command {
         #[command(subcommand)]
         action: CredAction,
     },
+    /// Credential lockdown: agents never receive a key's value.
+    ///
+    /// On, `hypergate run` is the only way a key reaches a command, and only a
+    /// program the key is bound to (never a shell, an interpreter, or a
+    /// subcommand that prints tokens). Turning it off asks the OS to confirm
+    /// it is you.
+    Lockdown {
+        #[command(subcommand)]
+        action: LockdownAction,
+    },
     /// Run a command with stored credentials injected into its environment.
     ///
     /// The values ride only in the child's env, never on the command line and
@@ -402,6 +412,31 @@ enum CredAction {
     Allow { agent: String, id: String },
     /// Revoke one agent's access to one credential.
     Deny { agent: String, id: String },
+    /// Bind a credential to the programs `hypergate run` may inject it into.
+    ///
+    /// With no programs and no flag, prints the current binding. Under
+    /// lockdown, changing it asks the OS to confirm it is you.
+    Programs {
+        id: String,
+        /// Program names, e.g. `gh git`. Replaces the current binding.
+        programs: Vec<String>,
+        /// Restore the default: the CLIs the credential's guide names.
+        #[arg(long, conflicts_with = "programs")]
+        default: bool,
+        /// Bind to no program at all (it can then only reach managed servers).
+        #[arg(long, conflicts_with_all = ["programs", "default"])]
+        none: bool,
+    },
+}
+
+#[derive(Clone, Subcommand)]
+enum LockdownAction {
+    /// Turn credential lockdown on.
+    On,
+    /// Turn credential lockdown off (asks the OS to confirm it is you).
+    Off,
+    /// Show whether lockdown is on and whether this machine can confirm it is you.
+    Status,
 }
 
 #[derive(Clone, Subcommand)]
@@ -523,6 +558,7 @@ fn dispatch_json(command: &Command) -> Result<ExitCode, String> {
         }
         Command::Cli { action } => commands::cli_json(action)?,
         Command::Cred { action } => commands::cred_json(action)?,
+        Command::Lockdown { action } => commands::lockdown_json(action)?,
         Command::Start {
             no_open,
             no_shortcut,
@@ -906,7 +942,15 @@ fn dispatch(command: Command, json_mode: bool) -> Result<ExitCode, String> {
                 println!("Denied {id} for {agent}");
                 Ok(ExitCode::SUCCESS)
             }
+            CredAction::Programs {
+                id,
+                programs,
+                default,
+                none,
+            } => commands::cred_programs_human(&id, &programs, default, none),
         },
+
+        Command::Lockdown { action } => commands::lockdown_human(&action),
 
         Command::Run { agent, with, argv } => commands::run_with_credentials(agent.as_deref(), &with, &argv),
 

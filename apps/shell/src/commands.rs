@@ -13,7 +13,7 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use crate::api::{self, RegistryEntry};
-use crate::{AutostartAction, Command, CredAction, SecretAction, ServerAction, ShortcutAction};
+use crate::{AutostartAction, Command, CredAction, LockdownAction, SecretAction, ServerAction, ShortcutAction};
 
 /// Parse only the small, safe subset of curated install instructions that can
 /// be executed without invoking a shell. URLs, prose, and shell syntax remain
@@ -434,6 +434,15 @@ pub fn cred_json(action: &CredAction) -> Result<Value, String> {
         CredAction::Rm { id } => api::delete_credential(id)?,
         CredAction::Allow { agent, id } => api::set_agent_credential(agent, id, true)?,
         CredAction::Deny { agent, id } => api::set_agent_credential(agent, id, false)?,
+        CredAction::Programs {
+            id,
+            programs,
+            default,
+            none,
+        } => match programs_change(programs, *default, *none) {
+            Some(change) => api::set_credential_programs(id, change.as_deref())?,
+            None => credential_row(id)?,
+        },
         // Set reads stdin and prints its own confirmation; keep it human-only
         // rather than inventing a JSON stdin protocol nothing consumes yet.
         CredAction::Set { .. } => return Err("`cred set` does not support --json".into()),
@@ -443,15 +452,26 @@ pub fn cred_json(action: &CredAction) -> Result<Value, String> {
 /// Run a command with vault credentials in its env. The values ride only in
 /// the child's environment: never argv, never printed, never logged.
 pub fn run_with_credentials(agent: Option<&str>, with: &[String], argv: &[String]) -> Result<ExitCode, String> {
-    let resolved = api::resolve_credentials(agent, with)?;
-    let env = resolved["env"].as_object().cloned().unwrap_or_default();
-    let used = resolved["used"].as_array().map(Vec::len).unwrap_or(0);
     let (program, rest) = argv
         .split_first()
         .ok_or("nothing to run — pass the command after `--`")?;
+    // Resolve the program ourselves, then run exactly that file. Under
+    // credential lockdown the daemon checks this path is the real program the
+    // key is bound to, so what it approves and what we start must be the same.
+    let path = resolve_program(
+        program,
+        std::env::var_os("PATH").as_deref(),
+        &std::env::current_dir().unwrap_or_default(),
+        &path_exts(),
+    )
+    .ok_or_else(|| format!("could not find `{program}` on PATH"))?;
+    let path_str = path.to_string_lossy().into_owned();
+    let resolved = api::resolve_credentials(agent, with, Some(&path_str), rest)?;
+    let env = resolved["env"].as_object().cloned().unwrap_or_default();
+    let used = resolved["used"].as_array().map(Vec::len).unwrap_or(0);
     // Name the count, never the contents: this line may end up in a CI log.
     eprintln!("hypergate run: injecting {used} credential(s) into `{program}`");
-    let mut child = std::process::Command::new(program);
+    let mut child = std::process::Command::new(&path);
     child.args(rest);
     for (k, v) in &env {
         if let Some(val) = v.as_str() {
@@ -464,6 +484,154 @@ pub fn run_with_credentials(agent: Option<&str>, with: &[String], argv: &[String
         Some(code) => ExitCode::from(u8::try_from(code.clamp(0, 255)).unwrap_or(1)),
         None => ExitCode::from(1),
     })
+}
+
+/// Executable extensions to try for a bare name: PATHEXT on Windows (then the
+/// bare name), nothing on POSIX.
+fn path_exts() -> Vec<String> {
+    if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+            .split(';')
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty())
+            .chain(std::iter::once(String::new()))
+            .collect()
+    } else {
+        vec![String::new()]
+    }
+}
+
+/// Turn `argv[0]` into the absolute path a shell would run.
+///
+/// A name with a path separator is taken as a path (made absolute against
+/// `cwd`); a bare name is looked up on `path_var`, in order, the way a shell
+/// does. Unlike `paths::find_on_path` this never looks beside the hypergate
+/// binary first: the program has to be the one the user's PATH means.
+pub fn resolve_program(
+    argv0: &str,
+    path_var: Option<&std::ffi::OsStr>,
+    cwd: &std::path::Path,
+    exts: &[String],
+) -> Option<std::path::PathBuf> {
+    let has_sep = argv0.contains('/') || (cfg!(windows) && argv0.contains('\\'));
+    if has_sep {
+        let p = std::path::Path::new(argv0);
+        let abs = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+        return abs.is_file().then_some(abs);
+    }
+    for dir in std::env::split_paths(path_var?) {
+        for ext in exts {
+            let candidate = dir.join(format!("{argv0}{ext}"));
+            if candidate.is_file() {
+                // A relative PATH entry (`.`, `bin`) resolves against cwd, the
+                // same way the shell would have run it.
+                return Some(if candidate.is_absolute() {
+                    candidate
+                } else {
+                    cwd.join(candidate)
+                });
+            }
+        }
+    }
+    None
+}
+
+/// What `cred programs` asked for: `Some(Some(list))` bind exactly these,
+/// `Some(None)` restore the default, `None` just show the binding.
+fn programs_change(programs: &[String], default: bool, none: bool) -> Option<Option<Vec<String>>> {
+    if default {
+        Some(None)
+    } else if none {
+        Some(Some(Vec::new()))
+    } else if programs.is_empty() {
+        None
+    } else {
+        Some(Some(programs.to_vec()))
+    }
+}
+
+/// One credential's metadata row, by id.
+fn credential_row(id: &str) -> Result<Value, String> {
+    let all = api::credentials()?;
+    all.as_array()
+        .and_then(|rows| rows.iter().find(|r| r["id"].as_str() == Some(id)).cloned())
+        .ok_or_else(|| format!("no credential with id `{id}` (see `hypergate cred ls`)"))
+}
+
+/// How a credential's binding reads: the explicit list, or the default.
+fn describe_programs(row: &Value) -> String {
+    let names = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default()
+    };
+    if row.get("programs").is_some_and(Value::is_array) {
+        let list = names(&row["programs"]);
+        if list.is_empty() {
+            "no programs".into()
+        } else {
+            list.join(", ")
+        }
+    } else {
+        let list = names(&row["defaultPrograms"]);
+        if list.is_empty() {
+            "no programs (no default; bind one with `hypergate cred programs <id> <program>`)".into()
+        } else {
+            format!("{} (default)", list.join(", "))
+        }
+    }
+}
+
+pub fn cred_programs_human(id: &str, programs: &[String], default: bool, none: bool) -> Result<ExitCode, String> {
+    let row = match programs_change(programs, default, none) {
+        Some(change) => api::set_credential_programs(id, change.as_deref())?,
+        None => credential_row(id)?,
+    };
+    println!("{id}: {}", describe_programs(&row));
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn lockdown_json(action: &LockdownAction) -> Result<Value, String> {
+    match action {
+        LockdownAction::On => api::set_lockdown(true),
+        LockdownAction::Off => api::set_lockdown(false),
+        LockdownAction::Status => api::lockdown_status(),
+    }
+}
+
+/// The status block, in words. Says plainly when this machine cannot confirm
+/// it is you, because lockdown without that is a much weaker lock.
+fn describe_lockdown(v: &Value) -> String {
+    let on = v["enabled"].as_bool().unwrap_or(false);
+    let presence = &v["presence"];
+    let mut out = format!("Credential lockdown: {}", if on { "on" } else { "off" });
+    if presence["available"].as_bool().unwrap_or(false) {
+        out.push_str(&format!(
+            "\nConfirmation: {} (asked before anything widens access)",
+            presence["method"].as_str().unwrap_or("available")
+        ));
+    } else {
+        out.push_str("\nConfirmation: unavailable on this machine");
+        if let Some(d) = presence["detail"].as_str() {
+            out.push_str(&format!(" ({d})"));
+        }
+        if on {
+            out.push_str(
+                "\nAgents still never receive values, but grants, key changes and turning lockdown off fall back to the master token alone.",
+            );
+        }
+    }
+    if v["consent"].as_str() == Some("unavailable") {
+        out.push_str("\nNo confirmation prompt was shown: this machine cannot ask.");
+    }
+    out
+}
+
+pub fn lockdown_human(action: &LockdownAction) -> Result<ExitCode, String> {
+    let v = lockdown_json(action)?;
+    println!("{}", describe_lockdown(&v));
+    Ok(ExitCode::SUCCESS)
 }
 
 pub fn targets_human() -> Result<ExitCode, String> {
@@ -1590,6 +1758,130 @@ fn explain_resolve(key: &str, err: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── credential lockdown ──
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("hypergate-run-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn resolve_program_walks_path_in_order() {
+        let root = scratch("order");
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(second.join("tool"), b"").unwrap();
+        std::fs::write(first.join("tool"), b"").unwrap();
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        let got = resolve_program("tool", Some(&path), &root, &[String::new()]).unwrap();
+        assert_eq!(got, first.join("tool"));
+        assert!(got.is_absolute());
+        assert!(resolve_program("missing", Some(&path), &root, &[String::new()]).is_none());
+        assert!(resolve_program("tool", None, &root, &[String::new()]).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_program_takes_a_path_as_a_path() {
+        let root = scratch("path");
+        std::fs::write(root.join("local-tool"), b"").unwrap();
+        // Relative to cwd, made absolute; PATH is never consulted.
+        let got = resolve_program("./local-tool", None, &root, &[String::new()]).unwrap();
+        assert!(got.is_absolute());
+        assert!(got.ends_with("local-tool"));
+        let abs = root.join("local-tool");
+        assert_eq!(
+            resolve_program(abs.to_str().unwrap(), None, &root, &[String::new()]).unwrap(),
+            abs
+        );
+        assert!(resolve_program("./nope", None, &root, &[String::new()]).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_program_tries_extensions_in_order() {
+        let root = scratch("ext");
+        std::fs::write(root.join("gh.cmd"), b"").unwrap();
+        std::fs::write(root.join("gh.exe"), b"").unwrap();
+        let path = std::env::join_paths([&root]).unwrap();
+        let exts = vec![".EXE".to_string(), ".CMD".to_string(), String::new()];
+        let got = resolve_program("gh", Some(&path), &root, &exts).unwrap();
+        // Case-insensitive filesystems answer ".EXE" with the ".exe" file.
+        assert!(got.to_string_lossy().to_lowercase().ends_with("gh.exe"), "{got:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_body_carries_program_and_args_only_when_known() {
+        let body = api::resolve_body(
+            Some("claude-code"),
+            &["github".into()],
+            Some("/usr/bin/gh"),
+            &["repo".into(), "list".into()],
+        );
+        assert_eq!(
+            body,
+            json!({ "agent": "claude-code", "ids": ["github"], "program": "/usr/bin/gh", "args": ["repo", "list"] })
+        );
+        assert_eq!(api::resolve_body(None, &[], None, &["x".into()]), json!({}));
+    }
+
+    #[test]
+    fn programs_change_reads_the_flags() {
+        assert_eq!(programs_change(&[], false, false), None);
+        assert_eq!(programs_change(&[], true, false), Some(None));
+        assert_eq!(programs_change(&[], false, true), Some(Some(vec![])));
+        assert_eq!(
+            programs_change(&["gh".into(), "git".into()], false, false),
+            Some(Some(vec!["gh".to_string(), "git".to_string()]))
+        );
+        assert_eq!(api::programs_body(None), json!({ "programs": null }));
+        assert_eq!(
+            api::programs_body(Some(&["gh".to_string()])),
+            json!({ "programs": ["gh"] })
+        );
+    }
+
+    #[test]
+    fn describe_programs_says_whether_it_is_the_default() {
+        assert_eq!(
+            describe_programs(&json!({ "programs": ["gh", "git"], "defaultPrograms": ["gh"] })),
+            "gh, git"
+        );
+        assert_eq!(
+            describe_programs(&json!({ "programs": [], "defaultPrograms": ["gh"] })),
+            "no programs"
+        );
+        assert_eq!(
+            describe_programs(&json!({ "defaultPrograms": ["flyctl", "fly"] })),
+            "flyctl, fly (default)"
+        );
+        assert!(describe_programs(&json!({ "defaultPrograms": [] })).starts_with("no programs (no default"));
+    }
+
+    #[test]
+    fn describe_lockdown_is_plain_about_a_missing_prompt() {
+        let on_with_touch_id = json!({ "enabled": true, "presence": { "available": true, "method": "touch-id" } });
+        let text = describe_lockdown(&on_with_touch_id);
+        assert!(text.contains("Credential lockdown: on"));
+        assert!(text.contains("touch-id"));
+        let on_without =
+            json!({ "enabled": true, "presence": { "available": false, "method": "none", "detail": "no polkit" } });
+        let text = describe_lockdown(&on_without);
+        assert!(text.contains("unavailable on this machine (no polkit)"));
+        assert!(text.contains("fall back to the master token alone"));
+        let off =
+            json!({ "enabled": false, "presence": { "available": false, "method": "none" }, "consent": "unavailable" });
+        let text = describe_lockdown(&off);
+        assert!(text.contains("Credential lockdown: off"));
+        assert!(!text.contains("fall back"));
+        assert!(text.contains("cannot ask"));
+    }
 
     fn entry() -> RegistryEntry {
         serde_json::from_value(json!({

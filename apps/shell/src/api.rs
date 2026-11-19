@@ -18,6 +18,12 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 /// calls, which run whatever the managed server does.
 const SLOW_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// A call the daemon may answer only after an OS consent prompt (credential
+/// lockdown): a person has to notice it, read it, and answer it. The daemon
+/// gives the prompt 120 seconds; this outlasts that so the daemon's own answer,
+/// not a client timeout, is what the user sees.
+const PROMPT_TIMEOUT: Duration = Duration::from_secs(150);
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Health {
     pub ok: bool,
@@ -384,7 +390,8 @@ pub fn set_agent_credential(id: &str, credential: &str, allowed: bool) -> Result
     let body = send(
         &format!("/api/clients/{id}/credentials/{credential}"),
         Some(&serde_json::json!({ "allowed": allowed })),
-        TIMEOUT,
+        // Under lockdown, a grant waits on an OS prompt.
+        PROMPT_TIMEOUT,
     )?;
     serde_json::from_str(&body).map_err(|e| format!("unexpected response from credential permission update: {e}"))
 }
@@ -486,7 +493,8 @@ pub fn add_credential(
     let body = send(
         "/api/credentials",
         Some(&serde_json::json!({ "name": name, "value": value, "service": service, "envVar": env_var })),
-        TIMEOUT,
+        // Under lockdown, adding a key waits on an OS prompt.
+        PROMPT_TIMEOUT,
     )?;
     serde_json::from_str(&body).map_err(|e| format!("unexpected response from /api/credentials: {e}"))
 }
@@ -503,7 +511,8 @@ pub fn roll_credential(id: &str, value: &str) -> Result<serde_json::Value, Strin
 
 pub fn delete_credential(id: &str) -> Result<serde_json::Value, String> {
     let url = format!("{}/api/credentials/{id}", paths::base_url());
-    let mut req = agent(TIMEOUT).delete(&url);
+    // Under lockdown, deleting a key waits on an OS prompt.
+    let mut req = agent(PROMPT_TIMEOUT).delete(&url);
     if let Some(token) = crate::secrets::gateway_token() {
         req = req.header("Authorization", &format!("Bearer {token}"));
     }
@@ -514,11 +523,17 @@ pub fn delete_credential(id: &str) -> Result<serde_json::Value, String> {
     serde_json::from_str(&body).map_err(|e| format!("unexpected response from credential delete: {e}"))
 }
 
-/// Resolve allowed credentials into env vars. `agent` narrows the master scope
-/// to one agent's allow-list (and attributes the fetch to it); `ids` narrows to
-/// specific credentials. The values are in the reply: hand them straight to a
-/// child process's env and nowhere else.
-pub fn resolve_credentials(agent_key: Option<&str>, ids: &[String]) -> Result<serde_json::Value, String> {
+/// The body of a resolve call. `program` is the absolute path `hypergate run` is
+/// about to start and `args` its arguments: under credential lockdown the daemon
+/// checks both (the program must be the real one and bound to the credential,
+/// and the arguments must not be a token-printing subcommand). Outside lockdown
+/// the daemon ignores them, so sending them always is harmless.
+pub fn resolve_body(
+    agent_key: Option<&str>,
+    ids: &[String],
+    program: Option<&str>,
+    args: &[String],
+) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     if let Some(a) = agent_key {
         body.insert("agent".into(), serde_json::Value::String(a.into()));
@@ -529,12 +544,68 @@ pub fn resolve_credentials(agent_key: Option<&str>, ids: &[String]) -> Result<se
             serde_json::Value::Array(ids.iter().cloned().map(serde_json::Value::String).collect()),
         );
     }
+    if let Some(p) = program {
+        body.insert("program".into(), serde_json::Value::String(p.into()));
+        body.insert(
+            "args".into(),
+            serde_json::Value::Array(args.iter().cloned().map(serde_json::Value::String).collect()),
+        );
+    }
+    serde_json::Value::Object(body)
+}
+
+/// Resolve allowed credentials into env vars. `agent` narrows the master scope
+/// to one agent's allow-list (and attributes the fetch to it); `ids` narrows to
+/// specific credentials. The values are in the reply: hand them straight to a
+/// child process's env and nowhere else.
+pub fn resolve_credentials(
+    agent_key: Option<&str>,
+    ids: &[String],
+    program: Option<&str>,
+    args: &[String],
+) -> Result<serde_json::Value, String> {
     let text = send(
         "/api/credentials/resolve",
-        Some(&serde_json::Value::Object(body)),
-        TIMEOUT,
+        Some(&resolve_body(agent_key, ids, program, args)),
+        // Under lockdown a bare-master resolve waits on an OS prompt.
+        PROMPT_TIMEOUT,
     )?;
     serde_json::from_str(&text).map_err(|e| format!("unexpected response from credential resolve: {e}"))
+}
+
+// ── credential lockdown ──────────────────────────────────────────────────────
+
+pub fn lockdown_status() -> Result<serde_json::Value, String> {
+    get("/api/lockdown")
+}
+
+/// Turn lockdown on or off. Off waits on an OS prompt when lockdown is on.
+pub fn set_lockdown(enabled: bool) -> Result<serde_json::Value, String> {
+    let body = send(
+        "/api/lockdown",
+        Some(&serde_json::json!({ "enabled": enabled })),
+        PROMPT_TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from /api/lockdown: {e}"))
+}
+
+/// The body of a programs update: a list binds exactly those, `None` restores
+/// the guide default.
+pub fn programs_body(programs: Option<&[String]>) -> serde_json::Value {
+    match programs {
+        Some(list) => serde_json::json!({ "programs": list }),
+        None => serde_json::json!({ "programs": serde_json::Value::Null }),
+    }
+}
+
+/// Bind a credential to programs. Waits on an OS prompt under lockdown.
+pub fn set_credential_programs(id: &str, programs: Option<&[String]>) -> Result<serde_json::Value, String> {
+    let body = send(
+        &format!("/api/credentials/{id}/programs"),
+        Some(&programs_body(programs)),
+        PROMPT_TIMEOUT,
+    )?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected response from credential programs update: {e}"))
 }
 
 /// What the daemon last knew about updates. Never hits the network.
