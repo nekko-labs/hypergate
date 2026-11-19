@@ -1,4 +1,4 @@
-//! `hypergate notify` — show one OS notification, for the daemon's watcher.
+//! `hypergate notify`: show one OS notification, for the daemon's watcher.
 //!
 //! The daemon cannot raise a notification itself (Node has no API for it), so
 //! it calls this, the same way it calls `authorize` for consent prompts. Each
