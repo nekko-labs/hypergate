@@ -35,6 +35,7 @@ import type {
   UpdateResult,
   ApplyUpdateResponse,
 } from '@hypergate/shared';
+import type { LockdownStatus, SetLockdownResponse } from '@hypergate/shared';
 
 // Dev proxies /api → daemon; in a packaged build set VITE_DAEMON_URL.
 const BASE = (import.meta.env.VITE_DAEMON_URL ?? '').replace(/\/$/, '');
@@ -136,6 +137,28 @@ export const api = {
       headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ allowed }),
     }),
+  // Credential lockdown. Turning it off asks the OS to confirm a person is
+  // present, so like the reveal door a refusal is a result, not a transport
+  // error: the body says whether the user said no or the prompt broke.
+  lockdown: () => j<LockdownStatus>('/api/lockdown'),
+  setLockdown: async (
+    enabled: boolean,
+    token: string,
+  ): Promise<(SetLockdownResponse & { ok: true }) | { ok: false; error?: string; consent?: string; detail?: string }> => {
+    const res = await fetch(`${BASE}/api/lockdown`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ enabled }),
+    });
+    try {
+      const body = (await res.json()) as SetLockdownResponse & { error?: string };
+      return res.ok
+        ? { ...body, ok: true }
+        : { ok: false, error: body.error, consent: body.consent, detail: (body as { detail?: string }).detail };
+    } catch {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+  },
   // Pending access requests: what an agent's refusal turns into. Reading is a
   // plain GET (a request names no secret); answering one is a grant, so it
   // carries the master token like every other vault mutation.

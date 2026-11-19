@@ -52,6 +52,7 @@ import { Dialog } from './components/Dialog';
 import { EmptyState } from './components/EmptyState';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogConsole } from './components/LogConsole';
+import { LockdownToggle } from './components/LockdownToggle';
 import { ThemeSwitch } from './components/ThemeSwitch';
 import { WindowButtons } from './components/WindowButtons';
 import { connectClient, inShell, onTitleBarMouseDown, shell } from './lib/shell';
@@ -1765,6 +1766,7 @@ function CredentialsSection({ agents, token, onAgentsChange, authorize, requests
         gateway's <span className="mono">hypergate__credential_env</span> tool or <span className="mono">hypergate run</span>,
         instead of stopping to ask you to sign in.
       </p>
+      <LockdownToggle token={token} />
       {requests.length > 0 && (
         <PendingRequests requests={requests} token={token} onChange={() => { onRequestsChange(); load(); onAgentsChange(); }} />
       )}
@@ -1929,6 +1931,29 @@ function PendingRequests({ requests, token, onChange }: {
   );
 }
 
+/**
+ * Which programs this credential is bound to, read-only. Editing stays in the
+ * terminal (`hypergate cred programs`), where the OS prompt that guards it
+ * under lockdown is already the expected interaction.
+ */
+function CredentialPrograms({ c }: { c: CredentialInfo }) {
+  const explicit = Array.isArray(c.programs);
+  const list = explicit ? c.programs! : c.defaultPrograms ?? [];
+  return (
+    <div className="row wrap-gap" style={{ gap: 6, alignItems: 'center' }}>
+      {list.length ? (
+        list.map((p) => <span key={p} className="chip mono">{p}</span>)
+      ) : (
+        <span className="small muted">{explicit ? 'No programs' : 'None by default'}</span>
+      )}
+      {!explicit && list.length > 0 && <span className="small muted">default, from its guide</span>}
+      <span className="small muted">
+        Change with <span className="mono">hypergate cred programs {c.id} &lt;program&gt;…</span>
+      </span>
+    </div>
+  );
+}
+
 /** How to get this credential, shown in the add flow and beside Roll. */
 function GuideHint({ g }: { g: CredentialGuideInfo }) {
   const [, copy] = useCopy();
@@ -2088,6 +2113,9 @@ function CredentialRow({ c, guides, agents, token, authorize, highlight, onChang
       </Block>
       <Block label={<>Reveal the value <span className="dl-note">asks the OS to confirm it is you</span></>}>
         <RevealValue c={c} token={token} authorize={authorize} />
+      </Block>
+      <Block label={<>Programs <span className="dl-note">under lockdown, hypergate run injects this key only into these</span></>}>
+        <CredentialPrograms c={c} />
       </Block>
       {agents.length > 0 && (
         <Block label={<>Agents <span className="dl-count">{allowedBy}/{agents.length}</span></>}>
