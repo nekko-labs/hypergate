@@ -134,6 +134,19 @@ export class CredentialVault {
     return { ...row };
   }
 
+  /**
+   * Bind a credential to the programs `hypergate run` may inject it into under
+   * lockdown. `undefined` clears the binding, which restores the guide default.
+   */
+  setPrograms(id: string, programs: string[] | undefined): CredentialMeta | undefined {
+    const row = this.load().find((r) => r.id === id);
+    if (!row) return undefined;
+    if (programs === undefined) delete row.programs;
+    else row.programs = [...programs];
+    this.save();
+    return { ...row };
+  }
+
   delete(id: string): boolean {
     const rows = this.load();
     const idx = rows.findIndex((r) => r.id === id);
