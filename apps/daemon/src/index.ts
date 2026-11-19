@@ -82,6 +82,8 @@ import { CredentialRequestStore } from './requests.ts';
 import { ServerInstallRequestStore } from './server-requests.ts';
 import { CliInstallRequestStore } from './cli-requests.ts';
 import { CliJobRunner } from './cli-jobs.ts';
+import { createAmbientService } from './ambient-service.ts';
+import { hostname, userInfo } from 'node:os';
 import * as shell from './shell.ts';
 import * as autostart from './autostart.ts';
 import { Updater } from './updater.ts';
@@ -731,6 +733,9 @@ const settingsInfo = (): SettingsInfo => {
     startupCommand: autostart.startupCommand(),
     skippedUpdate: s.skippedUpdate,
     agentsSeeAllCredentialNames: s.agentsSeeAllCredentialNames !== false,
+    autoQuarantine: s.autoQuarantine === true,
+    alertWebhookFormat: s.alertWebhookFormat ?? 'json',
+    ...ambient.settingsInfo(),
     // Probed rather than assumed: a Mac with no Touch ID sensor and a Linux box
     // with no polkit both need the reveal button disabled with a reason, and
     // only the shell binary can tell us which case we are in.
@@ -1657,6 +1662,88 @@ const supervisor = new Supervisor({
   },
 });
 let servers = loadConfig();
+
+// ── ambient credentials, watch and alerts ──────────────────────────────────
+// The sweep finds logins tools keep outside the vault, the watcher notices new
+// ones (and new CLIs) appearing, and alerts tell the person and, when a webhook
+// is configured, their team. See ambient-service.ts; index.ts only wires it.
+// HYPERGATE_AMBIENT_HOME points the sweep at a scratch home (smoke tests), and
+// then reads no inherited environment either, so a test never sees real keys.
+const AMBIENT_HOME = process.env.HYPERGATE_AMBIENT_HOME;
+const ambient = createAmbientService({
+  dataDir: DATA_DIR,
+  home: AMBIENT_HOME ?? homedir(),
+  platform: process.platform,
+  env: AMBIENT_HOME ? {} : process.env,
+  vault,
+  catalog: KNOWN_CLIS.map((c) => ({ id: c.id, name: c.name, command: c.command })),
+  resolve: (command) => resolveOnPath(command),
+  npmPrefix: async () => {
+    const npm = resolveOnPath('npm');
+    if (!npm) return undefined;
+    try {
+      const viaCmd = WIN && /\.(cmd|bat)$/i.test(npm);
+      const { stdout } = viaCmd
+        ? await pexecFile(process.env.ComSpec ?? 'cmd.exe', ['/c', npm, 'prefix', '-g'], { timeout: 8000, windowsHide: true })
+        : await pexecFile(npm, ['prefix', '-g'], { timeout: 8000, windowsHide: true });
+      return stdout.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  },
+  run: async (cmd) => {
+    // Vendor commands (`gh auth token`, `gh auth logout`) by resolved path,
+    // never through a shell. stdout can be a token: it is returned, not logged.
+    const file = resolveOnPath(cmd.file);
+    if (!file) return { ok: false, stdout: '' };
+    try {
+      const { stdout } = await pexecFile(file, cmd.args, { timeout: 20_000, windowsHide: true, maxBuffer: 1_000_000 });
+      return { ok: true, stdout };
+    } catch {
+      return { ok: false, stdout: '' };
+    }
+  },
+  notify: (title, body) => shell.notify(title, body),
+  keychain: {
+    available: () => useKeychain(),
+    get: (k) => shell.secretGet(k),
+    set: (k, v) => shell.secretSet(k, v),
+    delete: (k) => shell.secretDelete(k),
+  },
+  settings: () => loadSettings(),
+  post: async (url, body) => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.ok;
+  },
+  origin: { host: hostname(), user: userInfo().username, platform: process.platform, version: VERSION },
+  rolled: async (credentialId) => {
+    for (const cfg of servers) {
+      if (!Object.values(cfg.credentialRefs ?? {}).includes(credentialId)) continue;
+      if (supervisor.status(cfg.id)?.state === 'ready') await supervisor.restart(cfg);
+    }
+  },
+  record: (tool, ok, error) =>
+    supervisor.record({
+      at: new Date().toISOString(),
+      serverId: BUILTIN_NS,
+      server: 'Hypergate',
+      tool,
+      client: 'manager UI',
+      ok,
+      ms: 0,
+      bytesIn: 0,
+      bytesOut: 0,
+      ...(error ? { error } : {}),
+    }),
+  log: (line) => process.stderr.write(`${line}\n`),
+  intervalMs: Number(process.env.HYPERGATE_WATCH_INTERVAL_MS ?? 30_000),
+  windowMs: Number(process.env.HYPERGATE_ALERT_WINDOW_MS ?? 5_000),
+});
 const statusFor = (cfg: ManagedServerConfig): ServerStatus | undefined => {
   const status = supervisor.status(cfg.id);
   if (!status || cfg.runtime !== 'remote') return status;
@@ -2512,6 +2599,12 @@ if (STDIO_MODE) {
         else if (typeof b.skippedUpdate === 'string' && /^[\w.+-]{1,64}$/.test(b.skippedUpdate)) cur.skippedUpdate = b.skippedUpdate;
         if (typeof b.agentsSeeAllCredentialNames === 'boolean')
           cur.agentsSeeAllCredentialNames = b.agentsSeeAllCredentialNames;
+        try {
+          ambient.applySettings(b, cur, authScope(req)?.kind === 'master');
+        } catch (e) {
+          const status = (e as { status?: number }).status ?? 400;
+          return json(res, status, { error: e instanceof Error ? e.message : 'invalid' });
+        }
         if (typeof b.runOnStartup === 'boolean') {
           // Let the OS error surface: "could not write the Run key" is a far
           // better answer than a toggle that silently springs back.
@@ -2633,6 +2726,15 @@ if (STDIO_MODE) {
     }
 
     // ── connected agents (scoped gateway tokens) ─────────────────────────────
+    // ── ambient credentials, watch and alerts (ambient-service.ts) ─────────
+    {
+      const reply = await ambient.route(req.method ?? 'GET', pathname, {
+        master: authScope(req)?.kind === 'master',
+        body: () => readBody(req),
+      });
+      if (reply) return json(res, reply.status, reply.body);
+    }
+
     // ── the credential vault ──────────────────────────────────────────────
     // Reads return metadata + masked hints only. Mutations need the master
     // token on top of the global same-origin guard (the /api/shutdown and
@@ -3358,6 +3460,7 @@ if (STDIO_MODE) {
     if (shuttingDown) return;
     shuttingDown = true;
     process.stdout.write(`hypergated stopping: ${reason}\n`);
+    ambient.stop();
     server.close();
     void supervisor
       .stopAll()
@@ -3372,6 +3475,7 @@ if (STDIO_MODE) {
   };
 
   server.listen(PORT, LISTEN_HOST, () => {
+    if (process.env.HYPERGATE_NO_WATCH !== '1') ambient.start();
     if (process.env.HYPERGATE_NO_AUTH === '1') {
       process.stderr.write(
         '!!! WARNING: HYPERGATE_NO_AUTH=1 disables authentication; this is intended for local tests only. !!!\n',
