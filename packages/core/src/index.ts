@@ -1,6 +1,7 @@
 export * from './runtime.js';
 export * from './supervisor.js';
 export * from './gateway.js';
+export * from './identity.js';
 export * from './policy.js';
 export * from './guard.js';
 export * from './insights.js';
