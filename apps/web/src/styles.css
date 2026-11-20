@@ -906,6 +906,8 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 }
 .app-shell .footer-in { max-width: none; }
 .footer .heart { color: #e2555f; vertical-align: -1px; margin: 0 1px; }
+.foot-licenses a { color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2px; }
+.foot-licenses a:hover { color: var(--ink); }
 /* The mark carries the link on its own: quiet at rest, inked and lifted on hover. */
 .foot-gh { display: inline-flex; align-items: center; color: var(--ink-3); transition: color .15s ease, transform .15s ease; }
 .foot-gh:hover { color: var(--ink); text-decoration: none; transform: translateY(-1px); }

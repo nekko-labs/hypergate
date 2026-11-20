@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useId, useRef, useMemo } from 'react';
+import { Fragment, useEffect, useState, useCallback, useId, useRef, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type {
   ServerStatus,
@@ -886,6 +886,16 @@ export function App() {
             Local-first · MIT · made with <Heart /> by Nekko Labs Community
           </span>
           <div className="spacer" style={{ flex: 1 }} />
+          {/* The bundled fonts' OFL notices, served by the daemon beside each font. */}
+          <span className="foot-licenses">
+            Font licenses:{' '}
+            {FONT_NOTICES.map(([name, file], i) => (
+              <Fragment key={file}>
+                {i > 0 && ' · '}
+                <a href={`/fonts/${file}`} target="_blank" rel="noreferrer">{name}</a>
+              </Fragment>
+            ))}
+          </span>
           <a
             className="foot-gh"
             href="https://github.com/nekko-labs/hypergate"
@@ -973,6 +983,13 @@ function CloseChoice() {
     </Dialog>
   );
 }
+
+/** Bundled fonts and their license notices in `public/fonts/` (see ASSETS.md). */
+const FONT_NOTICES: ReadonlyArray<readonly [string, string]> = [
+  ['Inter', 'Inter-OFL.txt'],
+  ['Space Grotesk', 'Space-Grotesk-OFL.txt'],
+  ['JetBrains Mono', 'JetBrains-Mono-OFL.txt'],
+];
 
 /** A small filled heart, standing in for the word "love" in the footer. */
 function Heart() {
