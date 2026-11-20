@@ -33,6 +33,7 @@ jobs:
       - run: npm run smoke:http
       - run: npm run smoke:features
       - run: npm run smoke:ambient
+      - run: npm run smoke:claims
 
   shell:
     name: shell (${{ matrix.os }})

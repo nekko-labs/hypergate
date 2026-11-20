@@ -138,6 +138,12 @@ export interface ToolInfo {
   description?: string;
   /** JSON Schema for the tool's arguments (used to render its parameters). */
   inputSchema?: unknown;
+  /**
+   * The server's own behavioural hints, as declared in `tools/list`. Self-declared:
+   * Hypergate passes them on and enforces read-only mode by them, but cannot
+   * verify a server's claim that a tool only reads.
+   */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean; title?: string };
 }
 
 /**
@@ -1022,6 +1028,14 @@ export interface UsageEvent {
   bytesOut: number;
   /** Error message when `ok` is false. */
   error?: string;
+  /**
+   * Set when the gateway refused the call itself, before it reached the server:
+   * `policy` = the caller's tool permissions do not allow it; `secret` = its
+   * arguments carried the value of a vault credential.
+   */
+  blocked?: 'policy' | 'secret';
+  /** The tool is not declared read-only by its server (MCP's default is destructive). */
+  destructive?: boolean;
 }
 
 /** Per-tool rollup for a server. */
@@ -1119,6 +1133,16 @@ export interface AgentClient {
    * agent gets no keys until someone hands them over explicitly.
    */
   credentials?: '*' | string[];
+  /**
+   * Tool-level limits inside the allowed servers. Absent = every tool of every
+   * allowed server. See {@link ToolPolicy}.
+   */
+  tools?: ToolPolicy;
+  /**
+   * `person` = a human teammate's token, the only kind the opt-in team listener
+   * accepts (see {@link TeamSettings}). Absent = an agent on this machine.
+   */
+  kind?: 'agent' | 'person';
   createdAt: string;
   /** Last time a call was attributed to this agent's token. */
   lastUsed?: string;
@@ -1134,18 +1158,102 @@ export interface AgentClient {
   target?: string;
 }
 
+/**
+ * Per-tool permissions for one agent or person, inside its server allow-list.
+ *
+ * `readOnly` admits only tools whose server declares `readOnlyHint: true`. MCP
+ * defaults that hint to false, so an unannotated tool is treated as able to
+ * change things and is hidden in read-only mode. The hint is the server's own
+ * claim; Hypergate enforces it but cannot verify it.
+ */
+export interface ToolPolicy {
+  readOnly?: boolean;
+  /** Namespaced `server__tool` names this caller may not list or call. */
+  blocked?: string[];
+}
+
+/** `POST /api/clients/:id/tools`: flip read-only, or one tool. */
+export interface SetAgentToolsRequest {
+  readOnly?: boolean;
+  /** Namespaced `server__tool`. */
+  tool?: string;
+  allowed?: boolean;
+}
+
 /** Request body to create an agent. */
 export interface CreateAgentRequest {
   name: string;
   servers: '*' | string[];
   /** Known harness this agent is for (a {@link ConnectTarget} id), if any. */
   target?: string;
+  /** `person` for a teammate reached over the team listener. */
+  kind?: 'agent' | 'person';
+}
+
+/**
+ * Something in the audit log worth a human's attention, derived by fixed rules
+ * (see core's `computeInsights`). No model is involved: each one names the rule
+ * that raised it, so it can be checked against the raw calls.
+ */
+export interface Insight {
+  id: string;
+  severity: 'high' | 'medium' | 'low';
+  /** Which rule raised it. */
+  rule: 'secret-blocked' | 'policy-probing' | 'first-destructive' | 'burst' | 'error-spike' | 'new-caller';
+  title: string;
+  detail: string;
+  client?: string;
+  serverId?: string;
+  tool?: string;
+  /** Most recent event that contributed. */
+  at: string;
+  count: number;
+}
+
+/** `GET /api/insights`. */
+export interface InsightsResponse {
+  windowHours: number;
+  insights: Insight[];
+  blocked: number;
+  destructive: number;
+}
+
+/**
+ * The opt-in team listener: a second HTTP listener on an address the user
+ * picks that serves only the MCP gateway, and only to `person` tokens. The
+ * management UI and API never leave loopback.
+ */
+export interface TeamSettings {
+  enabled: boolean;
+  /** Address to bind, e.g. a Tailscale `100.x.y.z` or a LAN address. */
+  host: string;
+  port: number;
+}
+
+/** One address the team listener could bind. */
+export interface TeamAddress {
+  address: string;
+  /** Interface name, e.g. "Tailscale" or "Ethernet". */
+  iface: string;
+  tailscale: boolean;
+}
+
+/** `GET /api/team` / `PUT /api/team`. */
+export interface TeamInfo extends TeamSettings {
+  /** Whether the listener is actually up. */
+  listening: boolean;
+  /** `http://host:port/mcp` while listening. */
+  url?: string;
+  /** Last bind error, if the listener failed to start. */
+  error?: string;
+  addresses: TeamAddress[];
 }
 
 /** Request body to update an agent (partial). */
 export interface UpdateAgentRequest {
   name?: string;
   servers?: '*' | string[];
+  tools?: ToolPolicy;
 }
 
 /**

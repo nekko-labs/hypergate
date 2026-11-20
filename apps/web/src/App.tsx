@@ -37,6 +37,9 @@ import type {
   UpdateProgress,
   InstallChannel,
   CloseAction,
+  InsightsResponse,
+  TeamInfo,
+  TeamSettings,
 } from '@hypergate/shared';
 import {
   CREDENTIAL_CATEGORIES,
@@ -64,11 +67,12 @@ import { AmbientPanel } from './components/AmbientPanel';
 import { AlertSettings } from './components/AlertSettings';
 
 type View = 'servers' | 'analytics' | 'settings';
-type ServerSection = 'agents' | 'mcp-servers' | 'cli' | 'credentials';
+type ServerSection = 'agents' | 'people' | 'mcp-servers' | 'cli' | 'credentials';
 type AnalyticsSection = 'overview' | 'usage-by-server' | 'callers' | 'tools' | 'security' | 'recent-calls';
 
 const SERVER_SECTIONS: { id: ServerSection; label: string }[] = [
   { id: 'agents', label: 'Connected agents' },
+  { id: 'people', label: 'People' },
   { id: 'mcp-servers', label: 'MCP servers' },
   { id: 'cli', label: 'CLI tools' },
   { id: 'credentials', label: 'Credentials' },
@@ -490,6 +494,12 @@ export function App() {
 
   const running = servers?.filter((s) => s.state === 'ready').length ?? 0;
   const tools = servers?.reduce((n, s) => n + s.tools.length, 0) ?? 0;
+  /** Teammates reached over the team listener live beside agents but are listed apart. */
+  const people = agents.filter((a) => a.kind === 'person');
+  const machineAgents = agents.filter((a) => a.kind !== 'person');
+  /** Bumped by the header's actions; each section opens its own adder when it changes. */
+  const [pickSignal, setPickSignal] = useState(0);
+  const [inviteSignal, setInviteSignal] = useState(0);
 
   // One-click OAuth remains for providers that support it. Token-auth entries
   // take the small credential dialog instead, because the token never belongs
@@ -719,28 +729,46 @@ export function App() {
             </div>
           )}
 
-          <main ref={viewRef} className={`view ${view === 'servers' ? 'servers-view' : ''}`}>
+          <main ref={viewRef} className={`view ${view === 'servers' ? 'servers-view' : view === 'settings' ? 'settings-view' : ''}`}>
             <ErrorBoundary key={view} surface={`${view} view`}>
               {view === 'servers' ? (
                 <>
-                <div className="pagehead">
+                {/* The user already has Hypergate: the header is what they can do
+                    here, not a pitch. Each action scrolls to its section and
+                    opens the adder there. */}
+                <div className="pagehead pagehead-actions">
                   <div className="pagehead-copy">
-                    <h1>Every MCP server. <span className="grad-text">One endpoint.</span></h1>
-                    <p>Connect your agents, choose what they can reach, and keep every local tool visible through one gateway.</p>
+                    <h1>Gateway</h1>
+                    <div className="summary">
+                      <b>{machineAgents.length}</b> agent{machineAgents.length === 1 ? '' : 's'}<span className="sep">·</span>
+                      <b>{people.length}</b> {people.length === 1 ? 'person' : 'people'}<span className="sep">·</span>
+                      <b>{running}</b> server{running === 1 ? '' : 's'} running<span className="sep">·</span>
+                      <b>{tools}</b> tools
+                    </div>
+                    <div className="quick-actions">
+                      <button className="btn btn-primary" onClick={() => { scrollToSection('agents'); setPickSignal((n) => n + 1); }}>
+                        <span aria-hidden="true">+</span> Connect an agent
+                      </button>
+                      <button className="btn btn-accent" onClick={() => { setShowCatalog(true); setAdding(null); scrollToSection('mcp-servers'); }}>
+                        <span aria-hidden="true">+</span> Add a server
+                      </button>
+                      <button className="btn" onClick={() => { scrollToSection('people'); setInviteSignal((n) => n + 1); }}>
+                        <span aria-hidden="true">+</span> Invite a person
+                      </button>
+                    </div>
                   </div>
                   <div className="pagehead-meta">
                     {gateway && <GatewayBar gateway={gateway} />}
-                    <div className="summary">
-                      <b>{agents.length}</b> agents<span className="sep">·</span>
-                      <b>{running}</b> running<span className="sep">·</span>
-                      <b>{tools}</b> tools
-                    </div>
                   </div>
                 </div>
 
                 <section id="agents" className="dashboard-section">
-                  <ConnectedAgents agents={agents} servers={servers ?? []} onChange={refreshAgents} />
+                  <ConnectedAgents agents={machineAgents} servers={servers ?? []} onChange={refreshAgents} openSignal={pickSignal} />
                   <AgentInstructionsSection token={gateway?.token} />
+                </section>
+
+                <section id="people" className="dashboard-section">
+                  <PeopleSection people={people} servers={servers ?? []} onChange={refreshAgents} openSignal={inviteSignal} onOpenSettings={() => openView('settings')} />
                 </section>
 
                 <section id="mcp-servers" className="dashboard-section">
@@ -2802,6 +2830,8 @@ function SettingsView({ gateway, version, u }: { gateway: GatewayInfo | null; ve
         {s ? <AlertSettings s={s} token={gateway?.token} onChange={setS} /> : <div className="list-row small muted">Loading…</div>}
       </div>
 
+      <TeamAccessSettings token={gateway?.token} />
+
       <div className="section-title">
         This daemon
         {version && <span className="rt"><span className="chip">v{version}</span></span>}
@@ -3012,6 +3042,12 @@ function AnalyticsView({ stats, servers, registry }: { stats: AnalyticsSummary |
     ...servers.filter((server) => registry.some((entry) => entry.id === server.id && entry.official === false)).map((server) => ({ severity: 'medium', label: 'Community server configured', detail: `${server.name} is published by a community namespace.` })),
     ...servers.filter((server) => server.runtime === 'remote' && (!server.auth || server.auth === 'none')).map((server) => ({ severity: 'medium', label: 'Remote server without auth', detail: `${server.name} has no configured authentication.` })),
   ];
+  // What the gateway itself saw: blocked keys, refusals, first destructive
+  // calls, bursts. Re-read whenever the call count moves.
+  const [insights, setInsights] = useState<InsightsResponse | null>(null);
+  useEffect(() => { void api.insights().then(setInsights).catch(() => {}); }, [stats?.totalCalls]);
+  const [copiedPrompt, copyPrompt] = useCopy();
+  const REVIEW_PROMPT = 'Use hypergate__audit_review and tell me what my agents did in the last day and whether anything needs my attention.';
 
   return (
     <>
@@ -3137,7 +3173,42 @@ function AnalyticsView({ stats, servers, registry }: { stats: AnalyticsSummary |
       )}
       </section>
       <section id="security" className="analytics-section">
-        <div className="section-title">Security</div>
+        <div className="section-title">
+          Security
+          <span className="rt">
+            {insights && <span className="small">{insights.blocked} blocked · {insights.destructive} writes · last 24h</span>}
+          </span>
+        </div>
+        <div className="callout review-callout">
+          <div className="ic" aria-hidden="true">✦</div>
+          <div>
+            <div className="t">Ask your own agent to review this</div>
+            <div className="d">
+              Hypergate flags what matters by fixed rules; an agent connected with access to all servers can read the full log through{' '}
+              <code className="mono">hypergate__audit_review</code> and explain it. No AI runs inside Hypergate.
+            </div>
+          </div>
+          <button className="btn sm btn-accent" onClick={() => copyPrompt('review', REVIEW_PROMPT)}>{copiedPrompt === 'review' ? 'Copied!' : 'Copy prompt'}</button>
+        </div>
+        <div className="panel insights-panel"><div className="list">
+          {!insights ? (
+            <div className="list-row small muted">Reading the audit log…</div>
+          ) : insights.insights.length === 0 ? (
+            <div className="list-row"><span className="chip chip-official">✓ Nothing stands out</span><span className="small muted" style={{ marginLeft: 8 }}>No blocked keys, refusals, bursts or first-time writes in the last 24 hours.</span></div>
+          ) : insights.insights.map((i) => (
+            <div key={i.id} className={`list-row insight insight-${i.severity}`}>
+              <div className="row between wrap-gap">
+                <div className="insight-head">
+                  <span className={`chip ${i.severity === 'high' ? 'chip-danger' : i.severity === 'medium' ? 'chip-warning' : ''}`}>{i.severity}</span>
+                  <span className="server-name">{i.title}</span>
+                </div>
+                <span className="small muted">{fmtRel(i.at)}</span>
+              </div>
+              <div className="small muted insight-detail">{i.detail}</div>
+            </div>
+          ))}
+        </div></div>
+        <div className="detail-label" style={{ marginTop: 16 }}>Configuration</div>
         <div className="panel"><div className="list">
           {risks.length === 0 ? <div className="list-row"><span className="chip chip-official">✓ No risks detected</span><span className="small muted">Usage and configured servers look calm.</span></div> : risks.map((risk, i) => (
             <div key={`${risk.label}-${i}`} className="list-row"><div className="row between wrap-gap"><div><span className={`chip ${risk.severity === 'high' ? 'chip-danger' : 'chip-warning'}`}>{risk.severity}</span><span className="server-name" style={{ marginLeft: 8 }}>{risk.label}</span></div><span className="small muted">{risk.detail}</span></div></div>
@@ -3727,9 +3798,11 @@ function AgentPicker({
  * `mcp add`, the exact command if you'd rather run it yourself, the snippet for
  * its config file, or the endpoint to paste into its settings.
  */
-function ConnectedAgents({ agents, servers, onChange }: { agents: AgentClientInfo[]; servers: ServerStatus[]; onChange: () => void }) {
+function ConnectedAgents({ agents, servers, onChange, openSignal = 0 }: { agents: AgentClientInfo[]; servers: ServerStatus[]; onChange: () => void; openSignal?: number }) {
   /** The catalog is open (from "+ Add agent"), or the custom-agent form is. */
   const [picking, setPicking] = useState(false);
+  // The page header's "Connect an agent" opens the picker from outside.
+  useEffect(() => { if (openSignal > 0) { setPicking(true); } }, [openSignal]);
   const [custom, setCustom] = useState<AgentClientInfo | 'new' | null>(null);
   /** Agent whose Connect panel is open, which client it opened on, and whether to install straight away. */
   const [connect, setConnect] = useState<{ id: string; target?: string; run?: boolean } | null>(null);
@@ -3929,14 +4002,17 @@ function AgentConnectDisclosure({
 }
 
 function AgentRow({
-  agent, servers, connect, onConnect, onChange,
+  agent, servers, connect, onConnect, onChange, teamUrl,
 }: {
   agent: AgentClientInfo;
   servers: ServerStatus[];
   connect: { id: string; target?: string; run?: boolean } | null;
   onConnect: () => void;
   onChange: () => void;
+  /** For a person: the team listener's URL, when team access is on. */
+  teamUrl?: string;
 }) {
+  const person = agent.kind === 'person';
   const [copied, copy] = useCopy();
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -3973,7 +4049,13 @@ function AgentRow({
       label={agent.name}
       head={
         <>
-          <AgentMark id={agent.target} name={agent.name} small />
+          {person ? (
+            <span className="ag-mark small person-mark" aria-hidden="true">
+              {agent.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('')}
+            </span>
+          ) : (
+            <AgentMark id={agent.target} name={agent.name} small />
+          )}
           {agent.target ? (
             <>
               <span className="server-name">{agent.name}</span>
@@ -4054,8 +4136,335 @@ function AgentRow({
         </div>
       </Block>
 
-      <AgentConnectDisclosure agent={agent} connect={connect} />
+      <ToolPermissions agent={agent} servers={servers} onChange={onChange} />
+
+      {person ? (
+        <Block label="Connect">
+          {teamUrl ? (
+            <div className="conn-fields">
+              <div className="conn-field">
+                <span className="small muted">URL</span>
+                <code className="mono">{teamUrl}</code>
+                <button className="btn sm" onClick={() => copy(`url-${agent.id}`, teamUrl)}>{copied === `url-${agent.id}` ? 'Copied!' : 'Copy'}</button>
+              </div>
+              <div className="conn-field">
+                <span className="small muted">Header</span>
+                <code className="mono">Authorization: Bearer ••••••</code>
+                <button className="btn sm" onClick={() => copy(`hdr-${agent.id}`, `Authorization: Bearer ${agent.token}`)}>{copied === `hdr-${agent.id}` ? 'Copied!' : 'Copy'}</button>
+              </div>
+              <span className="small muted">Send both to {agent.name} privately. Their agent adds an HTTP MCP server with this URL and header.</span>
+            </div>
+          ) : (
+            <span className="small muted">Team access is off, so this token only works on this machine. Turn it on in Settings to share the gateway.</span>
+          )}
+        </Block>
+      ) : (
+        <AgentConnectDisclosure agent={agent} connect={connect} />
+      )}
     </ExpandRow>
+  );
+}
+
+/**
+ * Tool-level permissions inside an agent's (or person's) allowed servers.
+ *
+ * One switch for read-only mode, then each allowed server's tools as chips that
+ * are both the state and the control, like the server chips above. Read-only is
+ * the server's own claim (`readOnlyHint`), and the copy says so: Hypergate can
+ * enforce it, not verify it.
+ */
+function ToolPermissions({ agent, servers, onChange }: { agent: AgentClientInfo; servers: ServerStatus[]; onChange: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [openServer, setOpenServer] = useState<string | null>(null);
+  const readOnly = agent.tools?.readOnly === true;
+  const blocked = new Set(agent.tools?.blocked ?? []);
+  const reachable = servers.filter((s) => agent.servers === '*' || agent.servers.includes(s.id));
+  const change = async (key: string, req: { readOnly?: boolean; tool?: string; allowed?: boolean }) => {
+    setBusy(key);
+    setErr(null);
+    try {
+      await api.setAgentTools(agent.id, req);
+    } catch {
+      setErr('Could not change that permission. Check the daemon logs.');
+    }
+    setBusy(null);
+    onChange();
+  };
+  const limits = (readOnly ? 1 : 0) + blocked.size;
+  return (
+    <Block label="Tools">
+      <div className="tool-perm">
+        <div className="setting-row tool-perm-ro">
+          <div className="setting-text">
+            <div className="tool-perm-title">Read-only tools only</div>
+            <div className="small muted">
+              Only tools their server declares read-only. That is the server's own claim; Hypergate enforces it but cannot verify it.
+            </div>
+          </div>
+          <button
+            className={`toggle sm ${readOnly ? 'on' : ''}`}
+            role="switch"
+            aria-checked={readOnly}
+            aria-label={`Read-only tools only for ${agent.name}`}
+            disabled={busy === 'ro'}
+            onClick={() => void change('ro', { readOnly: !readOnly })}
+          >
+            <span className="knob" />
+          </button>
+        </div>
+        {reachable.length > 0 && (
+          <div className="tool-perm-servers">
+            {reachable.map((s) => {
+              const details: ToolInfo[] = s.toolDetails ?? s.tools.map((name) => ({ name }));
+              const off = details.filter((t) => blocked.has(`${s.id}__${t.name}`) || (readOnly && t.annotations?.readOnlyHint !== true)).length;
+              const isOpen = openServer === s.id;
+              return (
+                <div key={s.id} className="tool-perm-server">
+                  <button className="tool-perm-head" aria-expanded={isOpen} onClick={() => setOpenServer(isOpen ? null : s.id)}>
+                    <Caret open={isOpen} />
+                    <span className="tool-perm-name">{s.name}</span>
+                    <span className="small muted">
+                      {details.length - off}/{details.length} tools
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="perm-row tool-perm-chips">
+                      {details.length === 0 && <span className="small muted">This server reports no tools yet.</span>}
+                      {details.map((t) => {
+                        const full = `${s.id}__${t.name}`;
+                        const ro = t.annotations?.readOnlyHint === true;
+                        const hiddenByMode = readOnly && !ro;
+                        const on = !blocked.has(full) && !hiddenByMode;
+                        return (
+                          <button
+                            key={full}
+                            className={`chip chip-toggle ${on ? 'on' : 'off'}`}
+                            aria-pressed={on}
+                            disabled={busy === full || hiddenByMode}
+                            title={
+                              hiddenByMode
+                                ? `${t.name} is not declared read-only, so read-only mode hides it`
+                                : on
+                                  ? `Click to block ${t.name} for ${agent.name}`
+                                  : `Click to allow ${t.name} for ${agent.name}`
+                            }
+                            onClick={() => void change(full, { tool: full, allowed: !on })}
+                          >
+                            {on ? '✓' : '✕'} {t.name}
+                            {!ro && <span className="tool-perm-flag" title="Not declared read-only: may change things">writes</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {limits === 0 && reachable.length > 0 && <span className="small muted">Every tool of every allowed server.</span>}
+        {err && <span className="small" style={{ color: 'var(--danger)' }}>{err}</span>}
+      </div>
+    </Block>
+  );
+}
+
+/**
+ * People: teammates who reach this gateway over the opt-in team listener.
+ *
+ * A person is scoped exactly like an agent (servers, then tools) but has no
+ * harness to connect; they get a URL and a token, and only while team access
+ * is on. Their token is refused for the vault, installs and the audit log.
+ */
+function PeopleSection({
+  people, servers, onChange, openSignal = 0, onOpenSettings,
+}: {
+  people: AgentClientInfo[];
+  servers: ServerStatus[];
+  onChange: () => void;
+  openSignal?: number;
+  onOpenSettings: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [team, setTeam] = useState<TeamInfo | null>(null);
+  useEffect(() => { void api.team().then(setTeam).catch(() => {}); }, [people.length]);
+  useEffect(() => { if (openSignal > 0) setAdding(true); }, [openSignal]);
+  const add = async () => {
+    const n = name.trim();
+    if (!n) return;
+    setBusy(true);
+    setErr(null);
+    // A person starts with no servers: sharing is opted into server by server.
+    const made = await api.addClient({ name: n, servers: [], kind: 'person' }).catch(() => null);
+    setBusy(false);
+    if (!made) { setErr('Could not add that person. Check the daemon logs.'); return; }
+    setName('');
+    setAdding(false);
+    onChange();
+  };
+  return (
+    <>
+      <div className="section-title">
+        People
+        <span className="rt">
+          <button className={`btn sm ${adding ? '' : 'btn-accent'}`} onClick={() => { setAdding((v) => !v); setErr(null); }}>
+            {adding ? 'Close' : '+ Invite a person'}
+          </button>
+        </span>
+      </div>
+      <div className={`team-status ${team?.listening ? 'on' : ''}`}>
+        <span className="team-status-dot" aria-hidden="true" />
+        {team?.listening ? (
+          <span>Team access is on at <code className="mono">{team.url}</code>. People's tokens work there; nothing else does.</span>
+        ) : (
+          <span>Team access is off: only this machine can reach the gateway.{' '}
+            <button className="btn sm btn-ghost" onClick={onOpenSettings}>Set up team access</button>
+          </span>
+        )}
+      </div>
+      {adding && (
+        <div className="panel panel-form">
+          <div className="row wrap-gap">
+            <input
+              autoFocus
+              placeholder="Their name, e.g. Ada"
+              value={name}
+              aria-label="Person's name"
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void add(); }}
+            />
+            <button className="btn btn-primary" disabled={busy || !name.trim()} onClick={() => void add()}>Add person</button>
+            <span className="small muted">They start with no servers. Allow the ones you want to share.</span>
+          </div>
+          {err && <div className="small" style={{ color: 'var(--danger)', marginTop: 8 }}>{err}</div>}
+        </div>
+      )}
+      {people.length > 0 ? (
+        <div className="panel"><div className="list">
+          {people.map((p) => (
+            <AgentRow key={p.id} agent={p} servers={servers} connect={null} onConnect={() => {}} onChange={onChange} teamUrl={team?.url} />
+          ))}
+        </div></div>
+      ) : !adding ? (
+        <div className="panel"><div className="empty">
+          <b>No one else yet.</b>
+          <div className="small">Invite a teammate to give them their own token, scoped to the servers and tools you choose.</div>
+        </div></div>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Settings > Team access: the one switch that opens a port to the network.
+ *
+ * Off by default. On, a second listener on the address chosen here serves the
+ * gateway alone, to people's tokens alone. A Tailscale address is offered first
+ * because the listener is plain HTTP and Tailscale encrypts the hop.
+ */
+function TeamAccessSettings({ token }: { token?: string }) {
+  const [t, setT] = useState<TeamInfo | null>(null);
+  const [host, setHost] = useState('');
+  const [port, setPort] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [copied, copy] = useCopy();
+  useEffect(() => {
+    void api.team().then((info) => {
+      setT(info);
+      setHost(info.host || info.addresses[0]?.address || '');
+      setPort(String(info.port));
+    }).catch(() => setErr('Could not load team access settings.'));
+  }, []);
+  const save = async (patch: Partial<TeamSettings>) => {
+    if (!token) { setErr('No gateway token, reload the page.'); return; }
+    setBusy(true);
+    setErr(null);
+    try {
+      setT(await api.setTeam(token, patch));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not save team access.');
+    }
+    setBusy(false);
+  };
+  const chosen = t?.addresses.find((a) => a.address === host);
+  return (
+    <>
+      <div className="section-title">Team access</div>
+      <p className="small muted section-sub">
+        Share this gateway with teammates. When on, Hypergate also listens on one network address you pick, and that
+        address answers only the MCP gateway and only to the tokens of people you add under Servers, People. Your
+        agents' tokens, the vault and this manager stay on this machine.
+      </p>
+      <div className="panel">
+        {!t ? (
+          <div className="list-row small muted">{err ?? 'Loading…'}</div>
+        ) : (
+          <div className="list">
+            <div className="list-row">
+              <div className="setting-row">
+                <div className="setting-text">
+                  <div className="setting-label">Share the gateway with people</div>
+                  <div className="small muted">
+                    {t.listening && t.url ? (
+                      <>Listening at <code className="mono">{t.url}</code>{' '}
+                        <button className="btn sm btn-ghost" onClick={() => copy('team-url', t.url!)}>{copied === 'team-url' ? 'Copied!' : 'Copy'}</button>
+                      </>
+                    ) : t.error ? (
+                      <span style={{ color: 'var(--danger)' }}>Could not listen: {t.error}</span>
+                    ) : (
+                      'Off. Only this machine can reach the gateway.'
+                    )}
+                  </div>
+                </div>
+                <button
+                  className={`toggle ${t.enabled ? 'on' : ''}`}
+                  role="switch"
+                  aria-checked={t.enabled}
+                  aria-label="Share the gateway with people"
+                  disabled={busy || (!t.enabled && !host)}
+                  onClick={() => void save({ enabled: !t.enabled, host, port: Number(port) })}
+                >
+                  <span className="knob" />
+                </button>
+              </div>
+            </div>
+            <div className="list-row">
+              <div className="row wrap-gap team-fields">
+                <label className="field">
+                  Address
+                  <select value={host} onChange={(e) => setHost(e.target.value)} disabled={busy}>
+                    {t.addresses.length === 0 && <option value="">No network address found</option>}
+                    {t.addresses.map((a) => (
+                      <option key={a.address} value={a.address}>
+                        {a.address} ({a.tailscale ? 'Tailscale, recommended' : a.iface})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  Port
+                  <input className="mono" value={port} inputMode="numeric" size={6} onChange={(e) => setPort(e.target.value.replace(/\D/g, ''))} disabled={busy} />
+                </label>
+                {(host !== t.host || Number(port) !== t.port) && t.enabled && (
+                  <button className="btn btn-primary" disabled={busy || !host} onClick={() => void save({ host, port: Number(port) })}>Apply</button>
+                )}
+              </div>
+              <div className="small muted" style={{ marginTop: 8 }}>
+                {chosen?.tailscale
+                  ? 'Tailscale encrypts traffic between devices on your tailnet, so tokens are not readable on the way.'
+                  : 'This listener is plain HTTP. On a shared network a token can be read in transit; prefer a Tailscale address where you can.'}
+              </div>
+              {err && <div className="small" style={{ color: 'var(--danger)', marginTop: 6 }}>{err}</div>}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 

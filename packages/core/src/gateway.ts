@@ -1,7 +1,10 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { Tool, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import type { ToolPolicy } from '@hypergate/shared';
 import type { Supervisor } from './supervisor.js';
+import { isDestructive, toolAllowed, type ToolHints } from './policy.js';
+import type { SecretGuard } from './guard.js';
 
 /** Separator between a server id and its tool name in the aggregated namespace. */
 export const NS = '__';
@@ -130,6 +133,10 @@ export function createGateway(
     builtins?: GatewayBuiltinTool[];
     /** Overrides the default instructions (see `gatewayInstructions`). */
     instructions?: string;
+    /** Tool-level limits inside the allowed servers (see `toolAllowed`). */
+    toolPolicy?: ToolPolicy;
+    /** Refuses calls carrying a vault value and redacts them from results. */
+    guard?: SecretGuard;
   } = {},
 ): Server {
   const server = new Server(info, { capabilities: { tools: {} }, instructions: opts.instructions ?? GATEWAY_INSTRUCTIONS });
@@ -146,7 +153,14 @@ export function createGateway(
     }
   };
 
-  const record = (tool: string, serverId: string, serverName: string, startedAt: number, args: unknown) =>
+  const record = (
+    tool: string,
+    serverId: string,
+    serverName: string,
+    startedAt: number,
+    args: unknown,
+    extra: { blocked?: 'policy' | 'secret'; destructive?: boolean } = {},
+  ) =>
     (ok: boolean, bytesOut: number, error?: string): void =>
       supervisor.record({
         at: new Date().toISOString(),
@@ -159,7 +173,12 @@ export function createGateway(
         bytesIn: bytes(args),
         bytesOut,
         error,
+        ...(extra.blocked ? { blocked: extra.blocked } : {}),
+        ...(extra.destructive ? { destructive: true } : {}),
       });
+  /** The server's declared hints for one of its tools, from the supervisor's last `tools/list`. */
+  const hintsFor = (serverId: string, tool: string): ToolHints | undefined =>
+    supervisor.status(serverId)?.toolDetails?.find((t) => t.name === tool)?.annotations;
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const tools: Tool[] = builtins.map((t) => ({
@@ -176,6 +195,9 @@ export function createGateway(
       try {
         const res = await client.listTools();
         for (const t of res.tools) {
+          // A tool the caller may not call is not listed either: hiding it keeps
+          // the agent from planning around something it will be refused.
+          if (!toolAllowed(opts.toolPolicy, id, t.name, t.annotations).ok) continue;
           // Spread first, then override only what the namespace rewrites.
           // Everything a tool carries beyond name/description/inputSchema —
           // `annotations`, `outputSchema`, `icons`, `_meta` — belongs to the
@@ -234,10 +256,29 @@ export function createGateway(
     if (!allowed(id)) throw new Error(`Not permitted: this client may not call server "${id}".`);
     const client = supervisor.client(id);
     if (!client) throw new Error(`Server "${id}" is not ready.`);
+    const serverName = supervisor.status(id)?.name ?? id;
+    const hints = hintsFor(id, name);
+    const destructive = isDestructive(hints);
 
-    const done = record(name, id, supervisor.status(id)?.name ?? id, Date.now(), args);
+    // Tool-level permission. Recorded, because a refusal is exactly the kind of
+    // thing the audit log is for.
+    const decision = toolAllowed(opts.toolPolicy, id, name, hints);
+    if (!decision.ok) {
+      record(name, id, serverName, Date.now(), args, { blocked: 'policy', destructive })(false, 0, decision.reason);
+      throw new Error(`Not permitted: ${decision.reason}.`);
+    }
+    // A vault key must not leave through a tool call's arguments.
+    const leaked = opts.guard?.findInArgs(args);
+    if (leaked) {
+      const why = `the arguments contain the value of vault credential "${leaked}"`;
+      record(name, id, serverName, Date.now(), {}, { blocked: 'secret', destructive })(false, 0, why);
+      throw new Error(`Blocked by Hypergate: ${why}. Keys in the vault are never sent to a server through a tool call.`);
+    }
+
+    const done = record(name, id, serverName, Date.now(), args, { destructive });
     try {
-      const res = await client.callTool({ name, arguments: args });
+      const raw = await client.callTool({ name, arguments: args });
+      const res = opts.guard ? opts.guard.redact(raw) : raw;
       const isErr = !!(res && typeof res === 'object' && (res as { isError?: boolean }).isError);
       done(!isErr, bytes(res), isErr ? 'tool reported an error' : undefined);
       return res as never;

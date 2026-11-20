@@ -373,7 +373,13 @@ const probeAdd = await (await fetch(`${BASE}/api/servers`, {
 })).json();
 if (probeAdd.state !== 'ready') fail(`envprobe not ready: ${JSON.stringify(probeAdd)}`);
 const probeEnv = await mcp(master, 'tools/call', { name: 'envprobe__env', arguments: { name: 'SMOKE_TOKEN' } });
-if (probeEnv.body?.result?.content?.[0]?.text !== SECRET_VALUE) fail(`credentialRefs did not reach the child env: ${JSON.stringify(probeEnv.body)}`);
+// The probe echoes the value back, and the secret guard redacts any vault value
+// from a tool result before the caller sees it. The redaction marker is still
+// proof of injection: the guard only replaces an exact vault value, so seeing
+// it means the child returned SECRET_VALUE verbatim.
+const probeText = probeEnv.body?.result?.content?.[0]?.text;
+if (probeText === SECRET_VALUE) fail('a vault value came back unredacted in a tool result');
+if (probeText !== '[redacted by Hypergate]') fail(`credentialRefs did not reach the child env: ${JSON.stringify(probeEnv.body)}`);
 const { readFileSync } = await import('node:fs');
 if (readFileSync(join(DIR, 'servers.json'), 'utf8').includes(SECRET_VALUE)) fail('servers.json contains the secret value');
 ok('a credentialRefs entry reaches the spawned server env; servers.json holds only the reference');
@@ -685,7 +691,10 @@ const rolledCred = await (await fetch(`${BASE}/api/credentials/${cred.id}/roll`,
 })).json();
 if (!rolledCred.rotatedAt || !(rolledCred.restarted ?? []).includes('envprobe')) fail(`roll should stamp rotatedAt and restart envprobe: ${JSON.stringify(rolledCred)}`);
 const probeEnv2 = await mcp(master, 'tools/call', { name: 'envprobe__env', arguments: { name: 'SMOKE_TOKEN' } });
-if (probeEnv2.body?.result?.content?.[0]?.text !== ROLLED_VALUE) fail(`the restarted server should see the rolled value: ${JSON.stringify(probeEnv2.body)}`);
+// Redacted means the child returned a value the vault holds now. After the roll
+// that is only ROLLED_VALUE: a server still on the old value would get it back
+// verbatim, because the guard no longer knows it.
+if (probeEnv2.body?.result?.content?.[0]?.text !== '[redacted by Hypergate]') fail(`the restarted server should see the rolled value: ${JSON.stringify(probeEnv2.body)}`);
 ok('rolling replaces the value and restarts the servers that reference it');
 
 // Delete means deleted: value, grants, and server references all go.

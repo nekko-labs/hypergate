@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, renameSync, rmSync } from 'node:fs';
 import { join, extname, dirname, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -56,6 +56,10 @@ import {
   isValidEnvVar,
   setCredentialAllowed,
   type GatewayBuiltinTool,
+  createSecretGuard,
+  computeInsights,
+  updatePolicy,
+  type SecretRef,
   assetsFromGithub,
   assetsFromNpm,
   detectInstallChannel,
@@ -101,6 +105,12 @@ import {
 } from '@hypergate/core';
 import type {
   CredentialMeta,
+  InsightsResponse,
+  SetAgentToolsRequest,
+  TeamAddress,
+  TeamInfo,
+  TeamSettings,
+  UsageEvent,
   LockdownStatus,
   SetCredentialProgramsRequest,
   SetLockdownRequest,
@@ -197,7 +207,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.29.0';
+const VERSION = '1.30.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -1020,6 +1030,30 @@ const vault = new CredentialVault(DATA_DIR, {
   set: (k, v) => shell.secretSet(k, v),
   delete: (k) => shell.secretDelete(k),
 });
+
+/**
+ * The secret guard's view of the vault: every value, by credential name.
+ *
+ * Reading a value can mean a keychain round trip, so the set is cached and
+ * re-read only when the vault's metadata changes (a credential added, rolled
+ * or deleted changes its id list or `rotatedAt`) or after a minute, whichever
+ * comes first. Values never leave this closure except as the guard's matches.
+ */
+let secretCache: { sig: string; at: number; refs: SecretRef[] } | undefined;
+const vaultSecrets = (): SecretRef[] => {
+  const metas = vault.list();
+  const sig = metas.map((m) => `${m.id}:${m.rotatedAt ?? m.createdAt}`).join('|');
+  if (secretCache && secretCache.sig === sig && Date.now() - secretCache.at < 60_000) return secretCache.refs;
+  const refs: SecretRef[] = [];
+  for (const m of metas) {
+    const value = vault.value(m.id);
+    if (value) refs.push({ label: m.name, value });
+  }
+  secretCache = { sig, at: Date.now(), refs };
+  return refs;
+};
+/** Refuses tool calls carrying a vault value; redacts vault values from results. */
+const secretGuard = createSecretGuard(vaultSecrets);
 
 /**
  * Pending access requests. See requests.ts for why this is memory rather than a
@@ -2032,6 +2066,7 @@ if (STDIO_MODE) {
         caller: 'stdio (local)',
         builtins: [...credentialBuiltins('*'), ...cliBuiltins()],
         instructions: gatewayInstructions({ lockdown: lockdownOn() }),
+        guard: secretGuard,
       },
     );
     await gateway.connect(new StdioServerTransport());
@@ -2060,6 +2095,78 @@ if (STDIO_MODE) {
     }
   };
   persistAnalytics = debounce(flushStore, 2000);
+
+  /**
+   * The audit log for the last `hours`, plus enough before it to tell a new
+   * caller or a first destructive call from a familiar one. Flushes first so a
+   * call made a second ago is already in it.
+   */
+  const auditEvents = (hours: number): UsageEvent[] => {
+    flushStore();
+    const since = new Date(Date.now() - Math.max(hours, 24 * 7) * 3_600_000).toISOString();
+    if (store) return store.events({ since, limit: 5000 });
+    return supervisor.snapshot().events.filter((e) => e.at >= since);
+  };
+  const insightsFor = (hours: number): InsightsResponse => {
+    const events = auditEvents(hours);
+    const cutoff = Date.now() - hours * 3_600_000;
+    const recent = events.filter((e) => Date.parse(e.at) >= cutoff);
+    return {
+      windowHours: hours,
+      insights: computeInsights(events, { windowHours: hours }),
+      blocked: recent.filter((e) => e.blocked).length,
+      destructive: recent.filter((e) => e.destructive && !e.blocked).length,
+    };
+  };
+
+  /**
+   * `hypergate__audit_review`: the audit log, condensed for the agent the user
+   * already runs. Hypergate decides what is worth reading (fixed rules); the
+   * agent reads it and explains it. No model is called by the daemon.
+   */
+  const auditBuiltins = (): GatewayBuiltinTool[] => [
+    {
+      name: 'audit_review',
+      title: 'Review the audit log',
+      description:
+        "Summarise what every agent and person did through this Hypergate gateway: calls per caller, tools that can change things, calls Hypergate blocked (a vault key in the arguments, or a tool the caller is not allowed), and rule-based insights. Call it when the user asks what their agents have been doing or whether anything looks wrong, then tell them what matters in a few sentences, most important first. Say plainly when nothing stands out.",
+      inputSchema: {
+        type: 'object',
+        properties: { hours: { type: 'number', description: 'How far back to look, in hours (default 24, max 168).' } },
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      call: (args) => {
+        const hours = Math.min(168, Math.max(1, Number(args.hours) || 24));
+        const cutoff = Date.now() - hours * 3_600_000;
+        const events = auditEvents(hours).filter((e) => Date.parse(e.at) >= cutoff);
+        const callers = new Map<string, { calls: number; errors: number; blocked: number; destructive: number; servers: Set<string> }>();
+        for (const e of events) {
+          const c = callers.get(e.client) ?? { calls: 0, errors: 0, blocked: 0, destructive: 0, servers: new Set<string>() };
+          c.calls++;
+          if (!e.ok && !e.blocked) c.errors++;
+          if (e.blocked) c.blocked++;
+          if (e.destructive && !e.blocked) c.destructive++;
+          c.servers.add(e.serverId);
+          callers.set(e.client, c);
+        }
+        const brief = (e: UsageEvent) => ({ at: e.at, caller: e.client, tool: `${e.serverId}__${e.tool}`, ...(e.error ? { reason: e.error } : {}) });
+        return {
+          window: `last ${hours}h`,
+          totals: {
+            calls: events.length,
+            errors: events.filter((e) => !e.ok && !e.blocked).length,
+            blocked: events.filter((e) => e.blocked).length,
+            destructive: events.filter((e) => e.destructive && !e.blocked).length,
+          },
+          insights: insightsFor(hours).insights.map(({ severity, title, detail, count }) => ({ severity, title, detail, count })),
+          callers: [...callers.entries()].map(([name, c]) => ({ name, calls: c.calls, errors: c.errors, blocked: c.blocked, destructive: c.destructive, servers: [...c.servers] })),
+          blockedCalls: events.filter((e) => e.blocked).slice(0, 20).map(brief),
+          destructiveCalls: events.filter((e) => e.destructive && !e.blocked).slice(0, 20).map(brief),
+          note: 'Destructive means the server did not declare the tool read-only; it is the server’s own claim. Blocked calls never reached a server.',
+        };
+      },
+    },
+  ];
 
   // Age off old rows on boot, then once a day for a long-running daemon.
   store?.prune();
@@ -2338,8 +2445,27 @@ if (STDIO_MODE) {
     res.end(`hypergated ${VERSION} — build the web UI (npm run build) to serve it here.\n`);
   };
 
-  const server = createServer(async (req, res) => {
-    if (!isAllowedHost(req.headers.host)) {
+  /**
+   * One handler for both listeners. `via` says which one a request came in on:
+   * `local` is the loopback listener (UI, API, gateway), `team` is the opt-in
+   * team listener, which serves the gateway alone and only to person tokens.
+   */
+  const handle = async (req: IncomingMessage, res: ServerResponse, via: 'local' | 'team'): Promise<unknown> => {
+    if (via === 'team') {
+      const p = new URL(req.url ?? '/', 'http://team').pathname;
+      if (p !== '/mcp') return json(res, 404, { error: 'not_found' });
+      // The bearer token is the gate here, not the Host header: a teammate's
+      // client legitimately names this machine by its LAN or tailnet address.
+      // Only a person token gets through; the master and agent tokens, which
+      // can reach the vault, installs and management, never work off-machine.
+      if (req.method !== 'OPTIONS') {
+        const scope = authScope(req);
+        if (!scope || scope.kind !== 'agent' || scope.agent.kind !== 'person') {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          return json(res, 401, { error: 'unauthorized', hint: 'the team address accepts person tokens only' });
+        }
+      }
+    } else if (!isAllowedHost(req.headers.host)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'invalid_host' }));
     }
@@ -2378,6 +2504,7 @@ if (STDIO_MODE) {
         // Who to file an access request as. Agent-scoped callers only: a master
         // caller is never refused, so it has nothing to request.
         let asker: { id: string; name: string } | undefined;
+        let builtins: GatewayBuiltinTool[];
         if (scope.kind === 'agent') {
           caller = scope.agent.name;
           const allow = scope.agent.servers;
@@ -2387,9 +2514,23 @@ if (STDIO_MODE) {
           asker = { id: scope.agent.id, name: scope.agent.name };
           scope.agent.lastUsed = new Date().toISOString();
           persistClients();
+          builtins =
+            scope.agent.kind === 'person'
+              ? // A teammate gets the servers they were given and nothing that
+                // reaches into this machine: no vault, no installs, no audit log.
+                []
+              : [
+                  ...credentialBuiltins(credScope, asker),
+                  ...cliBuiltins(asker),
+                  ...serverBuiltins(asker),
+                  // The audit log describes every other caller's activity, so it
+                  // is for agents trusted with everything, not a scoped one.
+                  ...(allow === '*' && !scope.agent.tools ? auditBuiltins() : []),
+                ];
         } else {
           caller = callerFor(req, body);
           credScope = '*';
+          builtins = [...credentialBuiltins(credScope), ...cliBuiltins(), ...serverBuiltins(), ...auditBuiltins()];
         }
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
         const gateway = createGateway(
@@ -2398,8 +2539,10 @@ if (STDIO_MODE) {
           {
             caller,
             allowServer,
-            builtins: [...credentialBuiltins(credScope, asker), ...cliBuiltins(asker), ...serverBuiltins(asker)],
+            builtins,
             instructions: gatewayInstructions({ lockdown: lockdownOn() }),
+            toolPolicy: scope.kind === 'agent' ? scope.agent.tools : undefined,
+            guard: secretGuard,
           },
         );
         res.on('close', () => {
@@ -3269,9 +3412,10 @@ if (STDIO_MODE) {
     if (pathname === '/api/clients' && req.method === 'GET') return json(res, 200, clients.map(agentInfo));
     if (pathname === '/api/clients' && req.method === 'POST') {
       try {
-        const b = JSON.parse(await readBody(req)) as { name?: string; servers?: unknown; target?: unknown };
+        const b = JSON.parse(await readBody(req)) as { name?: string; servers?: unknown; target?: unknown; kind?: unknown };
+        const person = b.kind === 'person';
         // A known harness names itself; only a custom agent needs a name typed.
-        const picked = typeof b.target === 'string' ? connectTarget(b.target) : undefined;
+        const picked = !person && typeof b.target === 'string' ? connectTarget(b.target) : undefined;
         const name = ((b.name ?? '') || (picked?.name ?? '')).trim();
         if (!name) return json(res, 400, { error: 'name required' });
         const agent: AgentClient = {
@@ -3283,6 +3427,7 @@ if (STDIO_MODE) {
           // Only a target we actually know: the UI shows an official agent's
           // name as unchangeable, so an unrecognised id must not confer that.
           ...(picked ? { target: picked.id } : {}),
+          ...(person ? { kind: 'person' as const } : {}),
         };
         clients.push(agent);
         saveClients(clients);
@@ -3457,6 +3602,33 @@ if (STDIO_MODE) {
       } catch {
         return json(res, 400, { error: 'invalid_json' });
       }
+    }
+
+    // Tool-level permissions for one agent or person: read-only mode, or one
+    // tool on or off. Same shape of reasoning as the server flip above: the
+    // daemon applies the change to the live record, so the next request sees it.
+    const toolsM = /^\/api\/clients\/([^/]+)\/tools$/.exec(pathname);
+    if (toolsM && req.method === 'POST') {
+      const agent = clients.find((c) => c.id === toolsM[1]);
+      if (!agent) return json(res, 404, { error: 'not_found' });
+      try {
+        const b = JSON.parse(await readBody(req)) as SetAgentToolsRequest;
+        const hasReadOnly = typeof b.readOnly === 'boolean';
+        const hasTool = typeof b.tool === 'string' && typeof b.allowed === 'boolean';
+        if (!hasReadOnly && !hasTool) return json(res, 400, { error: 'send readOnly, or tool + allowed' });
+        if (hasTool && !/^[^_]+(?:_[^_]+)*__.+$/.test(b.tool!)) return json(res, 400, { error: 'tool must be "<server>__<tool>"' });
+        agent.tools = updatePolicy(agent.tools, { readOnly: b.readOnly, tool: b.tool, allowed: b.allowed });
+        if (!agent.tools) delete agent.tools;
+        saveClients(clients);
+        return json(res, 200, agentInfo(agent));
+      } catch {
+        return json(res, 400, { error: 'invalid_json' });
+      }
+    }
+
+    if (pathname === '/api/insights' && req.method === 'GET') {
+      const hours = Math.min(168, Math.max(1, Number(url.searchParams.get('hours')) || 24));
+      return json(res, 200, insightsFor(hours));
     }
 
     const agentTokenM = /^\/api\/clients\/([^/]+)\/token$/.exec(pathname);
@@ -3716,10 +3888,108 @@ if (STDIO_MODE) {
       return json(res, 200, statusFor(cfg));
     }
 
+    // ── team access: the opt-in second listener ─────────────────────────────
+    if (pathname === '/api/team' && req.method === 'GET') return json(res, 200, teamInfo());
+    if (pathname === '/api/team' && req.method === 'PUT') {
+      // Opening a port to the network is the most consequential switch in the
+      // app, so it takes the master token on top of the same-origin guard.
+      if (authScope(req)?.kind !== 'master') return json(res, 401, { error: 'unauthorized' });
+      try {
+        const b = JSON.parse(await readBody(req)) as Partial<TeamSettings>;
+        const next: TeamSettings = { ...team };
+        if (typeof b.enabled === 'boolean') next.enabled = b.enabled;
+        if (typeof b.host === 'string') next.host = b.host.trim();
+        if (b.port !== undefined) {
+          const port = Number(b.port);
+          if (!Number.isInteger(port) || port < 1024 || port > 65535 || port === PORT) {
+            return json(res, 400, { error: `port must be 1024-65535 and not ${PORT}` });
+          }
+          next.port = port;
+        }
+        if (next.enabled && !next.host) return json(res, 400, { error: 'pick an address to listen on' });
+        // Loopback would be pointless (the main listener already is), and a
+        // wildcard would expose the gateway on every interface including ones
+        // the user did not think about. Name one address.
+        if (next.host && ['0.0.0.0', '::', '127.0.0.1', '::1', 'localhost'].includes(next.host)) {
+          return json(res, 400, { error: 'choose a specific network address, not a wildcard or loopback' });
+        }
+        team = next;
+        saveTeam(team);
+        await applyTeam();
+        return json(res, 200, teamInfo());
+      } catch (e) {
+        return json(res, 400, { error: e instanceof Error ? e.message : 'invalid_json' });
+      }
+    }
+
     if (pathname.startsWith('/api/')) return json(res, 404, { error: 'not_found' });
     // Anything else is the web UI.
     return serveUi(res, pathname);
+  };
+  const server = createServer((req, res) => void handle(req, res, 'local'));
+
+  // ── the team listener ─────────────────────────────────────────────────────
+  // Off by default. When on, a second server on one address the user picked
+  // serves only POST /mcp, and only to person tokens (see `handle`). Plain
+  // HTTP: on a LAN a token can be sniffed, which is why the UI recommends a
+  // Tailscale address, where the tunnel is encrypted.
+  const TEAM_PATH = join(DATA_DIR, 'team.json');
+  const loadTeam = (): TeamSettings => {
+    try {
+      const t = JSON.parse(readFileSync(TEAM_PATH, 'utf8')) as Partial<TeamSettings>;
+      return { enabled: t.enabled === true, host: typeof t.host === 'string' ? t.host : '', port: Number(t.port) || PORT + 10 };
+    } catch {
+      return { enabled: false, host: '', port: PORT + 10 };
+    }
+  };
+  const saveTeam = (t: TeamSettings): void => {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(TEAM_PATH, JSON.stringify(t, null, 2));
+  };
+  let team = loadTeam();
+  let teamServer: ReturnType<typeof createServer> | undefined;
+  let teamError: string | undefined;
+  const teamAddresses = (): TeamAddress[] => {
+    const out: TeamAddress[] = [];
+    for (const [iface, addrs] of Object.entries(networkInterfaces())) {
+      for (const a of addrs ?? []) {
+        if (a.internal || a.family !== 'IPv4') continue;
+        const [o1, o2] = a.address.split('.').map(Number);
+        // Tailscale hands out addresses from the CGNAT range 100.64.0.0/10.
+        const tailscale = /tailscale/i.test(iface) || (o1 === 100 && o2! >= 64 && o2! <= 127);
+        out.push({ address: a.address, iface, tailscale });
+      }
+    }
+    return out.sort((a, b) => Number(b.tailscale) - Number(a.tailscale));
+  };
+  const teamInfo = (): TeamInfo => ({
+    ...team,
+    listening: Boolean(teamServer?.listening),
+    ...(teamServer?.listening ? { url: `http://${team.host}:${team.port}/mcp` } : {}),
+    ...(teamError ? { error: teamError } : {}),
+    addresses: teamAddresses(),
   });
+  const applyTeam = async (): Promise<void> => {
+    if (teamServer) {
+      const old = teamServer;
+      teamServer = undefined;
+      await new Promise<void>((r) => old.close(() => r()));
+    }
+    teamError = undefined;
+    if (!team.enabled || !team.host) return;
+    const srv = createServer((req, res) => void handle(req, res, 'team'));
+    await new Promise<void>((resolveListen) => {
+      srv.once('error', (e) => {
+        teamError = e instanceof Error ? e.message : String(e);
+        resolveListen();
+      });
+      srv.listen(team.port, team.host, () => {
+        teamServer = srv;
+        process.stdout.write(`hypergated team access on http://${team.host}:${team.port}/mcp (person tokens only)\n`);
+        resolveListen();
+      });
+    });
+  };
   /**
    * Take the daemon down cleanly. Idempotent, because the response callback that
    * triggers it can fire alongside a signal handler.
@@ -3736,6 +4006,7 @@ if (STDIO_MODE) {
     process.stdout.write(`hypergated stopping: ${reason}\n`);
     ambient.stop();
     server.close();
+    teamServer?.close();
     void supervisor
       .stopAll()
       .catch(() => {
@@ -3750,6 +4021,7 @@ if (STDIO_MODE) {
 
   server.listen(PORT, LISTEN_HOST, () => {
     if (process.env.HYPERGATE_NO_WATCH !== '1') ambient.start();
+    void applyTeam();
     if (process.env.HYPERGATE_NO_AUTH === '1') {
       process.stderr.write(
         '!!! WARNING: HYPERGATE_NO_AUTH=1 disables authentication; this is intended for local tests only. !!!\n',

@@ -182,6 +182,11 @@ export const openStore = (dataDir: string): Store | undefined => {
     db.exec('PRAGMA synchronous = NORMAL');
     db.exec('PRAGMA foreign_keys = ON');
     db.exec(SCHEMA);
+    // Columns added after v1 shipped. ALTER TABLE ADD COLUMN is idempotent here
+    // only because we check first: SQLite has no IF NOT EXISTS for columns.
+    const cols = new Set((db.prepare("PRAGMA table_info(usage_events)").all() as { name: string }[]).map((c) => c.name));
+    if (!cols.has("blocked")) db.exec("ALTER TABLE usage_events ADD COLUMN blocked TEXT");
+    if (!cols.has("destructive")) db.exec("ALTER TABLE usage_events ADD COLUMN destructive INTEGER");
   } catch {
     return undefined;
   }
@@ -195,8 +200,8 @@ export const openStore = (dataDir: string): Store | undefined => {
 
   // ── prepared statements (compiled once, reused per flush) ──────────────────
   const insEvent = db.prepare(
-    `INSERT INTO usage_events (at, server_id, server, tool, client, ok, ms, bytes_in, bytes_out, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO usage_events (at, server_id, server, tool, client, ok, ms, bytes_in, bytes_out, error, blocked, destructive)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const insLog = db.prepare('INSERT INTO server_logs (at, server_id, line) VALUES (?, ?, ?)');
   const upServer = db.prepare(
@@ -254,7 +259,7 @@ export const openStore = (dataDir: string): Store | undefined => {
         db.exec('BEGIN');
         writeAggregates(snap);
         for (const e of snap.events ?? []) {
-          insEvent.run(e.at, e.serverId, e.server, e.tool, e.client, e.ok ? 1 : 0, e.ms, e.bytesIn, e.bytesOut, e.error ?? null);
+          insEvent.run(e.at, e.serverId, e.server, e.tool, e.client, e.ok ? 1 : 0, e.ms, e.bytesIn, e.bytesOut, e.error ?? null, e.blocked ?? null, e.destructive ? 1 : null);
         }
         db.exec('COMMIT');
       } catch {
@@ -307,7 +312,7 @@ export const openStore = (dataDir: string): Store | undefined => {
       try {
         db.exec('BEGIN');
         for (const e of events) {
-          insEvent.run(e.at, e.serverId, e.server, e.tool, e.client, e.ok ? 1 : 0, e.ms, e.bytesIn, e.bytesOut, e.error ?? null);
+          insEvent.run(e.at, e.serverId, e.server, e.tool, e.client, e.ok ? 1 : 0, e.ms, e.bytesIn, e.bytesOut, e.error ?? null, e.blocked ?? null, e.destructive ? 1 : null);
         }
         for (const l of logs) insLog.run(l.at, l.serverId, l.line);
         writeAggregates(snapshot);
@@ -363,7 +368,7 @@ export const openStore = (dataDir: string): Store | undefined => {
         // Newest `eventTail` rows, returned oldest-first to match the supervisor's ring order.
         const eventRows = db
           .prepare(
-            `SELECT at, server_id, server, tool, client, ok, ms, bytes_in, bytes_out, error
+            `SELECT at, server_id, server, tool, client, ok, ms, bytes_in, bytes_out, error, blocked, destructive
              FROM usage_events ORDER BY id DESC LIMIT ?`,
           )
           .all(eventTail) as EventRow[];
@@ -419,7 +424,7 @@ export const openStore = (dataDir: string): Store | undefined => {
         where.push('at >= ?');
         args.push(since);
       }
-      const sql = `SELECT at, server_id, server, tool, client, ok, ms, bytes_in, bytes_out, error FROM usage_events
+      const sql = `SELECT at, server_id, server, tool, client, ok, ms, bytes_in, bytes_out, error, blocked, destructive FROM usage_events
                    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
                    ORDER BY id DESC LIMIT ?`;
       args.push(Math.min(5000, Math.max(1, limit)));
@@ -507,6 +512,8 @@ interface EventRow {
   bytes_in: number;
   bytes_out: number;
   error: string | null;
+  blocked?: string | null;
+  destructive?: number | null;
 }
 const rowToEvent = (r: EventRow): UsageEvent => ({
   at: r.at,
@@ -519,6 +526,8 @@ const rowToEvent = (r: EventRow): UsageEvent => ({
   bytesIn: r.bytes_in,
   bytesOut: r.bytes_out,
   error: r.error ?? undefined,
+  ...(r.blocked === "policy" || r.blocked === "secret" ? { blocked: r.blocked } : {}),
+  ...(r.destructive === 1 ? { destructive: true } : {}),
 });
 
 // Minimal structural type for the bits of `node:sqlite` we use, so this file

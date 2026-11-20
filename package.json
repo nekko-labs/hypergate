@@ -1,7 +1,7 @@
 {
   "name": "hypergate",
   "private": true,
-  "version": "1.29.0",
+  "version": "1.30.0",
   "description": "Local-first runtime & manager for MCP servers — run servers securely (process sandbox or Docker), supervise them, and expose one gateway endpoint for any agent harness. A ToolHive rival you own.",
   "license": "MIT",
   "type": "module",
@@ -20,6 +20,7 @@
     "smoke:http": "node scripts/smoke-http.mjs",
     "smoke:features": "node scripts/smoke-features.mjs",
     "smoke:ambient": "node scripts/smoke-ambient.mjs",
+    "smoke:claims": "node scripts/smoke-claims.mjs",
     "smoke:shell": "node scripts/smoke-shell.mjs",
     "smoke:install": "node scripts/smoke-install.mjs",
     "smoke:standalone": "node scripts/smoke-standalone.mjs",
