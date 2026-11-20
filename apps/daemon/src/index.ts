@@ -79,6 +79,7 @@ import {
   userinfoEndpoint,
   type OAuthStore,
   type InstructionsHarness,
+  gatewayIdentity,
 } from '@hypergate/core';
 import { registryConnections } from '@hypergate/shared';
 import { openStore } from './store.ts';
@@ -207,7 +208,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.30.0';
+const VERSION = '1.31.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -2031,7 +2032,7 @@ const startStdioProxy = async (): Promise<boolean> => {
     // answer has now certainly seen it.
     const { tools } = await upstream.listTools();
     process.stderr.write(`hypergated gateway (stdio → resident daemon on ${PORT}) up — ${tools.length} tool(s)\n`);
-    const proxy = createProxy(upstream, { name: 'hypergate-gateway', version: VERSION });
+    const proxy = createProxy(upstream, gatewayIdentity(VERSION));
     await proxy.connect(new StdioServerTransport());
     return true;
   } catch (e) {
@@ -2060,7 +2061,7 @@ if (STDIO_MODE) {
     await startEnabled();
     const gateway = createGateway(
       supervisor,
-      { name: 'hypergate-gateway', version: VERSION },
+      gatewayIdentity(VERSION),
       // A local stdio spawn is the user's own process: master-equivalent scope.
       {
         caller: 'stdio (local)',
@@ -2535,7 +2536,7 @@ if (STDIO_MODE) {
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
         const gateway = createGateway(
           supervisor,
-          { name: 'hypergate-gateway', version: VERSION },
+          gatewayIdentity(VERSION),
           {
             caller,
             allowServer,
