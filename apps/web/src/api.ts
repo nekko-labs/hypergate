@@ -37,7 +37,7 @@ import type {
   InstructionsStatusResponse,
   InstructionsWriteResponse,
 } from '@hypergate/shared';
-import type { LockdownStatus, SetLockdownResponse } from '@hypergate/shared';
+import type { LockdownStatus, SetLockdownResponse, InsightsResponse, SetAgentToolsRequest, TeamInfo, TeamSettings } from '@hypergate/shared';
 
 // Dev proxies /api → daemon; in a packaged build set VITE_DAEMON_URL.
 const BASE = (import.meta.env.VITE_DAEMON_URL ?? '').replace(/\/$/, '');
@@ -235,6 +235,22 @@ export const api = {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ allowed }),
+    }),
+  // Tool-level permissions: read-only mode, or one namespaced tool on or off.
+  setAgentTools: (agentId: string, req: SetAgentToolsRequest) =>
+    j<AgentClientInfo>(`/api/clients/${agentId}/tools`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) }),
+  insights: (hours = 24) => j<InsightsResponse>(`/api/insights?hours=${hours}`),
+  team: () => j<TeamInfo>('/api/team'),
+  // Opening a network port takes the master token.
+  setTeam: (token: string, patch: Partial<TeamSettings>) =>
+    fetch(`${BASE}/api/team`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(patch),
+    }).then(async (r) => {
+      const body = (await r.json().catch(() => ({}))) as TeamInfo & { error?: string };
+      if (!r.ok) throw new Error(body.error ?? String(r.status));
+      return body;
     }),
   // Connecting an agent to a harness: which clients this machine has, the
   // commands/snippets for one agent, and the one-click install itself.

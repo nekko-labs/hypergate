@@ -69,7 +69,9 @@
         "downloadUrl": "https://github.com/nekko-labs/hypergate/releases",
         "codeRepository": "https://github.com/nekko-labs/hypergate",
         "featureList": [
-          "Access control: per-agent allow-lists over which MCP servers and tools each agent may reach, revocable per agent",
+          "Access control: per-agent and per-person allow-lists over which MCP servers and which of their tools each may reach, with a read-only mode, revocable one token at a time",
+          "Guards: a tool call carrying a key from the vault is refused before it reaches a server, and rule-based insights flag blocked calls, refusals, bursts and first-time writes",
+          "Team access (opt-in): share the gateway with teammates over your network or Tailscale with per-person tokens; management stays on your machine",
           "Credential custody: server secrets and OAuth tokens held by Hypergate and injected at launch, never written into agent configs",
           "Aggregating MCP gateway: every server's tools behind one endpoint, over streamable HTTP or stdio",
           "Per-server isolation: process sandbox (default), Docker container, or remote hosted endpoint",
@@ -204,13 +206,13 @@
         </div>
         <div class="pillar reveal" data-delay="160">
           <h3>Permissions</h3>
-          <p>Set access per human or per agent. Don't trust a certain model or company?
-             Give it different permissions than another.</p>
+          <p>Set access per human or per agent, down to single tools or read-only. Don't
+             trust a certain model or company? Give it different permissions than another.</p>
         </div>
         <div class="pillar reveal" data-delay="240">
           <h3>Visibility</h3>
-          <p>See what your agents use, with an audit log of every access, guards against
-             malicious requests, and an AI that reads it and tells you what matters.</p>
+          <p>See what your agents use, with an audit log of every call. Keys can't leave
+             through a tool call, and your own agent can read the log and tell you what matters.</p>
         </div>
       </div>
     </section>
@@ -224,8 +226,8 @@
           <h2>One click, for you and anyone else</h2>
           <p>Pick a server from the catalog and OAuth servers sign in with one click: the
              browser opens, you approve, Hypergate connects. Connecting an agent is one
-             button, and bringing someone else in is the same single click for them. No
-             keys to copy, no configs to hand around.</p>
+             button, and bringing a teammate in is one invite: they get their own token
+             and the address of your gate. No shared keys, no configs to hand around.</p>
           <ul>
             <li>One-click connect for Claude Code, Codex, Cursor, Nekko Agent, and more</li>
             <li>One-click OAuth: Context7, Supabase, Linear, Figma, GitHub</li>
@@ -250,10 +252,10 @@
              connects gets its own token, scoped to exactly what you allow, and access is a
              switch you flip rather than a config file you go hunting for.</p>
           <ul>
-            <li>Easy permissions per human or per agent, granted or revoked in one click</li>
-            <li>A narrower set for the model or vendor you trust less</li>
+            <li>Permissions per human or per agent, by server and by tool, in one click</li>
+            <li>Read-only mode: only tools their server declares read-only</li>
+            <li>Teammates reach your gate over your network or Tailscale (opt-in); the vault and the manager never leave your machine</li>
             <li>Credentials and OAuth tokens stay in Hypergate, never in agent configs</li>
-            <li>Revoke one token and everyone else keeps working</li>
           </ul>
         </div>
         <figure class="shot reveal" data-parallax="0.05" data-title="Access control">
@@ -270,14 +272,14 @@
           <h2>See everything your agents touch</h2>
           <p>Every call runs through the gate, so you get an audit log of what each agent
              accessed without wiring anything: which tool, called by whom, how long it took,
-             and how much data moved. Hypergate guards against malicious requests and agents
-             holding more access than they need, and an AI reads the trail so it can tell
-             you what's worth knowing.</p>
+             and how much data moved. A call that tries to carry a key out of your vault is
+             refused before it reaches a server, fixed rules flag what deserves a look, and
+             the agent you already run can read the trail and tell you what's worth knowing.</p>
           <ul>
-            <li>Audit log of every access, per human and per agent</li>
-            <li>Guards against malicious requests and too much access</li>
-            <li>An AI that understands the log and informs you</li>
-            <li>Per-server, per-tool, and per-agent breakdowns</li>
+            <li>Audit log of every call, per human and per agent</li>
+            <li>Vault keys are blocked from leaving through a tool call, and redacted from results</li>
+            <li>Insights for blocked calls, repeated refusals, bursts and first-time writes</li>
+            <li>Ask your own agent: <code>hypergate__audit_review</code> hands it the log to explain</li>
           </ul>
         </div>
         <figure class="shot reveal" data-parallax="0.05" data-title="Analytics">

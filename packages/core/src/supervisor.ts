@@ -402,7 +402,7 @@ export class Supervisor {
       const { tools } = await client.listTools();
       inst.client = client;
       inst.transport = transport;
-      inst.tools = tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+      inst.tools = tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, ...(t.annotations ? { annotations: t.annotations } : {}) }));
       inst.state = 'ready';
       inst.startedAt = new Date().toISOString();
     } catch (e) {
