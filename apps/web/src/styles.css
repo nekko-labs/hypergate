@@ -1,58 +1,5 @@
-/* Hypergate, Nekko Labs design language (violet→cyan era, matches Nekko Agent).
-   Two themes: DARK (Midnight, #0a0c16 blue) is the default and Light is opt-in via
-   the topbar sun/moon button (data-theme on <html>). */
-:root {
-  --accent: #8071ff;
-  --accent-2: #22d3ee;
-  --grad: linear-gradient(120deg, var(--accent), var(--accent-2));
-
-  /* Dark (default): Midnight, a deep blue-black (#0a0c16) with lifted blue cards. */
-  --paper: #0a0c16;
-  --paper-2: #0f1220;
-  --card: #141828;
-  --card-2: #1b2034;
-  --ink: #edeff5;
-  --ink-2: #b7bdcc;
-  --ink-3: #838b9d;
-  --line: rgba(255, 255, 255, 0.09);
-  --line-2: rgba(255, 255, 255, 0.16);
-
-  --success: #34d399;
-  --info: #60a5fa;
-  --danger: #f87171;
-  --warning: #fbbf24;
-
-  --accent-soft: color-mix(in srgb, var(--accent) 20%, transparent);
-  --ring: color-mix(in srgb, var(--accent) 45%, transparent);
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 10px 30px -18px rgb(0 0 0 / 0.55);
-
-  /* Semantic surfaces shared across themes (overridable below). */
-  --on-accent: #fff;
-  --overlay: rgba(6, 8, 14, 0.55);
-  --overlay-shadow: 0 24px 64px -24px rgb(0 0 0 / 0.7);
-  color-scheme: dark;
-}
-
-:root[data-theme='light'] {
-  --accent: #6d5efc;
-  --paper: #f7f8fb;
-  --paper-2: #eef0f6;
-  --card: #ffffff;
-  --card-2: #f3f4f9;
-  --ink: #171a26;
-  --ink-2: #4d5468;
-  --ink-3: #8a91a8;
-  --line: #e5e8f0;
-  --line-2: #d2d6e4;
-  --success: #0e9f6e;
-  --info: #2563eb;
-  --danger: #dc2626;
-  --warning: #d97706;
-  --shadow: 0 1px 2px rgb(23 26 38 / 0.05), 0 8px 24px -14px rgb(23 26 38 / 0.18);
-  --overlay: rgba(23, 26, 38, 0.4);
-  --overlay-shadow: 0 24px 64px -24px rgb(23 26 38 / 0.35);
-  color-scheme: light;
-}
+/* Hypergate manager components. Every colour, radius, font and glow comes from
+   tokens.css (the Midnight Gate design system); keep raw values out of here. */
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
@@ -60,16 +7,25 @@ body {
   margin: 0;
   /* The window is the app: the page itself never scrolls (see `.app`). */
   overflow: hidden;
-  font-family: Inter, -apple-system, 'Segoe UI', system-ui, sans-serif;
-  background: var(--paper);
+  font-family: var(--font-b);
+  background: var(--ambient), var(--paper);
+  background-attachment: fixed;
   color: var(--ink);
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace; }
+/* The site's sky, held still: a tile of faint stars behind everything. Fixed
+   and composited once, so it costs nothing while the views scroll over it. */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  opacity: var(--stars-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cg fill='%23dfe6ff'%3E%3Ccircle cx='23' cy='41' r='.7' opacity='.5'/%3E%3Ccircle cx='97' cy='12' r='.5' opacity='.35'/%3E%3Ccircle cx='151' cy='88' r='.9' opacity='.45'/%3E%3Ccircle cx='211' cy='31' r='.6' opacity='.4'/%3E%3Ccircle cx='287' cy='66' r='.8' opacity='.5'/%3E%3Ccircle cx='59' cy='139' r='.5' opacity='.3'/%3E%3Ccircle cx='131' cy='181' r='.7' opacity='.4'/%3E%3Ccircle cx='247' cy='149' r='.5' opacity='.35'/%3E%3Ccircle cx='303' cy='207' r='.6' opacity='.3'/%3E%3Ccircle cx='19' cy='233' r='.8' opacity='.4'/%3E%3Ccircle cx='89' cy='277' r='.6' opacity='.45'/%3E%3Ccircle cx='173' cy='251' r='.5' opacity='.3'/%3E%3Ccircle cx='229' cy='297' r='.9' opacity='.4'/%3E%3Ccircle cx='277' cy='263' r='.5' opacity='.3'/%3E%3C/g%3E%3C/svg%3E");
+}
+::selection { background: rgba(109, 94, 252, 0.45); color: #fff; }
+a { color: var(--signal); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+code, .mono, pre, input.mono, textarea { font-family: var(--font-m); }
 
 /* ── app shell ──────────────────────────────────────────────────────────
    A desktop window, not a web page. The topbar and the footer are rails
@@ -134,11 +90,11 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .chip-warning { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 38%, transparent); background: color-mix(in srgb, var(--warning) 12%, var(--card-2)); }
 .dashboard-section > .section-title:first-child { margin-top: 0; }
 .dashboard-section .ag-grid { border-top: 0; gap: 6px 22px; }
-.dashboard-section .ag-card { border-bottom: 0; border-radius: 10px; }
+.dashboard-section .ag-card { border-bottom: 0; border-radius: var(--r-md); }
 .dashboard-section > .panel { min-height: 0; overflow: visible; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 .dashboard-section > .panel > .list { overflow: visible; gap: 4px; }
-.dashboard-section > .panel > .list > .list-row { border: 0; border-radius: 12px; padding: 14px 10px; }
-.dashboard-section > .panel:has(> .catalog-search) { padding: 8px; border-radius: 14px; background: var(--card); }
+.dashboard-section > .panel > .list > .list-row { border: 0; border-radius: var(--r-md); padding: 14px 10px; }
+.dashboard-section > .panel:has(> .catalog-search) { padding: 8px; border-radius: var(--r-lg); background: var(--sheen), var(--card); border: 1px solid var(--line); }
 /* A panel that holds no list (an add/edit form, the agent picker) scrolls whole,
    and holds on to more height than a list would: it is only on screen because
    it was asked for, so it is the thing being worked on. */
@@ -155,7 +111,8 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 /* ── header ─────────────────────────────────────────────────────────────── */
 .topbar {
   flex: none; z-index: 10;
-  background: var(--paper);
+  /* Transparent so the canvas's light and stars run up into the title bar. */
+  background: transparent;
 }
 .topbar-in { max-width: 1360px; margin: 0 auto; padding: 14px 28px; display: flex; align-items: center; gap: 12px; }
 .topbar-tools { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -225,7 +182,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
   .gate-ring, .gate-ring::after { animation: none; }
   .view.servers-view { scroll-behavior: auto; }
 }
-.wordmark { font-weight: 700; font-size: 15.5px; letter-spacing: -0.3px; }
+.wordmark { font-family: var(--font-d); font-weight: 700; font-size: 17px; letter-spacing: 0.1px; }
 .topbar .spacer { flex: 1; }
 
 /* primary nav */
@@ -233,15 +190,19 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .nav-group { display: flex; flex-direction: column; }
 .nav > .nav-group > button {
   width: 100%; border: 0; background: none; color: var(--ink-3); font-size: 13.5px; font-weight: 600;
-  padding: 9px 4px; border-radius: 8px; cursor: pointer; font-family: inherit;
+  padding: 8px 10px; border-radius: var(--r-md); cursor: pointer; font-family: inherit;
   display: flex; align-items: center; gap: 10px; text-align: left;
+  transition: color .14s ease, background .14s ease;
 }
-.nav > .nav-group > button:hover { color: var(--ink-2); }
-.nav > .nav-group > button.active { color: var(--ink); }
-.nav > .nav-group > button.active .nav-icon { color: var(--accent); }
+.nav > .nav-group > button:hover { color: var(--ink-2); background: color-mix(in srgb, var(--ink) 4%, transparent); }
+/* The view you are on is lit, not boxed: a wash of the gate's light from the
+   left edge, and the icon in the signal colour. */
+.nav > .nav-group > button.active { color: var(--ink); background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent 92%); }
+.nav > .nav-group > button.active .nav-icon { color: var(--signal); }
+.nav > .nav-group > button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }
 .nav-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .nav .n-badge { margin-left: auto; font-size: 10.5px; font-weight: 700; color: var(--accent); }
-.section-nav { display: flex; flex-direction: column; gap: 2px; padding: 3px 0 10px 28px; }
+.section-nav { display: flex; flex-direction: column; gap: 2px; padding: 3px 0 10px 34px; }
 .section-nav button {
   position: relative; border: 0; background: none; color: var(--ink-3); padding: 5px 4px; cursor: pointer;
   font: 500 11.5px/1.35 inherit; text-align: left; white-space: nowrap; transition: color .14s ease;
@@ -258,7 +219,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .verbox { display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 24px; white-space: nowrap; }
 .verbox-offer {
   flex: none; gap: 2px; padding: 3px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
-  border-radius: 10px; background: color-mix(in srgb, var(--accent) 7%, var(--paper-2));
+  border-radius: var(--r-md); background: color-mix(in srgb, var(--accent) 7%, var(--paper-2));
 }
 /* The version, which is also the check button. The min-width is the width of
    "Check for updates": the label swaps on hover, and the nav beside it must not
@@ -278,7 +239,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 }
 .verbox .vb-update-icon {
   width: 21px; height: 21px; display: inline-grid; place-items: center; border-radius: 6px;
-  background: var(--grad); color: #fff; font-size: 13px; font-weight: 750; line-height: 1;
+  background: var(--grad); color: var(--on-accent); font-size: 13px; font-weight: 750; line-height: 1;
 }
 .verbox .vb-update-label { color: var(--ink-2); }
 .verbox .vb-update-version { color: var(--ink); font-size: 11.5px; font-variant-numeric: tabular-nums; }
@@ -355,10 +316,11 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 /* ── page intro (compact, no box) ───────────────────────────────────────── */
 .pagehead { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, .95fr); align-items: start; gap: 40px; margin: 14px 0 34px; }
 .pagehead-copy { min-width: 0; padding-top: 2px; }
-.pagehead h1 { font-size: 24px; letter-spacing: -0.5px; margin: 0 0 5px; line-height: 1.2; }
+.pagehead h1 { font-family: var(--font-d); font-size: 28px; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 7px; line-height: 1.1; }
 .pagehead p { margin: 0; color: var(--ink-2); font-size: 13.5px; max-width: 520px; }
 .pagehead-meta { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
 .grad-text { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+:root:not([data-theme='light']) .pagehead .grad-text { filter: drop-shadow(0 0 22px rgba(34, 211, 238, 0.3)); }
 
 /* inline summary line instead of stat boxes */
 .summary { color: var(--ink-3); font-size: 13px; white-space: nowrap; }
@@ -370,13 +332,15 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .gw-field { min-width: 0; display: flex; align-items: center; gap: 7px; }
 .gwbar .glabel { width: 68px; flex: none; display: inline-flex; align-items: center; gap: 7px; color: var(--ink-2); font-weight: 700; font-size: 12px; }
 .gwbar .glabel .dot-grad { width: 8px; height: 8px; border-radius: 50%; background: var(--grad); }
-.gwbar .url, .gwbar .tok { flex: 1 1 auto; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gwbar .url { color: var(--ink); }
+/* The endpoint reads like the install line on the site: a sunk well, mono, the
+   value itself in ice. */
+.gwbar .url, .gwbar .tok { flex: 1 1 auto; min-width: 0; font-family: var(--font-m); font-size: 12px; background: color-mix(in srgb, var(--paper-2) 80%, transparent); border: 1px solid var(--line); border-radius: var(--r-md); padding: 5px 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gwbar .url { color: var(--ice); }
 .gwbar .tok { color: var(--ink-3); }
 .gw-field .btn { flex: none; }
 
 /* ── generic list (servers, catalog, analytics rows) ────────────────────── */
-.panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+.panel { background: var(--sheen), var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); overflow: hidden; }
 .list { display: flex; flex-direction: column; }
 .list-row { padding: 12px 15px; border-top: 1px solid var(--line); }
 .list-row:first-child { border-top: none; }
@@ -388,7 +352,8 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
    caret is the control that says so, and the only one a keyboard needs. */
 .list-row.expandable > .row-top { cursor: pointer; }
 .list-row.expandable:has(> .row-top:hover) { background: var(--card-2); }
-.list-row.expandable.open { background: var(--card-2); }
+/* The open row is the thing being worked on, so it is the one that is lit. */
+.list-row.expandable.open { background: var(--sheen), var(--card-2); box-shadow: var(--edge-violet), var(--glow-violet); }
 .list-row.expandable .row-ident { flex: 1 1 auto; min-width: 0; }
 .list-row.expandable .row-actions { flex: none; cursor: default; }
 /* Counts about the row, read as one phrase: "3 tools · 1/2 agents". */
@@ -425,8 +390,8 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 @keyframes row-open { from { opacity: 0; transform: translateY(-3px); } }
 .detail-block + .detail-block, .row-detail > .connect-panel { margin-top: 13px; }
 .detail-label {
-  font-size: 10.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
-  color: var(--ink-3); margin-bottom: 6px;
+  font-family: var(--font-m); font-size: 10.5px; font-weight: 500; letter-spacing: 1.1px; text-transform: uppercase;
+  color: var(--ink-3); margin-bottom: 7px;
 }
 .detail-label .dl-count { margin-left: 5px; letter-spacing: 0; color: var(--ink-2); }
 .detail-label .dl-note { margin-left: 8px; letter-spacing: 0; text-transform: none; font-weight: 400; }
@@ -438,11 +403,12 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .logs-note { padding: 6px 0; }
 @media (prefers-reduced-motion: reduce) { .row-detail { animation: none; } }
 
+/* The site's kicker: mono, tracked out, in the signal colour. */
 .section-title {
-  margin: 26px 0 10px; font-size: 11.5px; font-weight: 700; letter-spacing: 1.1px;
-  text-transform: uppercase; color: var(--ink-3); display: flex; align-items: center; gap: 10px;
+  margin: 26px 0 12px; font-family: var(--font-m); font-size: 11.5px; font-weight: 500; letter-spacing: 1.6px;
+  text-transform: uppercase; color: var(--signal); display: flex; align-items: center; gap: 10px;
 }
-.section-title .rt { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.section-title .rt { margin-left: auto; font-family: var(--font-b); text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--ink-3); }
 
 /* rows & text */
 .row { display: flex; align-items: center; gap: 10px; }
@@ -452,36 +418,38 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .wrap-gap { flex-wrap: wrap; }
 
 /* ── buttons ────────────────────────────────────────────────────────────── */
+/* Buttons are capsules, as on the site. Four kinds, by weight:
+   primary  the gate gradient with midnight text, lifting into a cyan glow;
+            at most one per surface, for the thing you came to do
+   accent   a cyan outline for add / connect, the site's nav call to action
+   default  a quiet outline that warms to violet on hover (the site's ghost)
+   ghost    no outline at all, for actions inside a row
+   plus go / warn / danger tints for what an action does to a running thing. */
 .btn {
-  border: 1px solid var(--line-2); background: var(--card-2); color: var(--ink-2);
-  border-radius: 9px; padding: 5px 12px; font-size: 12.5px; font-weight: 500; cursor: pointer;
-  transition: border-color .12s, color .12s, transform .06s, background .12s; font-family: inherit;
+  border: 1px solid var(--line-2); background: color-mix(in srgb, var(--card) 72%, transparent); color: var(--ink);
+  border-radius: var(--r-pill); padding: 5px 14px; font-size: 12.5px; font-weight: 550; cursor: pointer;
+  transition: border-color .14s, color .14s, transform .14s, background .14s, box-shadow .2s, filter .14s; font-family: inherit;
 }
-.btn:hover { color: var(--ink); border-color: var(--ink-3); }
+.btn:hover { color: var(--ink); border-color: color-mix(in srgb, var(--accent) 62%, transparent); background: color-mix(in srgb, var(--accent) 11%, var(--card)); }
 .btn:active { transform: translateY(1px); }
-.btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--ring); }
 .btn:disabled { opacity: .5; cursor: default; }
-.btn-primary { background: var(--grad); color: var(--on-accent); border: none; font-weight: 600; }
-.btn-primary:hover { color: var(--on-accent); filter: brightness(1.08); }
-.btn-catalog-add {
-  border: 0;
-  color: #fff;
-  background: var(--grad);
-  font-weight: 650;
+.btn-primary, .btn-catalog-add { background: var(--grad); color: var(--on-accent); border: 1px solid transparent; font-weight: 650; }
+.btn-primary:not(:disabled):hover, .btn-catalog-add:not(:disabled):hover {
+  color: var(--on-accent); background: var(--grad); border-color: transparent;
+  filter: brightness(1.06); box-shadow: var(--glow-cyan); transform: translateY(-1px);
 }
-.btn-catalog-add:not(:disabled):hover {
-  color: #fff;
-  filter: brightness(1.1);
-}
-.btn-ghost { background: transparent; border-color: transparent; }
-.btn-ghost:hover { border-color: var(--line-2); }
-.btn.sm { padding: 3px 9px; font-size: 12px; }
+.btn-primary:not(:disabled):active, .btn-catalog-add:not(:disabled):active { transform: translateY(0); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn-ghost:hover { border-color: transparent; color: var(--ink); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.btn.sm { padding: 3px 11px; font-size: 12px; }
 
-/* Semantic button tints — group actions by what they do, at a glance:
-   accent = add/connect · go(green) = bring up · warn(amber) = pause/cycle/disconnect
-   · danger(red) = destroy. Soft by default, saturated border on hover. */
-.btn-accent { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--card-2)); }
-.btn-accent:hover { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, var(--card-2)); }
+/* Semantic button tints, to group actions by what they do at a glance:
+   accent(cyan) = add/connect · go(green) = bring up · warn(amber) = pause/cycle/disconnect
+   · danger(rose) = destroy. Soft by default, saturated border on hover. */
+.btn-accent { color: var(--signal); border-color: color-mix(in srgb, var(--accent-2) 38%, transparent); background: color-mix(in srgb, var(--accent-2) 8%, transparent); }
+.btn-accent:hover { color: var(--ice); border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 14%, transparent); box-shadow: var(--glow-cyan); }
+:root[data-theme='light'] .btn-accent:hover { color: var(--signal); }
 .btn-go { color: var(--success); border-color: color-mix(in srgb, var(--success) 32%, transparent); background: color-mix(in srgb, var(--success) 13%, var(--card-2)); }
 .btn-go:hover { color: var(--success); border-color: var(--success); background: color-mix(in srgb, var(--success) 20%, var(--card-2)); }
 .btn-warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 34%, transparent); background: color-mix(in srgb, var(--warning) 13%, var(--card-2)); }
@@ -497,15 +465,17 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
    in every row is an alarm nobody raised. */
 .btn-icon {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; padding: 0; border-radius: 9px;
+  width: 32px; height: 32px; padding: 0; border-radius: var(--r-pill);
   background: transparent; border-color: transparent; color: var(--ink-3);
 }
-.btn.sm.btn-icon { width: 30px; height: 30px; }
-.btn-icon svg { display: block; }
+/* `.btn.sm` outranks `.btn-icon`, and its text padding squeezed the glyph to
+   a few pixels inside the 30px circle; an icon button has no padding. */
+.btn.sm.btn-icon { width: 30px; height: 30px; padding: 0; }
+.btn-icon svg { display: block; flex: none; }
 .btn-icon:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); border-color: transparent; }
 .btn-icon.btn-warn:hover { color: var(--warning); }
 .btn-icon.btn-danger:hover { color: var(--danger); }
-.btn-icon:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+.btn-icon:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }
 
 /* ── pills & chips ──────────────────────────────────────────────────────── */
 .pill { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; }
@@ -515,7 +485,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 .pill-errored { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }
 .pill-stopped { color: var(--ink-3); background: color-mix(in srgb, var(--ink-3) 16%, transparent); }
 .pill-authorizing { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
-.chip { font-size: 11px; padding: 2.5px 9px; border-radius: 999px; background: var(--card-2); color: var(--ink-2); border: 1px solid var(--line); }
+.chip { font-size: 11px; padding: 2.5px 9px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--card-2) 80%, transparent); color: var(--ink-2); border: 1px solid var(--line); }
 .chip.mono { font-size: 10.5px; }
 .chip-accent { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 /* Official / verified-publisher chip (green, like the ready pill) */
@@ -582,7 +552,7 @@ code, .mono, pre, input.mono, textarea { font-family: 'JetBrains Mono', ui-monos
 
 pre.snippet, pre.logs {
   background: var(--paper); border: 1px solid var(--line); color: var(--ink-2);
-  border-radius: 10px; padding: 11px 13px; font-size: 12px; overflow: auto; margin: 10px 0 0;
+  border-radius: var(--r-md); padding: 11px 13px; font-size: 12px; overflow: auto; margin: 10px 0 0;
   white-space: pre-wrap; word-break: break-all;
 }
 pre.logs { max-height: 220px; }
@@ -592,7 +562,7 @@ pre.logs { max-height: 220px; }
 .tool-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 
 /* ── tool inspector (clickable list → detail) ───────────────────────────── */
-.tool-list { margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--paper-2); }
+.tool-list { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; background: var(--paper-2); }
 .tool-item { border-top: 1px solid var(--line); }
 .tool-item:first-child { border-top: none; }
 .tool-head {
@@ -624,7 +594,7 @@ pre.logs { max-height: 220px; }
 .catalog-search input:focus { box-shadow: none; }
 
 /* ── connected agents ───────────────────────────────────────────────────── */
-.tok { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink-3); }
+.tok { font-family: var(--font-m); font-size: 12px; color: var(--ink-3); }
 .list-row.expandable:has(.agent-presence) .row-ident { gap: 8px 10px; }
 .list-row.expandable:has(.agent-presence) .row-actions { gap: 8px; }
 .agent-presence {
@@ -654,7 +624,7 @@ pre.logs { max-height: 220px; }
 .chip-toggle:disabled { opacity: .5; cursor: default; }
 
 /* The same permission from the server's side: one switch per connected agent. */
-.perm-panel { margin-top: 11px; border: 1px solid var(--line); border-radius: 11px; padding: 11px 13px; background: var(--paper-2); display: flex; flex-direction: column; gap: 4px; }
+.perm-panel { margin-top: 11px; border: 1px solid var(--line); border-radius: var(--r-md); padding: 11px 13px; background: var(--paper-2); display: flex; flex-direction: column; gap: 4px; }
 .perm-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 0; border-top: 1px solid var(--line); }
 .perm-toggle-row:first-of-type { border-top: none; }
 
@@ -674,7 +644,7 @@ pre.logs { max-height: 220px; }
 }
 .ag-card:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
 .ag-card:active { background: color-mix(in srgb, var(--ink) 8%, transparent); }
-.ag-card:focus-visible { outline: none; border-radius: 10px; box-shadow: inset 0 0 0 2px var(--accent); }
+.ag-card:focus-visible { outline: none; border-radius: var(--r-md); box-shadow: inset 0 0 0 2px var(--accent); }
 .ag-card:disabled { opacity: .58; cursor: wait; }
 .ag-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .ag-line { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
@@ -687,7 +657,7 @@ pre.logs { max-height: 220px; }
 .ag-go { color: var(--ink-3); font-size: 23px; font-weight: 300; line-height: 1; transform: translateX(-3px); transition: color .14s ease, transform .14s ease; }
 .ag-card:hover .ag-go, .ag-card:focus-visible .ag-go { color: var(--ink); transform: translateX(0); }
 .ag-mark {
-  width: 42px; height: 42px; flex: none; display: grid; place-items: center; border-radius: 11px;
+  width: 42px; height: 42px; flex: none; display: grid; place-items: center; border-radius: var(--r-md);
   color: var(--ink-2); background: color-mix(in srgb, var(--ink) 7%, var(--card));
 }
 .ag-mark svg { width: 21px; height: 21px; overflow: visible; }
@@ -738,7 +708,7 @@ pre.logs { max-height: 220px; }
 .connect-disclosure { margin-top: 17px; padding-top: 12px; border-top: 1px solid var(--line); }
 .connect-disclosure-toggle {
   width: 100%; min-height: 38px; display: flex; align-items: center; gap: 9px;
-  padding: 5px 4px; border: 0; border-radius: 9px; background: transparent;
+  padding: 5px 4px; border: 0; border-radius: var(--r-md); background: transparent;
   color: var(--ink-2); font-family: inherit; text-align: left; cursor: pointer;
 }
 .connect-disclosure-toggle:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
@@ -748,7 +718,7 @@ pre.logs { max-height: 220px; }
 .connect-disclosure-copy strong { font-size: 12.5px; font-weight: 650; }
 .connect-disclosure-copy span { font-size: 11.5px; color: var(--ink-3); }
 .connect-disclosure-panel { margin-top: 7px; }
-.connect-panel { margin-top: 11px; border: 1px solid var(--line); border-radius: 11px; padding: 10px 13px 13px; background: var(--paper-2); }
+.connect-panel { margin-top: 11px; border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 13px 13px; background: var(--paper-2); }
 .conn-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .conn-title { font-weight: 600; font-size: 13px; letter-spacing: -0.2px; }
 .conn-pick { display: inline-flex; align-items: center; gap: 7px; }
@@ -759,10 +729,10 @@ pre.logs { max-height: 220px; }
 .conn-field { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .conn-field > .small { min-width: 82px; }
 .conn-body { margin-top: 10px; }
-.conn-body code, .conn-result code { font-family: ui-monospace, monospace; font-size: 11.5px; background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; }
+.conn-body code, .conn-result code { font-family: var(--font-m); font-size: 11.5px; background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; }
 .conn-body .path { color: var(--ink); }
 .shellbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
-.conn-result { margin-top: 12px; border-radius: 10px; padding: 10px 12px; font-size: 12.5px; }
+.conn-result { margin-top: 12px; border-radius: var(--r-md); padding: 10px 12px; font-size: 12.5px; }
 .conn-result.ok { color: var(--success); background: color-mix(in srgb, var(--success) 11%, transparent); border: 1px solid color-mix(in srgb, var(--success) 28%, transparent); }
 .conn-result.err { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent); }
 .conn-result .snippet { max-height: 160px; }
@@ -777,7 +747,7 @@ pre.logs { max-height: 220px; }
 .cred-cats { display: flex; flex-direction: column; gap: 2px; }
 .cred-cat-head {
   display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px;
-  border: 0; border-radius: 10px; background: none; color: var(--ink); cursor: pointer;
+  border: 0; border-radius: var(--r-md); background: none; color: var(--ink); cursor: pointer;
   font: inherit; text-align: left; transition: background .12s ease;
 }
 .cred-cat-head:hover { background: var(--card-2); }
@@ -789,7 +759,7 @@ pre.logs { max-height: 220px; }
    would be rather than as another provider, so the escape hatch looks like an
    escape hatch. */
 .cred-own {
-  margin-top: 14px; padding: 13px 14px; border-radius: 12px;
+  margin-top: 14px; padding: 13px 14px; border-radius: var(--r-md);
   border: 1px dashed color-mix(in srgb, var(--ink-3) 42%, transparent);
   background: color-mix(in srgb, var(--card-2) 60%, transparent);
   transition: border-color .14s ease, background .14s ease;
@@ -803,7 +773,7 @@ pre.logs { max-height: 220px; }
 /* Pending access requests. Accent-tinted because it is the one thing on this
    page that someone else is waiting on. */
 .cred-requests {
-  margin-bottom: 12px; padding: 12px 14px; border-radius: 12px;
+  margin-bottom: 12px; padding: 12px 14px; border-radius: var(--r-md);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
   background: color-mix(in srgb, var(--accent) 7%, var(--paper-2));
 }
@@ -811,7 +781,7 @@ pre.logs { max-height: 220px; }
 
 /* Where a deep link landed. A brief ring, not a permanent state: it answers
    "which of these did the agent mean" and then gets out of the way. */
-.cred-focus { animation: cred-focus-ring 6s ease-out forwards; border-radius: 12px; }
+.cred-focus { animation: cred-focus-ring 6s ease-out forwards; border-radius: var(--r-md); }
 @keyframes cred-focus-ring {
   0%, 55% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
   100% { box-shadow: 0 0 0 2px transparent; }
@@ -828,16 +798,20 @@ pre.logs { max-height: 220px; }
 }
 
 /* ── forms ──────────────────────────────────────────────────────────────── */
+/* Fields are wells sunk into the surface; focus lights them cyan. */
 input, select, textarea {
-  background: var(--paper); border: 1px solid var(--line); color: var(--ink);
-  border-radius: 9px; padding: 8px 11px; font-size: 13px; font-family: inherit;
-  outline: none; transition: border-color .12s, box-shadow .12s;
+  background: color-mix(in srgb, var(--paper-2) 85%, transparent); border: 1px solid var(--line-2); color: var(--ink);
+  border-radius: var(--r-md); padding: 8px 12px; font-size: 13px; font-family: inherit;
+  outline: none; transition: border-color .14s, box-shadow .14s, background .14s;
 }
-input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+input::placeholder, textarea::placeholder { color: var(--ink-3); }
+input:hover, select:hover, textarea:hover { border-color: color-mix(in srgb, var(--ink-3) 55%, transparent); }
+input:focus, select:focus, textarea:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--ring-soft); background: var(--paper-2); }
 label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--ink-2); font-weight: 500; }
-.seg { display: inline-flex; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; }
-.seg button { border: none; background: none; color: var(--ink-3); font-size: 12.5px; font-weight: 500; padding: 5px 12px; border-radius: 7px; cursor: pointer; font-family: inherit; }
-.seg button.active { background: var(--card); color: var(--ink); box-shadow: var(--shadow); }
+.seg { display: inline-flex; background: color-mix(in srgb, var(--paper-2) 85%, transparent); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 3px; gap: 2px; }
+.seg button { border: none; background: none; color: var(--ink-3); font-size: 12.5px; font-weight: 550; padding: 5px 13px; border-radius: var(--r-pill); cursor: pointer; font-family: inherit; transition: color .14s, background .14s; }
+.seg button:hover { color: var(--ink-2); }
+.seg button.active { background: var(--card-3); color: var(--ink); box-shadow: var(--shadow), var(--edge-violet); }
 
 /* ── settings toggles ───────────────────────────────────────────────────── */
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -852,8 +826,8 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
   position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%;
   background: var(--ink-3); box-shadow: 0 1px 2px rgb(0 0 0 / .3); transition: transform .15s, background .15s;
 }
-.toggle.on { background: var(--grad); border-color: transparent; }
-.toggle.on .knob { transform: translateX(17px); background: var(--on-accent); }
+.toggle.on { background: var(--grad); border-color: transparent; box-shadow: 0 4px 16px -6px rgba(34, 211, 238, 0.5); }
+.toggle.on .knob { transform: translateX(17px); background: #fff; }
 .toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
 .toggle:disabled { opacity: .5; cursor: default; }
 /* Inline in a list-row action bar, next to `.btn.sm` — smaller, and green when
@@ -861,7 +835,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .toggle.sm { width: 34px; height: 19px; }
 .toggle.sm .knob { width: 14px; height: 14px; }
 .toggle.sm.on .knob { transform: translateX(15px); }
-.toggle-go.on { background: var(--success); }
+.toggle-go.on { background: var(--success); box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--success) 70%, transparent); }
 
 /* ── empty state ────────────────────────────────────────────────────────── */
 .empty { text-align: center; padding: 40px 22px; color: var(--ink-3); }
@@ -870,13 +844,13 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 
 /* ── banner ─────────────────────────────────────────────────────────────── */
 /* Sits between the topbar and the view, so it owns the gap above it only. */
-.banner { flex: none; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--card)); border-radius: 12px; padding: 12px 14px; margin: 14px 0 0; }
+.banner { flex: none; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--card)); border-radius: var(--r-lg); padding: 12px 14px; margin: 14px 0 0; }
 
 /* ── analytics ──────────────────────────────────────────────────────────── */
-.metricbar { display: flex; flex-wrap: wrap; background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
-.metric { flex: 1; min-width: 130px; padding: 14px 16px; border-left: 1px solid var(--line); }
+.metricbar { display: flex; flex-wrap: wrap; background: var(--sheen), var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); overflow: hidden; }
+.metric { flex: 1; min-width: 130px; padding: 15px 18px; border-left: 1px solid var(--line); }
 .metric:first-child { border-left: none; }
-.metric .m-val { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; line-height: 1.1; }
+.metric .m-val { font-family: var(--font-d); font-size: 25px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
 .metric .m-val .u { font-size: 12px; font-weight: 600; color: var(--ink-3); margin-left: 3px; }
 .metric .m-label { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; letter-spacing: .3px; }
 .metric.accent .m-val { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -884,8 +858,11 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 /* sparkline */
 .spark { display: flex; align-items: flex-end; gap: 3px; height: 46px; margin-top: 4px; }
 .spark-bar { flex: 1; min-width: 3px; background: var(--grad); border-radius: 3px 3px 0 0; opacity: .85; min-height: 2px; }
-.spark-bar.empty { background: var(--line-2); opacity: .5; }
-.spark-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 13px 16px 10px; margin-top: 10px; }
+/* Scoped to .spark: a bare `.empty` is also the empty-state block, whose 40px
+   padding turned every quiet hour into a tall box and pushed "now" off the end. */
+.spark .spark-bar.empty { background: var(--line-2); opacity: .5; padding: 0; margin: 0; }
+.spark .spark-bar:not(.empty) { box-shadow: 0 0 14px -2px rgba(34, 211, 238, 0.35); }
+.spark-wrap { background: var(--sheen), var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 13px 16px 10px; margin-top: 10px; }
 .spark-axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-3); margin-top: 6px; }
 
 /* share bar */
@@ -902,8 +879,8 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .feed { display: flex; flex-direction: column; }
 .feed-row { display: grid; grid-template-columns: 66px 1fr auto; gap: 12px; align-items: center; padding: 9px 15px; border-top: 1px solid var(--line); font-size: 12.5px; }
 .feed-row:first-child { border-top: none; }
-.feed-row .f-time { color: var(--ink-3); font-family: ui-monospace, monospace; font-size: 11.5px; }
-.feed-row .f-call { font-family: ui-monospace, monospace; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed-row .f-time { color: var(--ink-3); font-family: var(--font-m); font-size: 11.5px; }
+.feed-row .f-call { font-family: var(--font-m); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feed-row .f-call .f-client { color: var(--ink-3); }
 .feed-row .f-meta { color: var(--ink-3); font-size: 11.5px; display: flex; gap: 10px; align-items: center; white-space: nowrap; }
 .ok-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
@@ -911,7 +888,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .ok-dot.err { background: var(--danger); }
 
 /* callout (sell the analytics perk) */
-.callout { display: flex; gap: 12px; align-items: flex-start; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent); border-radius: 13px; padding: 13px 15px; margin-bottom: 14px; }
+.callout { display: flex; gap: 12px; align-items: flex-start; background: var(--grad-soft); border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent); border-radius: var(--r-lg); padding: 13px 15px; margin-bottom: 14px; }
 .callout .ic { font-size: 18px; line-height: 1.4; }
 .callout .t { font-weight: 700; font-size: 13.5px; margin-bottom: 2px; }
 .callout .d { color: var(--ink-2); font-size: 12.5px; }
@@ -936,19 +913,19 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 /* ── modal (the first-run "what should closing do?" question) ───────────── */
 .modal-veil, .modal-overlay {
   position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px;
-  background: var(--overlay); backdrop-filter: blur(3px); overflow-y: auto;
+  background: var(--overlay); backdrop-filter: blur(6px); overflow-y: auto;
   animation: veil-in .14s ease-out;
 }
 @keyframes veil-in { from { opacity: 0 } to { opacity: 1 } }
 .modal {
-  width: 100%; background: var(--paper); border: 1px solid var(--line-2); outline: none;
-  border-radius: 16px; padding: 22px 24px 18px; box-shadow: var(--overlay-shadow);
+  width: 100%; background: var(--sheen), var(--card); border: 1px solid var(--line-2); outline: none;
+  border-radius: var(--r-xl); padding: 22px 24px 18px; box-shadow: var(--overlay-shadow);
   animation: modal-in .16s cubic-bezier(.2, .8, .3, 1);
 }
 .modal:focus-visible { box-shadow: var(--overlay-shadow), 0 0 0 3px var(--ring); }
 @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.985) } to { opacity: 1; transform: none } }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.modal-title { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; letter-spacing: -0.3px; margin: 0; }
+.modal-title { display: flex; align-items: center; gap: 10px; font-family: var(--font-d); font-size: 19px; font-weight: 700; letter-spacing: -0.015em; margin: 0; }
 .modal-x { flex: none; }
 .modal-desc { margin: 8px 0 0; }
 .modal-body { margin-top: 12px; }
@@ -957,11 +934,11 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .modal-choices { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
 .choice {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
-  border: 1px solid var(--line-2); background: var(--card-2); border-radius: 12px;
+  border: 1px solid var(--line-2); background: var(--card-2); border-radius: var(--r-lg);
   padding: 12px 14px; cursor: pointer; font-family: inherit; color: var(--ink-2);
-  transition: border-color .12s, background .12s, transform .06s;
+  transition: border-color .14s, background .14s, transform .06s, box-shadow .2s;
 }
-.choice:hover { border-color: var(--accent); background: var(--card); }
+.choice:hover { border-color: color-mix(in srgb, var(--accent) 65%, transparent); background: var(--card-3); box-shadow: var(--glow-violet); }
 .choice:active { transform: translateY(1px); }
 .choice:disabled { opacity: .6; cursor: default; }
 .choice .choice-t { font-weight: 600; font-size: 13.5px; color: var(--ink); }
@@ -978,8 +955,8 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 }
 .toast {
   pointer-events: auto; display: flex; align-items: center; gap: 10px;
-  background: var(--card); border: 1px solid var(--line-2); border-left-width: 3px;
-  border-radius: 11px; box-shadow: var(--shadow); padding: 10px 12px; font-size: 13px; color: var(--ink);
+  background: var(--card-2); border: 1px solid var(--line-2); border-left-width: 3px;
+  border-radius: var(--r-md); box-shadow: var(--overlay-shadow); padding: 10px 12px; font-size: 13px; color: var(--ink);
   animation: toast-in .16s ease-out;
 }
 .toast .toast-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--ink-3); }
@@ -1001,7 +978,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 
 /* ── log console (Brainless-style surface) ──────────────────────────────── */
 .console {
-  margin-top: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  margin-top: 0; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden;
   background: var(--paper); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 40%, transparent);
 }
 .console-bar {
@@ -1017,7 +994,7 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .console-inner { position: relative; }
 .console-line {
   display: flex; align-items: center; gap: 8px; padding: 0 12px;
-  font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-family: var(--font-m);
   font-size: 12px; line-height: 19px; white-space: pre; color: var(--ink-2);
 }
 .console-gutter { flex: none; width: 34px; text-align: right; color: var(--ink-3); opacity: .55; user-select: none; }
