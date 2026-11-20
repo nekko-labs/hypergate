@@ -197,7 +197,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.28.0';
+const VERSION = '1.29.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -2317,6 +2317,9 @@ if (STDIO_MODE) {
     '.ico': 'image/x-icon',
     '.json': 'application/json',
     '.woff2': 'font/woff2',
+    // License notices shipped beside bundled assets (fonts/*-OFL.txt), linked
+    // from the manager footer. Without this they fall through to the SPA.
+    '.txt': 'text/plain; charset=utf-8',
   };
   const serveUi = (res: ServerResponse, pathname: string): void => {
     const rel = pathname === '/' ? 'index.html' : pathname.slice(1);

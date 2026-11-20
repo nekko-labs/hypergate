@@ -1,0 +1,161 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Hypergate design system: Midnight Gate.
+
+   The manager is drawn from the same world as hypergate.app: a midnight canvas,
+   the violet→cyan gate gradient, ice for anything you read as a value, Space
+   Grotesk for display type, JetBrains Mono for kickers and code. Every colour,
+   radius, glow and font the components use is a token here; styles.css should
+   never need a raw hex value outside the brand marks.
+
+   Roles, so a new component picks a token rather than a colour:
+     --paper / --paper-2      the canvas, and wells sunk into it (inputs, code)
+     --card / --card-2 / -3   surfaces that float, their hover, their open state
+     --ink / --ink-2 / --ink-3  primary, supporting and quiet text
+     --line / --line-2        hairlines, and the edge of something you can click
+     --accent (violet)        selection, toggles, the "this is Hypergate" colour
+     --signal (cyan)          kickers, links, active navigation, focus
+     --ice                    values: URLs, tokens, versions, code you copy
+     --grad                   the gate: primary actions, the mark, progress
+     --glow-*                 coloured light, only on something active or primary
+   Status colours (success, warning, danger, info) carry meaning, never decoration.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Fonts ship inside the app (public/fonts, SIL OFL 1.1, notices beside them),
+   so the manager looks the same offline and on a machine without Inter. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter Fallback';
+  font-style: normal;
+  font-weight: 400 700;
+  src: local('Segoe UI'), local('Arial'), local('Helvetica Neue');
+  size-adjust: 106.58%;
+  ascent-override: 96.88%;
+  descent-override: 24.12%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/space-grotesk-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+}
+
+:root {
+  /* Brand constants: the same values in both themes, because they are the gate. */
+  --violet: #7c6bff;
+  --violet-deep: #6d5efc;
+  --cyan: #22d3ee;
+  --grad: linear-gradient(100deg, #7c6bff 0%, #22d3ee 100%);
+  --grad-soft: linear-gradient(100deg, rgba(124, 107, 255, 0.16), rgba(34, 211, 238, 0.1));
+
+  /* Type */
+  --font-d: 'Space Grotesk', 'Inter', 'Inter Fallback', system-ui, sans-serif;
+  --font-b: 'Inter', 'Inter Fallback', -apple-system, 'Segoe UI', system-ui, sans-serif;
+  --font-m: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+
+  /* Shape: a small scale, not one radius everywhere. Buttons, chips and pills are
+     capsules, as on the site; surfaces get softer corners the larger they are. */
+  --r-sm: 8px;
+  --r-md: 11px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-pill: 999px;
+
+  /* Dark (default): Midnight. */
+  --paper: #0a0c16;
+  --paper-2: #0d1020;
+  --card: #111528;
+  --card-2: #171c33;
+  --card-3: #1d2340;
+  --ink: #eef1ff;
+  --ink-2: #aab3d8;
+  --ink-3: #7c87b0;
+  --line: rgba(150, 165, 220, 0.12);
+  --line-2: rgba(150, 165, 220, 0.22);
+
+  --accent: #8b7dff;
+  --accent-2: #22d3ee;
+  --signal: #5ee3f5;
+  --ice: #a5f3fc;
+
+  --success: #34d399;
+  --info: #38bdf8;
+  --danger: #fb7185;
+  --warning: #fbbf24;
+
+  --on-accent: #04060e;
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
+  --ring: color-mix(in srgb, var(--ice) 55%, transparent);
+  --ring-soft: color-mix(in srgb, var(--cyan) 18%, transparent);
+
+  /* Depth is a dark, offset shadow; colour is a separate, blurred glow. */
+  --shadow: 0 1px 2px rgb(2 4 12 / 0.4), 0 14px 36px -20px rgb(2 4 12 / 0.8);
+  --glow-cyan: 0 8px 30px -6px rgba(34, 211, 238, 0.38);
+  --glow-violet: 0 18px 50px -28px rgba(109, 94, 252, 0.75);
+  --edge-violet: inset 0 0 0 1px rgba(124, 107, 255, 0.2);
+  --sheen: linear-gradient(180deg, rgba(165, 180, 255, 0.025), transparent 38%);
+
+  /* The canvas: midnight with the gate's light pooled at two corners, and a
+     faint field of stars (the site's sky, held still). */
+  --ambient:
+    radial-gradient(ellipse 60% 48% at 88% -12%, rgba(109, 94, 252, 0.14), transparent 62%),
+    radial-gradient(ellipse 52% 42% at -6% 108%, rgba(34, 211, 238, 0.07), transparent 60%);
+  --stars-opacity: 0.55;
+
+  --overlay: rgba(4, 6, 14, 0.62);
+  --overlay-shadow: 0 30px 80px -24px rgb(2 4 12 / 0.85), 0 0 90px -36px rgba(109, 94, 252, 0.5);
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --paper: #f6f7fc;
+  --paper-2: #eef0f8;
+  --card: #ffffff;
+  --card-2: #f2f3fa;
+  --card-3: #e9ebf7;
+  --ink: #10132a;
+  --ink-2: #464e70;
+  --ink-3: #6a7294;
+  --line: rgba(40, 50, 110, 0.1);
+  --line-2: rgba(40, 50, 110, 0.18);
+
+  --accent: #6d5efc;
+  --accent-2: #0891b2;
+  --signal: #0e7490;
+  --ice: #0e7490;
+
+  --success: #059669;
+  --info: #2563eb;
+  --danger: #e11d48;
+  --warning: #b45309;
+
+  --ring: color-mix(in srgb, var(--violet-deep) 50%, transparent);
+  --ring-soft: color-mix(in srgb, var(--violet-deep) 16%, transparent);
+  --shadow: 0 1px 2px rgb(16 19 42 / 0.05), 0 10px 28px -16px rgb(16 19 42 / 0.2);
+  --glow-cyan: 0 8px 26px -8px rgba(8, 145, 178, 0.35);
+  --glow-violet: 0 16px 40px -26px rgba(109, 94, 252, 0.45);
+  --edge-violet: inset 0 0 0 1px rgba(109, 94, 252, 0.18);
+  --sheen: none;
+  --ambient:
+    radial-gradient(ellipse 60% 48% at 88% -12%, rgba(109, 94, 252, 0.08), transparent 62%),
+    radial-gradient(ellipse 52% 42% at -6% 108%, rgba(34, 211, 238, 0.06), transparent 60%);
+  --stars-opacity: 0;
+
+  --overlay: rgba(16, 19, 42, 0.38);
+  --overlay-shadow: 0 30px 70px -24px rgb(16 19 42 / 0.35);
+  color-scheme: light;
+}
