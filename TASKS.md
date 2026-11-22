@@ -937,3 +937,8 @@ Philip, the morning after v1.12.0: *"when clicking on about hypergate, it crashe
 - [x] **One horizontal toggle, one action button**: the per-route button wall became a `.seg` toggle of manager labels with a single Install (or Repair + armed Uninstall when installed) that runs the selected route; script routes say they are copy-only in a sentence. `.cli-installs` gained `align-items: flex-start` so the toggle hugs its content. · [spec](SPEC.md#34-ui-shipped) · Added: 2026-08-25 · Done: 2026-08-25
 - [x] **The Updates headline names the version**: "You're on the latest version, v1.13.0". · [spec](SPEC.md#38-desktop-shell--cli-shipped) · Added: 2026-08-25 · Done: 2026-08-25
 - [x] **Verified**: 243 core + 84 daemon JS tests, 57 shell unit tests, `cargo fmt`, `clippy -D warnings`, clean builds, HTTP smoke, all re-run inside this branch's worktree after a stray working-directory mixup was caught and reverted. Live on an isolated daemon: the vercel row renders npm/pnpm/yarn/bun as a toggle with one Install; a real cowsay install ran from the new button (log streaming), the row flipped to Repair/armed Uninstall on the selected route, and a real uninstall left the machine clean; Fly CLI's `curl | sh` route shows the copy-only sentence; Settings shows the versioned headline. Before/after screenshots in the PR. · Added: 2026-08-25 · Done: 2026-08-25
+
+### 1.33.0 employee preview (not released)
+
+- [x] [Portable setup](SPEC.md#nekko-cloud-portable-setup-1330-preview-not-released): allowlisted export, Cloud publish, revision comparison and explicit local apply. No background sync or credential transfer.
+- [ ] Land the console and API, then release the matching Hypergate client.

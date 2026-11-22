@@ -3,17 +3,15 @@
 **Hypergate** (Nekko Labs) — last updated 2 August 2026.
 
 Hypergate is a local-first application. It runs on your machine, stores its data
-on your machine, and has no backend of ours to send anything to. There is no
-account, no telemetry, and no analytics service.
+on your machine, and needs no account. There is no telemetry or analytics service. The optional Nekko Cloud employee preview is described below.
 
 ## What we collect
 
-**Nothing.** Nekko Labs operates no server that receives data from Hypergate, so
-none of the data below ever reaches us.
+If you choose to sign in to Nekko Cloud, your work email is used for authentication. Only when you publish a setup does Cloud store your start-minimized and window-close choices, recognized catalog server IDs, and their enabled flags under your account. The console can read this setup; it is not an end-to-end encrypted backup. It never includes keys, commands, URLs, environment values, account grants, or activity logs.
 
 ## What Hypergate stores, and where
 
-All of it lives under `~/.hypergate` on your own machine (`%USERPROFILE%\.hypergate`
+Local data lives under `~/.hypergate` on your own machine (`%USERPROFILE%\.hypergate`
 on Windows), plus your operating system's keychain:
 
 | Data | Where | Why |
@@ -26,12 +24,13 @@ on Windows), plus your operating system's keychain:
 | Settings and update state | `~/.hypergate/settings.json`, `update.json` | Preferences, and when we last checked for a release |
 
 Deleting `~/.hypergate` (and the `hypergate*` entries in your keychain) removes
-all of it. Removing a server deletes its stored OAuth grant with it.
+the local data, not a previously published Cloud setup. Removing a server deletes its stored OAuth grant with it.
 
 ## When Hypergate uses the network
 
-Never on its own, and never with anything about you attached. Every outbound
-request is one you triggered:
+Network actions include:
+
+- **Nekko Cloud preview**: sign-in, publishing, refreshing, and applying a reviewed setup are explicit actions. Cloud stores only the latest revision and its timestamp.
 
 - **Registry search** — while you type a query into the catalog search, against
   the official MCP registry.
@@ -59,8 +58,7 @@ Review a server before you add it, exactly as you would any other software.
 Usage history is kept for 90 days and server logs for 14, pruned on every boot
 and once a day after that (`HYPERGATE_RETAIN_USAGE_DAYS` and
 `HYPERGATE_RETAIN_LOG_DAYS` change or disable those windows). You can clear the
-lot at any time by deleting the database. Nothing is retained anywhere else,
-because there is nowhere else.
+lot at any time by deleting the database. Usage history and server logs are not synced. The latest published portable setup stays in Cloud until replaced or the Cloud account is deleted.
 
 ## Children
 

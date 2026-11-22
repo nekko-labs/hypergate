@@ -1,3 +1,4 @@
+import { CloudSetup } from './components/CloudSetup';
 import { Fragment, useEffect, useState, useCallback, useId, useRef, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type {
@@ -2766,6 +2767,7 @@ function SettingsView({ gateway, version, u }: { gateway: GatewayInfo | null; ve
         </div>
       </div>
 
+      <CloudSetup master={gateway?.token} onApply={() => { void api.settings().then(setS).catch(() => setErr('Could not refresh settings.')); }} />
       <div className="section-title" id="updates">
         Updates
         <span className="rt">
