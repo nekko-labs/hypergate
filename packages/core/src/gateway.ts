@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema, type Implementation } from '@modelcontextprotocol/sdk/types.js';
+import { gatewayIdentity } from './identity.js';
 import type { Tool, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolPolicy } from '@hypergate/shared';
 import type { Supervisor } from './supervisor.js';
@@ -126,7 +127,7 @@ export const gatewayInstructions = (opts: { lockdown?: boolean } = {}): string =
  */
 export function createGateway(
   supervisor: Supervisor,
-  info: { name: string; version: string } = { name: 'hypergate-gateway', version: '0.1.0' },
+  info: Implementation = gatewayIdentity('0.1.0'),
   opts: {
     caller?: string;
     allowServer?: (serverId: string) => boolean;

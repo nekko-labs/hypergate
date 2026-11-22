@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema, type Implementation } from '@modelcontextprotocol/sdk/types.js';
+import { gatewayIdentity } from './identity.js';
 
 /**
  * A gateway that forwards to *another* gateway instead of owning one.
@@ -30,7 +31,7 @@ export interface ProxyUpstream {
  */
 export function createProxy(
   upstream: ProxyUpstream,
-  info: { name: string; version: string } = { name: 'hypergate-gateway', version: '0.1.0' },
+  info: Implementation = gatewayIdentity('0.1.0'),
 ): Server {
   const server = new Server(info, { capabilities: { tools: {} } });
 
