@@ -15,6 +15,7 @@
     "test": "npm run test -w @hypergate/core && npm run test -w @hypergate/daemon && node --test scripts/dev-banner.test.mjs",
     "build:packages": "npm run build -w @hypergate/shared && npm run build -w @hypergate/core",
     "dev": "node scripts/dev.mjs",
+    "dev:browser": "node scripts/dev.mjs --browser",
     "predev:daemon": "npm run build:packages",
     "dev:daemon": "npm run dev -w @hypergate/daemon",
     "predev:web": "npm run build:packages",

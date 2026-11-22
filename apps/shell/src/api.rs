@@ -790,6 +790,62 @@ pub fn mcp(method: &str, params: serde_json::Value) -> Result<serde_json::Value,
 }
 
 /// The manager UI, which the daemon serves at `/` on the same port.
+///
+/// `HYPERGATE_UI_URL` swaps in another one, which is how `npm run dev` puts
+/// the Vite dev server (hot reload) in the native window instead of the
+/// daemon's built copy. Loopback only: the window hands its page an IPC
+/// channel, and that is not something to give a page from elsewhere.
 pub fn ui_url() -> String {
-    format!("{}/", paths::base_url())
+    std::env::var("HYPERGATE_UI_URL")
+        .ok()
+        .and_then(|url| loopback_url(&url))
+        .unwrap_or_else(|| format!("{}/", paths::base_url()))
+}
+
+/// `url` when it is plain http on this machine (`localhost`, `127.0.0.1`,
+/// `[::1]`), else `None`.
+fn loopback_url(url: &str) -> Option<String> {
+    let url = url.trim();
+    let rest = url.strip_prefix("http://")?;
+    let host_port = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    // No credentials: `http://localhost@evil.example` is a host of evil.example.
+    if host_port.contains('@') {
+        return None;
+    }
+    let host = match host_port.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().map(|h| format!("[{h}]"))?,
+        None => host_port.split(':').next().unwrap_or_default().to_string(),
+    };
+    matches!(host.to_ascii_lowercase().as_str(), "localhost" | "127.0.0.1" | "[::1]").then(|| url.to_string())
+}
+
+#[cfg(test)]
+mod ui_url_tests {
+    use super::loopback_url;
+
+    #[test]
+    fn accepts_loopback_http() {
+        for url in [
+            "http://localhost:5180/",
+            "http://127.0.0.1:5180",
+            "http://[::1]:5180/",
+            "http://LocalHost/",
+        ] {
+            assert_eq!(loopback_url(url).as_deref(), Some(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn refuses_everything_else() {
+        for url in [
+            "https://localhost:5180/",
+            "http://localhost.evil.example/",
+            "http://localhost@evil.example/",
+            "http://evil.example/?localhost",
+            "file:///C:/x.html",
+            "",
+        ] {
+            assert_eq!(loopback_url(url), None, "{url}");
+        }
+    }
 }

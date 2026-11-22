@@ -7,13 +7,19 @@
 // 3. Starts the daemon (`node --watch`, restarts on save) and the manager
 //    (Vite, hot reload), prefixes their output, and once both are up prints
 //    the banner: what runs where, and the keys.
+// 4. Opens the manager in the desktop app: builds the Rust shell
+//    (`cargo run -- app`) and points its native window at Vite, so the window
+//    hot-reloads like a tab would. Quitting the app stops the dev run.
+//    `npm run dev:browser` (or `--browser`) opens a browser tab instead, and so
+//    does a machine without cargo.
 //
 // Keys (in a terminal): q or Enter stops everything it started, Ctrl+C the
-// same (twice to force), r restarts from what is on disk, o opens the manager.
-// HYPERGATE_OPEN=0 (or CI) skips opening the browser; HYPERGATE_PORT and
-// HYPERGATE_DIR run the daemon on its own port and data dir (point the
-// manager at it with HYPERGATE_DEV_API). Dependency-free.
+// same (twice to force), r restarts from what is on disk, o opens the manager
+// in the browser. HYPERGATE_OPEN=0 (or CI) opens neither window nor tab;
+// HYPERGATE_PORT and HYPERGATE_DIR run the daemon on its own port and data dir
+// (point the manager at it with HYPERGATE_DEV_API). Dependency-free.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
@@ -32,6 +38,20 @@ const say = (s) => process.stdout.write(`${paint('2', '[dev]')} ${s}\n`);
 const keys = Boolean(process.stdin.isTTY) || process.env.HYPERGATE_DEV_KEYS === '1';
 // Under scripts/dev.mjs (npm run dev), which starts a fresh launcher on r.
 const looped = process.env.HYPERGATE_DEV_LOOP === '1';
+const noOpen = process.env.HYPERGATE_OPEN === '0' || Boolean(process.env.CI);
+const cargo = isWin ? 'cargo.exe' : 'cargo';
+const hasCargo = () => spawnSync(cargo, ['--version'], { stdio: 'ignore' }).status === 0;
+// The desktop app unless asked for a tab, told to open nothing, or unable to build it.
+const wantsBrowser = process.argv.includes('--browser') || process.env.HYPERGATE_DEV_BROWSER === '1';
+const desktop = !wantsBrowser && !noOpen && hasCargo();
+
+// A scratch data dir is not isolation on its own: the OS keychain is machine-
+// global, and the shell (and the daemon, through it) would write this run's
+// token and OAuth grants over the real ones. Give it its own namespace.
+if (process.env.HYPERGATE_DIR && !process.env.HYPERGATE_KEYCHAIN_NAMESPACE) {
+  const id = createHash('sha256').update(process.env.HYPERGATE_DIR).digest('hex').slice(0, 8);
+  process.env.HYPERGATE_KEYCHAIN_NAMESPACE = `dev-${id}`;
+}
 
 // ── 1. dependencies ─────────────────────────────────────────────────────────
 const lock = join(root, 'package-lock.json');
@@ -78,11 +98,32 @@ const daemon = {
 };
 const vite = join(createRequire(join(root, 'apps', 'web', 'package.json')).resolve('vite/package.json'), '..', 'bin', 'vite.js');
 const web = { name: 'web', color: '36', cwd: join(root, 'apps', 'web'), cmd: process.execPath, args: [vite], shell: false };
+/** The desktop app on the manager at `url`. `--quiet` drops cargo's per-crate lines, not errors. */
+const app = (url) => ({
+  name: 'desktop',
+  color: '34',
+  cmd: cargo,
+  args: ['run', '--quiet', '--manifest-path', join(root, 'apps', 'shell', 'Cargo.toml'), '--', 'app'],
+  env: { ...process.env, HYPERGATE_UI_URL: url },
+  shell: false,
+  // Quitting the app ends the run; a shell that failed to build or start
+  // leaves the daemon and the manager up, for the browser.
+  onExit: (code) => {
+    if (code === 0) {
+      say('The desktop app quit; stopping the rest.');
+      stop();
+    } else {
+      say(paint('33', `The desktop app exited (${code ?? 'killed'}). The rest is still up: press o for the manager in your browser.`));
+    }
+    return true;
+  },
+});
 
 /** Start one process; `onLine` sees each line of its output, colours stripped. */
 function start(p, onLine) {
   const child = spawn(p.cmd, p.args, {
     cwd: p.cwd ?? root,
+    env: p.env ?? process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: p.shell,
     // Its own process group off Windows, so stopping reaches what it started.
@@ -108,7 +149,7 @@ function start(p, onLine) {
   pipe(child.stdout, process.stdout);
   pipe(child.stderr, process.stderr);
   child.on('exit', (code) => {
-    if (!stopping) {
+    if (!stopping && !p.onExit?.(code)) {
       say(`${p.name} exited (${code ?? 'killed'}); stopping the rest.`);
       stop();
     }
@@ -226,7 +267,6 @@ if (keys) {
 }
 
 // ── browser ─────────────────────────────────────────────────────────────────
-const noOpen = process.env.HYPERGATE_OPEN === '0' || process.env.CI;
 let opened = false;
 function openBrowser(url, asked = false) {
   if (!asked && (opened || noOpen)) return;
@@ -286,9 +326,16 @@ const maybeBanner = () => {
       scratch: Boolean(process.env.HYPERGATE_DIR),
       keys,
       restart: looped,
+      desktop,
       color,
     }) + '\n',
   );
+  // Only now: started before the daemon answers, the shell would launch a
+  // daemon of its own, from apps/daemon/dist, which a dev tree rarely has fresh.
+  if (desktop) {
+    say('Opening the desktop app (cargo builds it first; the first build takes a few minutes)...');
+    start(app(managerUrl));
+  }
 };
 
 if (!stopping) {
@@ -320,9 +367,12 @@ if (!stopping) {
     const m = line.match(/Local:\s*(https?:\/\/\S+)/);
     if (m && !managerUrl) {
       managerUrl = m[1];
-      openBrowser(managerUrl);
+      if (!desktop) openBrowser(managerUrl);
       maybeBanner();
     }
   });
-  if (keys) say(`Press q or Enter to stop (twice to force)${looped ? ', r to restart after a pull' : ''}, o to open the manager.`);
+  if (!desktop && !noOpen && !wantsBrowser) {
+    say(paint('33', 'cargo is not on PATH, so the manager opens in your browser instead of the desktop app (https://rustup.rs).'));
+  }
+  if (keys) say(`Press q or Enter to stop (twice to force)${looped ? ', r to restart after a pull' : ''}, o to open the manager${desktop ? ' in your browser' : ''}.`);
 }
