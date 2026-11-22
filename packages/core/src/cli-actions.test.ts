@@ -173,6 +173,23 @@ describe('parseScriptShape', () => {
     expect(parseScriptShape('powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"')?.shell).toBe(
       'powershell',
     );
+    expect(parseScriptShape('curl -fsSL https://antigravity.google/cli/install.sh | bash')?.url).toBe(
+      'https://antigravity.google/cli/install.sh',
+    );
+    expect(parseScriptShape('powershell -c "irm https://antigravity.google/cli/install.ps1 | iex"')?.shell).toBe('powershell');
+    // Exact host only: a subdomain or a lookalike of Google's is not vouched for.
+    expect(parseScriptShape('curl -fsSL https://evil.antigravity.google/cli/install.sh | bash')).toBeNull();
+    expect(parseScriptShape('curl -fsSL https://antigravity.google.evil.example/cli/install.sh | bash')).toBeNull();
+  });
+
+  it('ships Antigravity CLI with both of Google\'s installer scripts as curated, runnable routes', () => {
+    const agy = KNOWN_CLIS.find((t) => t.id === 'antigravity');
+    expect(agy?.command).toBe('agy');
+    const linux = cliCatalogEntry(agy!, 'linux').installs!.map((o) => o.command);
+    const windows = cliCatalogEntry(agy!, 'win32').installs!.map((o) => o.command);
+    expect(linux).toEqual(['curl -fsSL https://antigravity.google/cli/install.sh | bash']);
+    expect(windows).toContain('powershell -c "irm https://antigravity.google/cli/install.ps1 | iex"');
+    for (const command of windows) expect(parseCuratedScript(command), command).not.toBeNull();
   });
 
   it('rejects anything outside the grammar', () => {

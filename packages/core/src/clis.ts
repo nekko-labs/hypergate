@@ -45,6 +45,26 @@ export const KNOWN_CLIS: CliTool[] = [
     publisher: 'Anthropic',
   },
   {
+    // Google retired Google-account sign-in for Gemini CLI on June 18, 2026;
+    // Antigravity CLI is where a Google AI Pro/Ultra plan now runs from a
+    // terminal, and `agy acp` is how other apps drive it on that plan.
+    id: 'antigravity',
+    name: 'Antigravity CLI',
+    command: 'agy',
+    category: 'mcp',
+    description:
+      "Google's terminal agent. Runs Gemini on your Google AI Pro/Ultra plan from the shell, and `agy acp` lets editors and apps drive it over the Agent Client Protocol.",
+    homepage: 'https://antigravity.google/docs/getting-started?tab=cli',
+    install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    official: true,
+    recommended: true,
+    publisher: 'Google',
+    auth: {
+      command: 'agy',
+      note: 'Interactive: the first run asks for a theme and workspace trust, then opens the browser for Google sign-in.',
+    },
+  },
+  {
     id: 'nekko-agent',
     name: 'Nekko Agent',
     command: 'nekko-agent',
@@ -113,6 +133,10 @@ const EXTRA_INSTALLS: Record<string, CliInstallOption[]> = {
     { label: 'Homebrew', command: 'brew install --cask claude-code', platforms: ['darwin'] },
     { label: 'winget', command: 'winget install Anthropic.ClaudeCode', platforms: ['win32'] },
     { label: 'npm', command: 'npm install -g @anthropic-ai/claude-code' },
+  ],
+  // Google documents only its own installer scripts (no winget, Homebrew or npm).
+  antigravity: [
+    { label: 'PowerShell', command: 'powershell -c "irm https://antigravity.google/cli/install.ps1 | iex"', platforms: ['win32'] },
   ],
   node: [
     { label: 'winget', command: 'winget install OpenJS.NodeJS.LTS', platforms: ['win32'] },
