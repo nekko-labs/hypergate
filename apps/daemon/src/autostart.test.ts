@@ -183,6 +183,14 @@ describe('repairing a login item left behind by an update or a move', () => {
   });
 
   it.runIf(process.platform === 'linux')('rewrites a stale entry to start this install', async () => {
+    // An installed `hypergated` on PATH is what a real install launches. Without
+    // one, the only command a test can offer is its own worker, which repair
+    // rightly refuses to write.
+    const fs = await import('node:fs');
+    const bin = join(home, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(join(bin, 'hypergated'), '#!/bin/sh\n', { mode: 0o755 });
+    process.env.PATH = `${bin}:${process.env.PATH ?? ''}`;
     const autostart = await load();
     autostart.set(true);
     const entry = join(home, '.config', 'autostart', 'hypergate.desktop');
@@ -191,7 +199,7 @@ describe('repairing a login item left behind by an update or a move', () => {
     expect(autostart.registeredCommand()).toBe('/gone/checkout/hypergated');
     delete process.env.VITEST;
     expect(autostart.repair()).toBe('/gone/checkout/hypergated no longer exists');
-    expect(autostart.registeredCommand()).not.toContain('/gone/');
+    expect(autostart.registeredCommand()).toBe(join(bin, 'hypergated'));
   });
 
   it('refuses to write a command that is stale itself (a test run)', async () => {
