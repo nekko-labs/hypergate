@@ -28,6 +28,9 @@ const saved = { ...process.env };
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'hg-autostart-'));
   process.env.XDG_CONFIG_HOME = join(home, '.config');
+  // Never the real "Hypergate" Run value: a test that touched it once left the
+  // user's login item running a test worker from a deleted worktree.
+  process.env.HYPERGATE_AUTOSTART_VALUE = `Hypergate-test-${process.pid}`;
   shell.hasShell.mockReturnValue(false);
   shell.shellBin.mockReturnValue(undefined);
   shell.setAutostart.mockReturnValue(true);
@@ -127,7 +130,6 @@ describe.runIf(process.platform === 'linux')('linux: an XDG autostart entry', ()
 describe.runIf(process.platform === 'win32')('windows: the HKCU Run key', () => {
   it('round-trips through the real registry', async () => {
     const autostart = await load();
-    const wasEnabled = autostart.enabled();
     try {
       autostart.set(true);
       expect(autostart.enabled()).toBe(true);
@@ -137,8 +139,65 @@ describe.runIf(process.platform === 'win32')('windows: the HKCU Run key', () => 
       // idempotent, or a second click reports a failure for a no-op.
       expect(() => autostart.set(false)).not.toThrow();
     } finally {
-      if (wasEnabled) autostart.set(true);
-      else autostart.set(false);
+      // A throwaway value (HYPERGATE_AUTOSTART_VALUE), so cleaning up is deleting it.
+      autostart.set(false);
     }
+  });
+});
+
+describe('repairing a login item left behind by an update or a move', () => {
+  const exists = (paths: string[]) => (p: string) => paths.includes(p);
+
+  it('flags the test worker an old test wrote into the real Run key', async () => {
+    const { staleReason } = await load();
+    const written =
+      String.raw`"C:\Program Files\nodejs\node.exe" --experimental-import-meta-resolve --require C:/Users/me/code/.worktrees/hg/node_modules/vitest/suppress-warnings.cjs --conditions node C:\Users\me\code\.worktrees\hg\node_modules\vitest\dist\workers\forks.js`;
+    expect(staleReason(written, () => true)).toBe('it starts a test worker, not Hypergate');
+  });
+
+  it('flags a program or script that is gone, and passes one that is there', async () => {
+    const { staleReason } = await load();
+    const tray = String.raw`C:\Users\me\AppData\Local\Programs\Hypergate\hypergate.exe`;
+    expect(staleReason(`"${tray}" tray`, exists([]))).toBe(`${tray} no longer exists`);
+    expect(staleReason(`"${tray}" tray`, exists([tray]))).toBeUndefined();
+    const node = '/usr/local/bin/node';
+    const script = '/home/me/old-checkout/apps/daemon/src/index.ts';
+    expect(staleReason(`${node} --experimental-strip-types ${script}`, exists([node]))).toBe(`${script} no longer exists`);
+    expect(staleReason(`${node} --experimental-strip-types ${script}`, exists([node, script]))).toBeUndefined();
+    // A bare name on PATH is the OS's to resolve; not ours to call stale.
+    expect(staleReason('hypergated', exists([]))).toBeUndefined();
+  });
+
+  it('splits a quoted command line into its arguments', async () => {
+    const { splitCommand } = await load();
+    expect(splitCommand(String.raw`"C:\Program Files\x\hypergate.exe" tray`)).toEqual([String.raw`C:\Program Files\x\hypergate.exe`, 'tray']);
+    expect(splitCommand('/usr/bin/node a.js  --flag')).toEqual(['/usr/bin/node', 'a.js', '--flag']);
+  });
+
+  it('leaves no login item alone: an update never turns one on', async () => {
+    delete process.env.VITEST;
+    const autostart = await load();
+    if (autostart.enabled()) autostart.set(false);
+    expect(autostart.repair()).toBeUndefined();
+    expect(autostart.enabled()).toBe(false);
+  });
+
+  it.runIf(process.platform === 'linux')('rewrites a stale entry to start this install', async () => {
+    const autostart = await load();
+    autostart.set(true);
+    const entry = join(home, '.config', 'autostart', 'hypergate.desktop');
+    const text = readFileSync(entry, 'utf8').replace(/^Exec=.*$/m, 'Exec=/gone/checkout/hypergated');
+    (await import('node:fs')).writeFileSync(entry, text);
+    expect(autostart.registeredCommand()).toBe('/gone/checkout/hypergated');
+    delete process.env.VITEST;
+    expect(autostart.repair()).toBe('/gone/checkout/hypergated no longer exists');
+    expect(autostart.registeredCommand()).not.toContain('/gone/');
+  });
+
+  it('refuses to write a command that is stale itself (a test run)', async () => {
+    const autostart = await load();
+    // Under vitest the last-resort launch command is the test worker.
+    delete process.env.VITEST;
+    expect(autostart.staleReason(autostart.startupCommand() ?? '')).toBeDefined();
   });
 });

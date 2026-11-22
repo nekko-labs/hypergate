@@ -42,6 +42,7 @@ import {
   agentConnectTarget,
   configPathFor,
   connectArgv,
+  migrateLegacyAgentNames,
   connectTarget,
   defaultShellFor,
   formatCommand,
@@ -207,7 +208,7 @@ const TOKEN_KEY = 'bearerToken';
 // otherwise get a daemon on 7777 that the CLI then looks for somewhere else.
 const PORT = Number(process.env.HYPERGATE_PORT ?? process.env.PORT ?? 7777);
 const LISTEN_HOST = '127.0.0.1';
-const VERSION = '1.30.0';
+const VERSION = '1.31.0';
 /**
  * `--stdio` is a transient spawn by an agent harness, not the resident daemon.
  * It deliberately does NOT open the durable store: the rolled-up aggregates are
@@ -2184,6 +2185,17 @@ if (STDIO_MODE) {
   // Connected agents (scoped gateway tokens). Bumping lastUsed is debounced.
   let clients = loadClients();
   const persistClients = debounce(() => saveClients(clients), 1500);
+  // Update migration: an agent saved under one of Nekko Agent's earlier names
+  // (Kotrain, Agent Nekko, ...) becomes "Nekko Agent", so the app, which now
+  // connects as `nekko-agent`, finds its own token and permissions again.
+  if (!STDIO_MODE) {
+    const renamed = migrateLegacyAgentNames(clients);
+    if (renamed.length) {
+      saveClients(clients);
+      process.stderr.write(`[migrate] agent ${renamed.join(', ')} is now "Nekko Agent" (saved under an earlier name)
+`);
+    }
+  }
 
   // Agent instruction files (see instructions.ts). The key a harness's block
   // names is the stable stem of the agent connected *as* that harness, so the
@@ -4028,5 +4040,16 @@ if (STDIO_MODE) {
       );
     }
     process.stdout.write(`hypergated up — UI + API on http://localhost:${PORT} · MCP gateway at /mcp\n`);
+    // Update migration: a login item left pointing at a moved or removed copy
+    // (or at a test worker) is pointed back at this install. After listening,
+    // so a slow reg.exe never delays the gateway coming up.
+    if (!STDIO_MODE) setImmediate(() => {
+      try {
+        const fixed = autostart.repair();
+        if (fixed) process.stderr.write(`[migrate] login item fixed (${fixed}); it now runs ${autostart.startupCommand() ?? 'this install'}\n`);
+      } catch (e) {
+        process.stderr.write(`[migrate] could not fix the login item: ${(e as Error).message}\n`);
+      }
+    });
   });
 }

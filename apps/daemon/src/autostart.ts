@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { delimiter, dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 
 import * as shell from './shell.ts';
@@ -27,6 +27,13 @@ import * as shell from './shell.ts';
 const NAME = 'Hypergate';
 const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const MAC_LABEL = 'app.hypergate.daemon';
+/**
+ * The Run value we own. Tests point this at a throwaway value: an earlier test
+ * round-tripped the real "Hypergate" value and "restored" it with the test
+ * worker's own command line, so the user's login item started a vitest worker
+ * from a worktree that was later deleted, and Hypergate stopped starting.
+ */
+const runValue = (): string => process.env.HYPERGATE_AUTOSTART_VALUE || NAME;
 
 const WIN = process.platform === 'win32';
 const MAC = process.platform === 'darwin';
@@ -119,7 +126,7 @@ const execEsc = (s: string): string => s.replaceAll('\\', '\\\\').replaceAll(' '
 /** Is the login item present right now? Reads real OS state, never a cached preference. */
 export const enabled = (): boolean => {
   if (shell.hasShell()) return shell.autostartEnabled();
-  if (WIN) return regRun(['query', RUN_KEY, '/v', NAME]) !== undefined;
+  if (WIN) return regRun(['query', RUN_KEY, '/v', runValue()]) !== undefined;
   if (MAC) return existsSync(plistPath());
   return existsSync(desktopPath());
 };
@@ -136,11 +143,11 @@ export const set = (on: boolean): void => {
   if (WIN) {
     if (!on) {
       // Deleting a value that isn't there is success: this must be idempotent.
-      if (regRun(['query', RUN_KEY, '/v', NAME]) !== undefined && regRun(['delete', RUN_KEY, '/v', NAME, '/f']) === undefined)
+      if (regRun(['query', RUN_KEY, '/v', runValue()]) !== undefined && regRun(['delete', RUN_KEY, '/v', runValue(), '/f']) === undefined)
         throw new Error('could not remove the Run key value');
       return;
     }
-    if (regRun(['add', RUN_KEY, '/v', NAME, '/t', 'REG_SZ', '/d', startupCommand()!, '/f']) === undefined)
+    if (regRun(['add', RUN_KEY, '/v', runValue(), '/t', 'REG_SZ', '/d', startupCommand()!, '/f']) === undefined)
       throw new Error('could not write the Run key value');
     return;
   }
@@ -195,3 +202,81 @@ X-GNOME-Autostart-enabled=true
 
 /** The raw argv a login item would run. Exported for tests and diagnostics. */
 export const launchCommandArgv = launchArgv;
+
+/** Quote one argument for a displayable command line. */
+const quote = (a: string): string => (/[\s"]/.test(a) ? `"${a.replaceAll('"', '\\"')}"` : a);
+
+/** The command a registered login item runs, read back from the OS; undefined when there is none. */
+export const registeredCommand = (): string | undefined => {
+  if (WIN) {
+    const out = regRun(['query', RUN_KEY, '/v', runValue()]);
+    const line = out?.split(/\r?\n/).find((l) => /\sREG_(?:EXPAND_)?SZ\s/.test(l));
+    return line?.replace(/^.*?\sREG_(?:EXPAND_)?SZ\s+/, '').trim() || undefined;
+  }
+  try {
+    if (MAC) {
+      const xml = readFileSync(plistPath(), 'utf8');
+      const array = xml.match(/<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/)?.[1] ?? '';
+      const args = [...array.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) =>
+        m[1].replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&'),
+      );
+      return args.length ? args.map(quote).join(' ') : undefined;
+    }
+    const exec = readFileSync(desktopPath(), 'utf8').split('\n').find((l) => l.startsWith('Exec='));
+    if (!exec) return undefined;
+    // Back to a quoted command line: an escaped space stays inside its argument.
+    return exec
+      .slice('Exec='.length)
+      .split(/(?<!\\) /)
+      .map((a) => quote(a.replaceAll('\\ ', ' ').replaceAll('\\\\', '\\')))
+      .join(' ');
+  } catch {
+    return undefined;
+  }
+};
+
+/** An absolute path on this OS, or a Windows drive path on any OS (so the check reads the same everywhere). */
+const absolute = (p: string): boolean => isAbsolute(p) || /^[A-Za-z]:[\\/]/.test(p);
+
+/** A command line split into its arguments, honouring double quotes. */
+export const splitCommand = (command: string): string[] =>
+  [...command.matchAll(/"((?:[^"\\]|\\.)*)"|(\S+)/g)].map((m) => (m[1] !== undefined ? m[1].replaceAll('\\"', '"') : m[2]));
+
+/**
+ * Why a login item's command no longer starts Hypergate, or undefined when it
+ * still does. Stale when it runs a test worker, or when the program (or, for
+ * `node <script>`, the script) it names is gone: a moved checkout, a deleted
+ * worktree, an uninstalled copy, or a node upgrade that moved node itself.
+ */
+export const staleReason = (command: string, exists: (path: string) => boolean = existsSync): string | undefined => {
+  const argv = splitCommand(command);
+  const program = argv[0];
+  if (!program) return 'it is empty';
+  if (argv.some((a) => /[\\/]vitest[\\/]/i.test(a))) return 'it starts a test worker, not Hypergate';
+  if (absolute(program) && !exists(program)) return `${program} no longer exists`;
+  if (/^node(?:\.exe)?$/i.test(basename(program))) {
+    const script = argv.slice(1).find((a) => !a.startsWith('-'));
+    if (script && absolute(script) && !exists(script)) return `${script} no longer exists`;
+  }
+  return undefined;
+};
+
+/**
+ * Update migration for the login item: when one is registered but would no
+ * longer start Hypergate (see `staleReason`), point it at this install. Never
+ * turns on a login item the user did not have, and never writes one that would
+ * be stale itself (a test run, a daemon started from a path that is gone).
+ * Returns what was wrong, or undefined when nothing needed doing.
+ */
+export const repair = (): string | undefined => {
+  if (process.env.VITEST) return undefined;
+  const current = registeredCommand();
+  if (!current) return undefined;
+  const why = staleReason(current);
+  if (!why) return undefined;
+  const bin = shell.shellBin();
+  const next = bin ? `${quote(bin)} tray` : startupCommand();
+  if (!next || staleReason(next)) return undefined;
+  set(true);
+  return why;
+};
