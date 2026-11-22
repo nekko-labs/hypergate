@@ -622,6 +622,7 @@ Philip, after Hypergate stopped starting: *"it looks like hypergate won't open n
 - [x] **Tests stay off the user's machine**: the Run key test uses a throwaway value (`HYPERGATE_AUTOSTART_VALUE`), the shell's integration tests a scratch `HYPERGATE_DIR`. · Added: 2026-11-23 · Done: 2026-11-23
 - [x] **Nekko Agent snippet path** is `~/.nekko-agent/settings.json`. · Added: 2026-11-23 · Done: 2026-11-23
 - [x] **Verified**: core and autostart tests (new: stale detection incl. the exact command the old test wrote, repair never enabling, the rename and its ambiguity rules), shell sandbox tests with the scratch dir; the real Run value unchanged by a Windows test run. Daemon unit tests otherwise unchanged (7 Windows-only failures also on main). · Added: 2026-11-23 · Done: 2026-11-23
+- [x] **Only installed copies repair** (v1.32.1): `isInstalledRun` skips a daemon run from the checkout (`apps/daemon/src|dist/index`) or with `HYPERGATE_DIR`. Found when an isolated `npm run dev` rewrote the real Run value to point at its worktree; the value was restored by hand. · Added: 2026-11-23 · Done: 2026-11-23
 - [ ] **Start Menu / Launchpad launcher repair** when its target is gone (the shell owns it: `hypergate shortcut install` on start when the stamp exists and the target does not). · Added: 2026-11-23
 
 ## Epic 70: earn the site's claims (v1.30.0)

@@ -262,14 +262,32 @@ export const staleReason = (command: string, exists: (path: string) => boolean =
 };
 
 /**
+ * Is this daemon an installed copy, as opposed to a source checkout or an
+ * isolated instance? A checkout runs `apps/daemon/src/index.ts` (dev) or
+ * `apps/daemon/dist/index.js` (a local build); an isolated instance sets
+ * `HYPERGATE_DIR`. Exported for tests.
+ */
+export const isInstalledRun = (
+  argv1: string | undefined = process.argv[1],
+  env: NodeJS.ProcessEnv = process.env,
+): boolean => {
+  if (env.HYPERGATE_DIR) return false;
+  return !(argv1 && /[\\/]apps[\\/]daemon[\\/](?:src|dist)[\\/]index\.[cm]?[jt]s$/i.test(argv1));
+};
+
+/**
  * Update migration for the login item: when one is registered but would no
  * longer start Hypergate (see `staleReason`), point it at this install. Never
  * turns on a login item the user did not have, and never writes one that would
  * be stale itself (a test run, a daemon started from a path that is gone).
+ * Only an installed copy repairs: a daemon run from a source checkout (`npm
+ * run dev`) or against its own data dir (`HYPERGATE_DIR`) shares the machine's
+ * one login item with the real install, and must leave it alone.
  * Returns what was wrong, or undefined when nothing needed doing.
  */
 export const repair = (): string | undefined => {
   if (process.env.VITEST) return undefined;
+  if (!isInstalledRun()) return undefined;
   const current = registeredCommand();
   if (!current) return undefined;
   const why = staleReason(current);
