@@ -69,7 +69,7 @@ describe('connect targets', () => {
 
   it('only claims a config path for clients that read one', () => {
     expect(configPathFor('cursor', 'linux')).toBe('~/.cursor/mcp.json');
-    expect(configPathFor('nekko-agent', 'linux')).toBe('~/.nekko/settings.json');
+    expect(configPathFor('nekko-agent', 'linux')).toBe('~/.nekko-agent/settings.json');
     expect(configPathFor('openclaw', 'linux')).toBe('~/.openclaw/openclaw.json');
     expect(configPathFor('hermes', 'linux')).toBe('~/.hermes/config.yaml');
     expect(configPathFor('warp', 'linux')).toBe('~/.warp/.mcp.json');

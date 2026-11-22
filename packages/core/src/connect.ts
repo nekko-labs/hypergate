@@ -163,7 +163,7 @@ export const configPathFor = (id: string, platform: string): string | undefined 
     case 'cursor':
       return '~/.cursor/mcp.json';
     case 'nekko-agent':
-      return '~/.nekko/settings.json';
+      return '~/.nekko-agent/settings.json';
     case 'openclaw':
       return '~/.openclaw/openclaw.json';
     case 'hermes':
