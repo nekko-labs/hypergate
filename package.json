@@ -13,8 +13,12 @@
   "scripts": {
     "build": "npm run build -w @hypergate/shared && npm run build -w @hypergate/core && npm run build -w @hypergate/daemon && npm run build -w @hypergate/web",
     "test": "npm run test -w @hypergate/core && npm run test -w @hypergate/daemon",
+    "build:packages": "npm run build -w @hypergate/shared && npm run build -w @hypergate/core",
+    "predev": "npm run build:packages",
     "dev": "node scripts/dev-all.mjs",
+    "predev:daemon": "npm run build:packages",
     "dev:daemon": "npm run dev -w @hypergate/daemon",
+    "predev:web": "npm run build:packages",
     "dev:web": "npm run dev -w @hypergate/web",
     "daemon": "node --experimental-strip-types apps/daemon/src/index.ts",
     "smoke:http": "node scripts/smoke-http.mjs",
