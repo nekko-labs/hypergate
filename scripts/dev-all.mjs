@@ -5,9 +5,13 @@
 import { spawn } from 'node:child_process';
 
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+// `npm run dev` rebuilds packages/shared + packages/core first (the `predev` hook):
+// both apps import them through dist/, so a pull that adds an export would
+// otherwise crash the daemon. Call the workspace scripts directly so the
+// predev:daemon / predev:web hooks don't rebuild them twice more.
 const procs = [
-  { name: 'daemon', color: '\x1b[35m', args: ['run', 'dev:daemon'] },
-  { name: 'web', color: '\x1b[36m', args: ['run', 'dev:web'] },
+  { name: 'daemon', color: '\x1b[35m', args: ['run', 'dev', '-w', '@hypergate/daemon'] },
+  { name: 'web', color: '\x1b[36m', args: ['run', 'dev', '-w', '@hypergate/web'] },
 ];
 const reset = '\x1b[0m';
 const children = [];
