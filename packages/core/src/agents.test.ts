@@ -4,6 +4,7 @@ import {
   agentSlug,
   isServerAllowed,
   matchAgents,
+  migrateLegacyAgentNames,
   resolveAgent,
   setServerAllowed,
 } from './agents.js';
@@ -152,5 +153,39 @@ describe('resolveAgent', () => {
 
   it('refuses to guess between two matches, because the answer is a credential', () => {
     expect(resolveAgent(twins, 'claude-code')).toBeUndefined();
+  });
+});
+
+describe('agents saved under Nekko Agent\'s earlier names', () => {
+  const agent = (id: string, name: string, extra: Record<string, string> = {}) => ({ id, name, ...extra });
+
+  it('renames the Kotrain agent so `nekko-agent` finds it, keeping its id', () => {
+    const list = [agent('claude-code-a8ce', 'Claude Code'), agent('kotrain-0fd8', 'Kotrain', { target: 'kotrain' })];
+    expect(migrateLegacyAgentNames(list)).toEqual(['kotrain-0fd8']);
+    expect(list[1]).toEqual({ id: 'kotrain-0fd8', name: 'Nekko Agent', target: 'nekko-agent' });
+    expect(resolveAgent(list, 'nekko-agent')?.id).toBe('kotrain-0fd8');
+    // Idempotent: a second start changes nothing.
+    expect(migrateLegacyAgentNames(list)).toEqual([]);
+  });
+
+  it('leaves legacy agents alone when Nekko Agent already has one', () => {
+    const list = [agent('nekko-agent-1a2b', 'Nekko Agent'), agent('kotrain-0fd8', 'Kotrain')];
+    expect(migrateLegacyAgentNames(list)).toEqual([]);
+    expect(list[1].name).toBe('Kotrain');
+  });
+
+  it('renames only the most recently used one, so the key stays unambiguous', () => {
+    const list = [
+      agent('open-paw-1111', 'Open Paw', { lastUsed: '2026-07-01T00:00:00Z' }),
+      agent('agent-nekko-2222', 'Agent Nekko', { lastUsed: '2026-10-01T00:00:00Z' }),
+    ];
+    expect(migrateLegacyAgentNames(list)).toEqual(['agent-nekko-2222']);
+    expect(matchAgents(list, 'nekko-agent').map((a) => a.id)).toEqual(['agent-nekko-2222']);
+  });
+
+  it('touches nothing else', () => {
+    const list = [agent('cursor-1', 'Cursor')];
+    expect(migrateLegacyAgentNames(list)).toEqual([]);
+    expect(list).toEqual([agent('cursor-1', 'Cursor')]);
   });
 });

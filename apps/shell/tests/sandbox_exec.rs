@@ -11,6 +11,17 @@ use std::process::Command;
 /// Path to the binary cargo just built for this test run.
 const BIN: &str = env!("CARGO_BIN_EXE_hypergate");
 
+/// The binary, pointed at a scratch data dir. Without `HYPERGATE_DIR` it logs
+/// to (and reads the keychain-backed token for) the real `~/.hypergate` of
+/// whoever runs the tests, which is how test noise ended up in a user's log.
+fn hypergate() -> Command {
+    let dir = std::env::temp_dir().join(format!("hypergate-shell-tests-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let mut cmd = Command::new(BIN);
+    cmd.env("HYPERGATE_DIR", dir);
+    cmd
+}
+
 /// `sh -c` / `cmd /c` wrapper, so one test body works on every platform.
 fn shell_args(script: &str) -> Vec<String> {
     if cfg!(windows) {
@@ -23,7 +34,7 @@ fn shell_args(script: &str) -> Vec<String> {
 /// Run `hypergate sandbox-exec <flags> -- <shell script>`, returning
 /// (exit code, stdout, stderr).
 fn sandbox_exec(flags: &[&str], script: &str) -> (i32, String, String) {
-    let out = Command::new(BIN)
+    let out = hypergate()
         .arg("sandbox-exec")
         .args(flags)
         .arg("--")
@@ -102,7 +113,7 @@ fn strict_mode_refuses_rather_than_pretending() {
     } else {
         ["--cpu", "50"]
     };
-    let out = Command::new(BIN)
+    let out = hypergate()
         .arg("sandbox-exec")
         .args(flag)
         .arg("--strict")
@@ -124,7 +135,7 @@ fn strict_mode_refuses_rather_than_pretending() {
 
 #[test]
 fn reports_a_missing_program_clearly() {
-    let out = Command::new(BIN)
+    let out = hypergate()
         .args(["sandbox-exec", "--", "hypergate-no-such-binary-xyz"])
         .output()
         .expect("could not run the hypergate binary");
@@ -135,7 +146,7 @@ fn reports_a_missing_program_clearly() {
 
 #[test]
 fn requires_a_command_after_the_separator() {
-    let out = Command::new(BIN)
+    let out = hypergate()
         .args(["sandbox-exec"])
         .output()
         .expect("could not run the hypergate binary");
@@ -146,7 +157,7 @@ fn requires_a_command_after_the_separator() {
 
 #[test]
 fn help_lists_every_subcommand() {
-    let out = Command::new(BIN)
+    let out = hypergate()
         .arg("--help")
         .output()
         .expect("could not run the hypergate binary");
@@ -185,7 +196,7 @@ fn help_lists_every_subcommand() {
 /// failure has to leave stdout empty rather than explain itself there.
 #[test]
 fn mcp_headers_keeps_stdout_clean_when_it_fails() {
-    let out = Command::new(BIN)
+    let out = hypergate()
         .args(["mcp-headers", "claude-code"])
         .env("HYPERGATE_PORT", "7999")
         .output()
@@ -205,7 +216,7 @@ fn mcp_headers_keeps_stdout_clean_when_it_fails() {
 #[test]
 fn server_commands_fail_cleanly_with_no_daemon() {
     for args in [vec!["catalog"], vec!["tools"], vec!["list"], vec!["rm", "nope"]] {
-        let out = Command::new(BIN)
+        let out = hypergate()
             .args(&args)
             .env("HYPERGATE_PORT", "7999")
             .output()
@@ -220,7 +231,7 @@ fn server_commands_fail_cleanly_with_no_daemon() {
 fn status_succeeds_even_with_no_daemon_running() {
     // "Is it up?" answered honestly is a successful query, not an error, so this
     // is safe to run in CI where no daemon exists.
-    let out = Command::new(BIN)
+    let out = hypergate()
         .arg("status")
         // Point at a port nothing is listening on.
         .env("HYPERGATE_PORT", "7999")

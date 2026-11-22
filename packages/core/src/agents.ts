@@ -109,3 +109,35 @@ export function resolveAgent<T extends { id: string; name: string }>(
   const found = matchAgents(agents, key);
   return found.length === 1 ? found[0] : undefined;
 }
+
+/**
+ * Nekko Agent's earlier names, as agent slugs. The app connects as
+ * `nekko-agent`; an agent saved under one of these (Kotrain, Agent Nekko,
+ * Nekkos, Open Paw) is the same app from before a rename.
+ */
+export const NEKKO_AGENT_LEGACY_SLUGS: readonly string[] = ['agent-nekko', 'kotrain', 'nekkos', 'open-paw'];
+
+/**
+ * Brings agents saved under Nekko Agent's earlier names forward, so an app that
+ * now connects as `nekko-agent` finds its own agent (token, server and tool
+ * permissions, history) instead of minting a second one beside it.
+ *
+ * Renames the most recently used legacy agent to "Nekko Agent" (and its
+ * `target` to `nekko-agent`), keeping its id so audit history and instruction
+ * blocks keyed on it still resolve. Does nothing when an agent already answers
+ * to `nekko-agent`: two would make the key ambiguous, and the app refuses an
+ * ambiguous key rather than guess. Idempotent. Returns the renamed ids.
+ */
+export function migrateLegacyAgentNames<T extends { id: string; name: string; target?: string; lastUsed?: string; createdAt?: string }>(
+  agents: T[],
+): string[] {
+  if (matchAgents(agents, 'nekko-agent').length) return [];
+  const legacy = (a: T): boolean =>
+    NEKKO_AGENT_LEGACY_SLUGS.includes(agentSlug(a.name)) || (a.target !== undefined && NEKKO_AGENT_LEGACY_SLUGS.includes(a.target));
+  const when = (a: T): string => a.lastUsed ?? a.createdAt ?? '';
+  const pick = agents.filter(legacy).sort((a, b) => when(b).localeCompare(when(a)))[0];
+  if (!pick) return [];
+  pick.name = 'Nekko Agent';
+  if (pick.target !== undefined) pick.target = 'nekko-agent';
+  return [pick.id];
+}
