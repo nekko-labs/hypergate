@@ -202,6 +202,31 @@ describe('repairing a login item left behind by an update or a move', () => {
     expect(autostart.registeredCommand()).toBe(join(bin, 'hypergated'));
   });
 
+  it('only an installed copy repairs: never a checkout or an isolated instance', async () => {
+    const { isInstalledRun } = await load();
+    // `npm run dev` and a local build run the daemon out of the checkout. One
+    // such run rewrote a developer's real login item to point at a worktree.
+    expect(isInstalledRun(String.raw`C:\Users\me\code\hypergate\apps\daemon\src\index.ts`, {})).toBe(false);
+    expect(isInstalledRun('/home/me/hypergate/apps/daemon/dist/index.js', {})).toBe(false);
+    // A daemon on its own data dir shares the machine's one login item.
+    expect(isInstalledRun('/usr/lib/node_modules/hypergated/bin/hypergated.mjs', { HYPERGATE_DIR: '/tmp/x' })).toBe(false);
+    // Installed: the npm package, the standalone executable.
+    expect(isInstalledRun(String.raw`C:\Users\me\AppData\Roaming\npm\node_modules\hypergated\bin\hypergated.mjs`, {})).toBe(true);
+    expect(isInstalledRun(undefined, {})).toBe(true);
+  });
+
+  it.runIf(process.platform === 'linux')('an isolated instance leaves a stale entry for the install to fix', async () => {
+    const autostart = await load();
+    autostart.set(true);
+    const fs = await import('node:fs');
+    const entry = join(home, '.config', 'autostart', 'hypergate.desktop');
+    fs.writeFileSync(entry, readFileSync(entry, 'utf8').replace(/^Exec=.*$/m, 'Exec=/gone/checkout/hypergated'));
+    delete process.env.VITEST;
+    process.env.HYPERGATE_DIR = join(home, 'scratch');
+    expect(autostart.repair()).toBeUndefined();
+    expect(autostart.registeredCommand()).toBe('/gone/checkout/hypergated');
+  });
+
   it('refuses to write a command that is stale itself (a test run)', async () => {
     const autostart = await load();
     // Under vitest the last-resort launch command is the test worker.
