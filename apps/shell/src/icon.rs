@@ -12,7 +12,9 @@ fn rgba_at(size: u32) -> Vec<u8> {
     let count = u16::from_le_bytes([ICO[4], ICO[5]]) as usize;
     let dimension = (size % 256) as u8;
     let entry = ICO[6..6 + count * 16]
-        .chunks_exact(16)
+        .as_chunks::<16>()
+        .0
+        .iter()
         .find(|entry| entry[0] == dimension && entry[1] == dimension)
         .expect("the generated asset includes the requested icon size");
     let start = u32::from_le_bytes(entry[12..16].try_into().unwrap()) as usize + 40;
@@ -20,7 +22,7 @@ fn rgba_at(size: u32) -> Vec<u8> {
     let pixels = &ICO[start..start + stride * size as usize];
     let mut rgba = Vec::with_capacity(pixels.len());
     for row in pixels.rchunks_exact(stride) {
-        for bgra in row.chunks_exact(4) {
+        for bgra in row.as_chunks::<4>().0 {
             rgba.extend_from_slice(&[bgra[2], bgra[1], bgra[0], bgra[3]]);
         }
     }
@@ -113,7 +115,7 @@ mod tests {
     fn the_template_remains_an_unbacked_monochrome_ring() {
         let rgba = template_rgba();
         let alpha = |x, y| rgba[((y * SIZE + x) * 4 + 3) as usize];
-        assert!(rgba.chunks_exact(4).all(|rgba| rgba[..3] == [0; 3]));
+        assert!(rgba.as_chunks::<4>().0.iter().all(|rgba| rgba[..3] == [0; 3]));
         assert_eq!(alpha(0, 0), 0);
         assert_eq!(alpha(16, 16), 0);
         assert!(alpha(27, 16) > 200);
