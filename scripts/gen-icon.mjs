@@ -1,35 +1,105 @@
-// Rasterize the gate mark into square PNGs for surfaces that won't take an SVG.
-// The OAuth `logo_uri` is the one that matters: consent screens run our logo
-// through their own image pipelines, and a raster square is the only format all
-// of them render. Same Playwright borrow as gen-splash.mjs. Run from repo root:
-//   node scripts/gen-icon.mjs
+// The website favicon is the source for all colored icons. Regeneration is a
+// design-time task, not a requirement for building the app or installers.
+// Run with Playwright and its Chromium installed, either locally or via
+// PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright node scripts/gen-icon.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-const require = createRequire('C:/Users/phili/code/nekko-notes/');
-const { chromium } = require('playwright');
+const require = createRequire(import.meta.url);
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
+const output = (relative) => new URL(`../${relative}`, import.meta.url);
+const svg = readFileSync(output('apps/site/public/favicon.svg'), 'utf8');
+const webSizes = [16, 32, 48];
+const nativeSizes = [...webSizes, 64, 128, 256];
+const sizes = [...nativeSizes, 192, 512, 1024];
+const check = process.argv.includes('--check');
 
-const url = (p) => fileURLToPath(new URL(p, import.meta.url));
-const svg = readFileSync(url('../apps/site/public/favicon.svg'), 'utf8');
+function save(path, data) {
+  if (check) {
+    if (!readFileSync(output(path)).equals(Buffer.from(data))) throw new Error(`${path} is out of date`);
+  } else {
+    writeFileSync(output(path), data);
+    console.log(`Wrote ${path}`);
+  }
+}
 
-// 512 for the OAuth consent screen and PWA install, 192 for the smaller PWA slot.
-const SIZES = [512, 192];
+// Standard ICO directory. Native launchers and NSIS use 32-bit DIBs rather than
+// PNG payloads for compatibility; the manager's existing legacy favicon uses PNG.
+function ico(sizes, makeFrame) {
+  const dir = Buffer.alloc(6 + sizes.length * 16);
+  dir.writeUInt16LE(1, 2);
+  dir.writeUInt16LE(sizes.length, 4);
+  let offset = dir.length;
+  const frames = sizes.map((size, i) => {
+    const body = makeFrame(size);
+    const entry = 6 + i * 16;
+    dir[entry] = dir[entry + 1] = size % 256;
+    dir.writeUInt16LE(1, entry + 4);
+    dir.writeUInt16LE(32, entry + 6);
+    dir.writeUInt32LE(body.length, entry + 8);
+    dir.writeUInt32LE(offset, entry + 12);
+    offset += body.length;
+    return body;
+  });
+  return Buffer.concat([dir, ...frames]);
+}
+
+function dib(size, rgba) {
+  const maskStride = Math.ceil(size / 32) * 4;
+  const maskOffset = 40 + rgba.length;
+  const body = Buffer.alloc(maskOffset + maskStride * size);
+  body.writeUInt32LE(40, 0);
+  body.writeInt32LE(size, 4);
+  body.writeInt32LE(size * 2, 8); // height includes the 1-bit fallback mask
+  body.writeUInt16LE(1, 12);
+  body.writeUInt16LE(32, 14);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const from = (y * size + x) * 4;
+      const row = size - 1 - y;
+      const to = 40 + (row * size + x) * 4;
+      body.set([rgba[from + 2], rgba[from + 1], rgba[from], rgba[from + 3]], to);
+      if (!rgba[from + 3]) body[maskOffset + row * maskStride + (x >> 3)] |= 128 >> (x % 8);
+    }
+  }
+  return body;
+}
 
 const browser = await chromium.launch();
-for (const size of SIZES) {
-  const page = await browser.newPage({ viewport: { width: size, height: size } });
-  // The mark's rounded tile leaves the corners transparent; keep them that way so
-  // a provider drawing it on any background gets the tile, not a black square.
-  await page.setContent(
-    `<!doctype html><html><body style="margin:0">
-     <div style="width:${size}px;height:${size}px">${svg.replace('<svg', `<svg width="${size}" height="${size}"`)}</div>
-     </body></html>`,
-    { waitUntil: 'networkidle' },
-  );
-  const buf = await page.screenshot({ omitBackground: true, clip: { x: 0, y: 0, width: size, height: size } });
-  writeFileSync(url(`../apps/site/public/icon-${size}.png`), buf);
-  await page.close();
-  console.log(`wrote apps/site/public/icon-${size}.png`);
+try {
+  const page = await browser.newPage();
+  const icons = new Map();
+  for (const size of sizes) {
+    const result = await page.evaluate(async ({ svg, size, needsRgba }) => {
+      const canvas = Object.assign(document.createElement('canvas'), { width: size, height: size });
+      const image = new Image();
+      image.src = 'data:image/svg+xml,' + encodeURIComponent(svg.replace('<svg', `<svg width="${size}" height="${size}"`));
+      await image.decode();
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(image, 0, 0);
+      return {
+        png: canvas.toDataURL().split(',')[1],
+        rgba: needsRgba ? Array.from(ctx.getImageData(0, 0, size, size).data) : [],
+      };
+    }, { svg, size, needsRgba: nativeSizes.includes(size) });
+    icons.set(size, { png: Buffer.from(result.png, 'base64'), rgba: result.rgba });
+  }
+  const png = (size) => icons.get(size).png;
+  save('apps/web/public/favicon.svg', svg);
+  save('apps/web/public/favicon.ico', ico(webSizes, png));
+  save('apps/web/public/icon-128.png', png(128));
+  save('apps/site/public/icon-192.png', png(192));
+  save('apps/site/public/icon-512.png', png(512));
+  save('apps/shell/assets/hypergate.ico', ico(nativeSizes, (size) => dib(size, icons.get(size).rgba)));
+  save('apps/shell/assets/hypergate-1024.png', png(1024));
+  save('packages/core/src/icon-64.png', png(64));
+  save('packages/core/src/icon-data.ts', [
+    '// Generated by scripts/gen-icon.mjs from the 64px Hypergate icon.',
+    '// Inlined so MCP clients can render it without fetching a URL.',
+    'export const HYPERGATE_ICON_64_PNG_BASE64 =',
+    `  '${png(64).toString('base64')}';`,
+    '',
+  ].join('\n'));
+} finally {
+  await browser.close();
 }
-await browser.close();
