@@ -2,21 +2,67 @@
 // design-time task, not a requirement for building the app or installers.
 // Run with Playwright and its Chromium installed, either locally or via
 // PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright node scripts/gen-icon.mjs
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
+const output = (relative) => new URL(`../${relative}`, import.meta.url);
+const source = 'apps/site/public/favicon.svg';
+const manifest = 'scripts/icon-checksums.json';
+const inputs = [source, 'scripts/gen-icon.mjs'];
+const targets = [
+  'apps/web/public/favicon.svg',
+  'apps/web/public/favicon.ico',
+  'apps/web/public/icon-128.png',
+  'apps/site/public/icon-192.png',
+  'apps/site/public/icon-512.png',
+  'apps/shell/assets/hypergate.ico',
+  'apps/shell/assets/hypergate-1024.png',
+  'packages/core/src/icon-64.png',
+  'packages/core/src/icon-data.ts',
+];
+
+// CI verifies the committed source, generator and artifacts as a set. It
+// needn't install a renderer or depend on platform-specific raster bytes.
+// `--check` also compares the artifacts against a fresh Chromium rendering.
+function checksums() {
+  return Object.fromEntries([...inputs, ...targets].map((path) => {
+    const binary = /\.(png|ico)$/.test(path);
+    const bytes = binary ? readFileSync(output(path)) : readFileSync(output(path), 'utf8').replace(/\r\n/g, '\n');
+    return [path, createHash('sha256').update(bytes).digest('hex')];
+  }));
+}
+
+function verifyChecksums() {
+  const actual = checksums();
+  const expected = JSON.parse(readFileSync(output(manifest), 'utf8'));
+  const stale = [...new Set([...Object.keys(actual), ...Object.keys(expected)])]
+    .filter((path) => actual[path] !== expected[path]);
+  if (stale.length) {
+    throw new Error(`Icon checksums are out of date: ${stale.join(', ')}. Regenerate with node scripts/gen-icon.mjs.`);
+  }
+  console.log('Icon checksums match the committed artwork and generated assets.');
+}
+
+if (process.argv.includes('--verify-checksums')) {
+  verifyChecksums();
+  process.exit(0);
+}
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
-const output = (relative) => new URL(`../${relative}`, import.meta.url);
-const svg = readFileSync(output('apps/site/public/favicon.svg'), 'utf8');
+const svg = readFileSync(output(source), 'utf8').replace(/\r\n/g, '\n');
 const webSizes = [16, 32, 48];
 const nativeSizes = [...webSizes, 64, 128, 256];
 const sizes = [...nativeSizes, 192, 512, 1024];
 const check = process.argv.includes('--check');
 
 function save(path, data) {
+  if (!targets.includes(path)) throw new Error(`Missing icon target in checksum list: ${path}`);
   if (check) {
-    if (!readFileSync(output(path)).equals(Buffer.from(data))) throw new Error(`${path} is out of date`);
+    const committed = typeof data === 'string'
+      ? Buffer.from(readFileSync(output(path), 'utf8').replace(/\r\n/g, '\n'))
+      : readFileSync(output(path));
+    if (!committed.equals(Buffer.from(data))) throw new Error(`${path} is out of date`);
   } else {
     writeFileSync(output(path), data);
     console.log(`Wrote ${path}`);
@@ -102,4 +148,10 @@ try {
   ].join('\n'));
 } finally {
   await browser.close();
+}
+
+if (check) verifyChecksums();
+else {
+  writeFileSync(output(manifest), `${JSON.stringify(checksums(), null, 2)}\n`);
+  console.log(`Wrote ${manifest}`);
 }

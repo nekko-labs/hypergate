@@ -64,6 +64,7 @@ jobs:
           node-version: 24
       - if: runner.os == 'macOS'
         run: |
+          node scripts/gen-icon.mjs --verify-checksums
           node scripts/gen-icns.mjs "$RUNNER_TEMP/ci-guard.icns"
           sips -s format png "$RUNNER_TEMP/ci-guard.icns" --out "$RUNNER_TEMP/ci-guard.png"
 

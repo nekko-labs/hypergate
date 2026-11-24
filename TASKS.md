@@ -607,8 +607,8 @@ The section could already find and describe tools (v0.22.0); everything it found
 ## Epic 73: Midnight icons (v1.33.0)
 
 - [x] **One Midnight tile**: match the manager and website with a sparse starfield, pooled violet and cyan light, and a feathered open ring. Keep the macOS menu-bar template unchanged. · [spec](SPEC.md#38-desktop-shell--cli-shipped) · [#129](https://github.com/nekko-labs/hypergate/issues/129) · Done: 2026-11-24
-- [x] **One artwork source**: edit `apps/site/public/favicon.svg`, then run `node scripts/gen-icon.mjs` with Playwright and Chromium installed. It regenerates the browser, shell, OAuth, extension, and MCP assets. The Linux launcher embeds the source SVG, Windows reuses the ICO frames, and macOS assembles its ICNS from the committed master without running the payload binary. · Done: 2026-11-24
-- [x] **Verify icon outputs**: checked the generated formats, native shell exports, and before/after icon renders from 16px through launcher scale. Native Windows and Linux desktop capture was not performed; macOS ICNS was decoded using `sips`. · Done: 2026-11-24
+- [x] **One artwork source**: edit `apps/site/public/favicon.svg`, then run `node scripts/gen-icon.mjs` with Playwright and Chromium installed. It regenerates the browser, shell, OAuth, extension, and MCP assets and their checksum manifest; CI rejects stale artwork without requiring Chromium. The Linux launcher embeds the source SVG, Windows reuses the ICO frames, and macOS assembles its ICNS from the committed master without running the payload binary. · Done: 2026-11-24
+- [x] **Verify icon outputs**: checked the generated formats, native shell exports, and before/after icon renders from 16px through launcher scale. Verified isolated app bundles in macOS Finder and decoded the ICNS using `sips`. Native Windows and Linux desktop captures are still open. · Done: 2026-11-24
 
 ## Epic 72: Hypergate shows its icon in MCP clients (v1.32.0)
 
