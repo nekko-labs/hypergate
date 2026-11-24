@@ -241,7 +241,13 @@ export const matchesCli = (tool: CliTool, query: string): boolean => {
 export function cliCatalogEntry(tool: CliTool, platform?: string): CliCatalogEntry {
   const primary = tool.install?.trim();
   const isUrl = !!primary && /^https?:\/\//i.test(primary);
-  const isCommand = !!primary && !isUrl && /^(npm|npx|pnpm|yarn|bun|brew|pipx|pip|winget|scoop|choco|apt|cargo|go|curl|powershell) /i.test(primary);
+  // A piped primary is a script for one shell family: `curl ... | bash` cannot run
+  // under cmd.exe, and `powershell ...` is not the route to offer on macOS/Linux.
+  // Both script routes share the manager id `script`, so a route left in the list
+  // for the wrong platform can be picked by `chooseInstall` ahead of the right one.
+  const wrongShell =
+    !!platform && !!primary?.includes('|') && (/^powershell/i.test(primary) ? platform !== 'win32' : platform === 'win32');
+  const isCommand = !!primary && !isUrl && !wrongShell && /^(npm|npx|pnpm|yarn|bun|brew|pipx|pip|winget|scoop|choco|apt|cargo|go|curl|powershell) /i.test(primary);
   const extras = (EXTRA_INSTALLS[tool.id] ?? []).filter((option) => !platform || !option.platforms || option.platforms.includes(platform));
   // A piped primary is a vendor script; label it the way the extras do
   // (`shell` / `PowerShell`) rather than after whichever fetcher it happens to

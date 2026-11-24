@@ -190,6 +190,24 @@ describe('parseScriptShape', () => {
     expect(linux).toEqual(['curl -fsSL https://antigravity.google/cli/install.sh | bash']);
     expect(windows).toContain('powershell -c "irm https://antigravity.google/cli/install.ps1 | iex"');
     for (const command of windows) expect(parseCuratedScript(command), command).not.toBeNull();
+    // Each platform is offered only its own shell's script, never the other's.
+    expect(windows).toEqual(['powershell -c "irm https://antigravity.google/cli/install.ps1 | iex"']);
+  });
+
+  it('selects the PowerShell script on Windows and the Bash script elsewhere, with or without a manager', () => {
+    const win = enrichCliInstalls(cliCatalogEntry(knownCli('antigravity')!, 'win32'));
+    const ps = 'powershell -c "irm https://antigravity.google/cli/install.ps1 | iex"';
+    expect(chooseInstall(win)?.command).toBe(ps);
+    expect(chooseInstall(win, 'script')?.command).toBe(ps);
+    for (const platform of ['darwin', 'linux']) {
+      const e = enrichCliInstalls(cliCatalogEntry(knownCli('antigravity')!, platform));
+      const sh = 'curl -fsSL https://antigravity.google/cli/install.sh | bash';
+      expect(chooseInstall(e)?.command).toBe(sh);
+      expect(chooseInstall(e, 'script')?.command).toBe(sh);
+    }
+    // The same applies to Claude Code, whose primary is also a Bash script.
+    const claude = enrichCliInstalls(cliCatalogEntry(knownCli('claude')!, 'win32'));
+    expect(chooseInstall(claude, 'script')?.command).toBe('powershell -c "irm https://claude.ai/install.ps1 | iex"');
   });
 
   it('rejects anything outside the grammar', () => {
