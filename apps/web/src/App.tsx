@@ -40,6 +40,8 @@ import type {
   InsightsResponse,
   TeamInfo,
   TeamSettings,
+  InstructionsHarnessInfo,
+  InstructionsStatusResponse,
 } from '@hypergate/shared';
 import {
   CREDENTIAL_CATEGORIES,
@@ -61,18 +63,17 @@ import { WindowButtons } from './components/WindowButtons';
 import { connectClient, inShell, onTitleBarMouseDown, shell } from './lib/shell';
 import { OAuthAppDialog } from './components/servers/OAuthAppDialog';
 import { TokenDialog } from './components/servers/TokenDialog';
-import { AgentInstructionsSection, InstructionsOffer } from './components/agents/AgentInstructions';
+import { AgentInstructionsBlock, InstructionsChip, InstructionsFirstOffer, harnessFor, useInstructions, type Instructions } from './components/agents/AgentInstructions';
 import { useToast } from './toast';
 import { AmbientPanel } from './components/AmbientPanel';
 import { AlertSettings } from './components/AlertSettings';
 
-type View = 'servers' | 'analytics' | 'settings';
-type ServerSection = 'agents' | 'people' | 'mcp-servers' | 'cli' | 'credentials';
+type View = 'servers' | 'people' | 'analytics' | 'settings';
+type ServerSection = 'agents' | 'mcp-servers' | 'cli' | 'credentials';
 type AnalyticsSection = 'overview' | 'usage-by-server' | 'callers' | 'tools' | 'security' | 'recent-calls';
 
 const SERVER_SECTIONS: { id: ServerSection; label: string }[] = [
   { id: 'agents', label: 'Connected agents' },
-  { id: 'people', label: 'People' },
   { id: 'mcp-servers', label: 'MCP servers' },
   { id: 'cli', label: 'CLI tools' },
   { id: 'credentials', label: 'Credentials' },
@@ -662,16 +663,17 @@ export function App() {
       <div className="app-main">
         <aside className="side-rail">
           <nav className="nav" aria-label="Primary navigation">
-            {(['servers', 'analytics', 'settings'] as View[]).map((item) => (
+            {(['servers', 'people', 'analytics', 'settings'] as View[]).map((item) => (
               <div className="nav-group" key={item}>
                 <button
                   className={view === item ? 'active' : ''}
                   aria-current={view === item ? 'page' : undefined}
-                  onClick={() => openView(item)}
+                  onClick={() => { if (item === 'people') setInviteSignal(0); openView(item); }}
                 >
                   <NavIcon view={item} />
                   <span className="nav-label">{item === 'servers' ? 'Servers' : item[0].toUpperCase() + item.slice(1)}</span>
                   {item === 'analytics' && stats && stats.totalCalls > 0 && <span className="n-badge">{fmtNum(stats.totalCalls)}</span>}
+                  {item === 'people' && people.length > 0 && <span className="n-badge">{people.length}</span>}
                 </button>
                 {item === 'servers' && view === 'servers' && (
                   <div className="section-nav" aria-label="Servers sections">
@@ -729,7 +731,7 @@ export function App() {
             </div>
           )}
 
-          <main ref={viewRef} className={`view ${view === 'servers' ? 'servers-view' : view === 'settings' ? 'settings-view' : ''}`}>
+          <main ref={viewRef} className={`view ${view === 'servers' ? 'servers-view' : view === 'settings' ? 'settings-view' : view === 'people' ? 'people-view' : ''}`}>
             <ErrorBoundary key={view} surface={`${view} view`}>
               {view === 'servers' ? (
                 <>
@@ -752,7 +754,7 @@ export function App() {
                       <button className="btn btn-accent" onClick={() => { setShowCatalog(true); setAdding(null); scrollToSection('mcp-servers'); }}>
                         <span aria-hidden="true">+</span> Add a server
                       </button>
-                      <button className="btn" onClick={() => { scrollToSection('people'); setInviteSignal((n) => n + 1); }}>
+                      <button className="btn" onClick={() => { setInviteSignal((n) => n + 1); openView('people'); }}>
                         <span aria-hidden="true">+</span> Invite a person
                       </button>
                     </div>
@@ -764,11 +766,6 @@ export function App() {
 
                 <section id="agents" className="dashboard-section">
                   <ConnectedAgents agents={machineAgents} servers={servers ?? []} onChange={refreshAgents} openSignal={pickSignal} />
-                  <AgentInstructionsSection token={gateway?.token} />
-                </section>
-
-                <section id="people" className="dashboard-section">
-                  <PeopleSection people={people} servers={servers ?? []} onChange={refreshAgents} openSignal={inviteSignal} onOpenSettings={() => openView('settings')} />
                 </section>
 
                 <section id="mcp-servers" className="dashboard-section">
@@ -894,6 +891,16 @@ export function App() {
                     onRequestsChange={refreshCredRequests}
                   />
                 </section>
+                </>
+              ) : view === 'people' ? (
+                <>
+                  <div className="pagehead">
+                    <div>
+                      <h1>People</h1>
+                      <p>Teammates who reach this gateway over team access, each with their own token scoped to the servers and tools you choose.</p>
+                    </div>
+                  </div>
+                  <PeopleSection people={people} servers={servers ?? []} onChange={refreshAgents} openSignal={inviteSignal} onOpenSettings={() => openView('settings')} />
                 </>
               ) : view === 'analytics' ? (
                 <AnalyticsView stats={stats} servers={servers ?? []} registry={registry} />
@@ -1037,6 +1044,9 @@ function NavIcon({ view }: { view: View }) {
   }
   if (view === 'analytics') {
     return <svg className="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 15.5V11m6 4.5v-11m6 11V8" /></svg>;
+  }
+  if (view === 'people') {
+    return <svg className="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="7.5" cy="7" r="2.75" /><path d="M2.5 16c.4-2.8 2.4-4.5 5-4.5s4.6 1.7 5 4.5" /><path d="M12.5 4.6a2.6 2.6 0 0 1 0 4.9M14.5 11.8c1.6.6 2.7 2 3 4.2" /></svg>;
   }
   return <svg className="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3" /><path d="M10 2.5v2m0 11v2m7.5-7.5h-2m-11 0h-2m12.8-5.3-1.4 1.4M6.1 13.9l-1.4 1.4m10.6 0-1.4-1.4M6.1 6.1 4.7 4.7" /></svg>;
 }
@@ -3811,6 +3821,19 @@ function ConnectedAgents({ agents, servers, onChange, openSignal = 0 }: { agents
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => { void api.connectTargets().then(setTargets).catch(() => {}); }, []);
+  const ins = useInstructions();
+  const detected = detectedNotConnected(targets?.targets ?? [], ins.status, agents);
+
+  /** A harness with no catalog entry (Codex, OpenCode): it connects as a custom agent carrying its name. */
+  const addNamed = useCallback(async (name: string, key: string) => {
+    setAdding(key);
+    setErr(null);
+    const agent = await api.addClient({ name, servers: '*' }).catch(() => null);
+    setAdding(null);
+    if (!agent) { setErr(`Could not create the ${name} agent — check the daemon logs.`); return; }
+    onChange();
+    setConnect({ id: agent.id });
+  }, [onChange]);
 
   // Pick a known agent: create its scoped token and go straight to how it gets
   // connected. Re-picking one you already have reopens it rather than stacking
@@ -3856,6 +3879,7 @@ function ConnectedAgents({ agents, servers, onChange, openSignal = 0 }: { agents
           </button>
         </span>
       </div>
+      <InstructionsFirstOffer ins={ins} />
       {agents.length === 0 && !picking && !custom ? (
         <div className="panel"><div className="empty empty-pick">
           <div className="cat">🔌</div>
@@ -3874,6 +3898,7 @@ function ConnectedAgents({ agents, servers, onChange, openSignal = 0 }: { agents
                   connect={connect?.id === a.id ? connect : null}
                   onConnect={() => setConnect(connect?.id === a.id ? null : { id: a.id })}
                   onChange={onChange}
+                  ins={ins}
                 />
               ))}
               {picking && <PickerRow>{picker()}</PickerRow>}
@@ -3881,6 +3906,45 @@ function ConnectedAgents({ agents, servers, onChange, openSignal = 0 }: { agents
           )}
         </>
       )}
+      {detected.length > 0 && (
+        <>
+          <div className="subsection-title">Detected, not connected</div>
+          <div className="panel"><div className="list">
+            {detected.map((d) => (
+              <div key={d.key} className="list-row detected-row">
+                <div className="list-head between">
+                  <div className="row wrap-gap row-ident">
+                    <AgentMark id={d.target?.id} name={d.name} small />
+                    <span className="server-name">{d.name}</span>
+                    <span className="small muted">{d.found}</span>
+                    {d.harness && d.harness.installed && <InstructionsChip h={d.harness} />}
+                  </div>
+                  <div className="row row-actions">
+                    {d.harness && !d.harness.current && !d.harness.damaged && (
+                      <button
+                        className="btn sm"
+                        disabled={ins.busy !== null}
+                        title={`Add the Hypergate block to ${d.harness.path}`}
+                        onClick={() => void ins.write(d.harness!.id, false)}
+                      >
+                        {ins.busy === d.harness.id ? 'Writing…' : d.harness.installed ? 'Update instructions' : 'Add instructions'}
+                      </button>
+                    )}
+                    <button
+                      className="btn sm btn-accent"
+                      disabled={adding === d.key}
+                      onClick={() => void (d.target ? addKnown(d.target) : addNamed(d.name, d.key))}
+                    >
+                      {adding === d.key || (d.target && adding === d.target.id) ? 'Connecting…' : 'Connect'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div></div>
+        </>
+      )}
+      {err && !picking && agents.length > 0 && <div className="small" style={{ color: 'var(--danger)', marginTop: 8 }}>{err}</div>}
       {custom && (
         <AgentEditor
           agent={custom === 'new' ? null : custom}
@@ -3896,6 +3960,49 @@ function ConnectedAgents({ agents, servers, onChange, openSignal = 0 }: { agents
       )}
     </>
   );
+}
+
+interface DetectedAgent {
+  key: string;
+  name: string;
+  /** What gave it away: a CLI on PATH, or its config folder. */
+  found: string;
+  /** The catalog entry it connects through, when there is one. */
+  target?: ConnectTargetStatus;
+  /** Its global instruction file, when it has one. */
+  harness?: InstructionsHarnessInfo;
+}
+
+/**
+ * Agents this machine has that no connected agent stands for: a catalog CLI on
+ * PATH, or a harness whose config folder exists. One row per thing, so a
+ * harness that serves a detected CLI (Gemini) is folded into that CLI's row.
+ */
+function detectedNotConnected(
+  targets: ConnectTargetStatus[],
+  status: InstructionsStatusResponse | null,
+  agents: AgentClientInfo[],
+): DetectedAgent[] {
+  const connected = (t: { id: string; name: string }) => agents.some((a) => a.target === t.id || (!a.target && a.name === t.name));
+  const out: DetectedAgent[] = [];
+  const covered = new Set<string>();
+  for (const t of targets) {
+    if (t.method !== 'cli' || !t.found || connected(t)) continue;
+    const harness = harnessFor(status, { target: t.id, name: t.name });
+    if (harness) covered.add(harness.id);
+    out.push({ key: t.id, name: t.name, found: `CLI found${t.version ? ` · v${t.version}` : ''}`, target: t, harness });
+  }
+  for (const h of status?.harnesses ?? []) {
+    if (!h.detected || covered.has(h.id)) continue;
+    const viaTarget = h.targets.some((id) => agents.some((a) => a.target === id));
+    const viaName = agents.some((a) => !a.target && a.name.trim().toLowerCase() === h.name.toLowerCase());
+    if (viaTarget || viaName) continue;
+    // Connect through the entry this machine can actually use, if it has one.
+    const own = h.targets.map((id) => targets.find((t) => t.id === id)).filter((t): t is ConnectTargetStatus => !!t);
+    const target = own.find((t) => t.found && t.method !== 'cli') ?? own[0];
+    out.push({ key: `harness-${h.id}`, name: h.name, found: 'config folder found', target, harness: h });
+  }
+  return out;
 }
 
 /** The agent picker's roster row, which scrolls itself into view when it opens. */
@@ -4002,7 +4109,7 @@ function AgentConnectDisclosure({
 }
 
 function AgentRow({
-  agent, servers, connect, onConnect, onChange, teamUrl,
+  agent, servers, connect, onConnect, onChange, teamUrl, ins,
 }: {
   agent: AgentClientInfo;
   servers: ServerStatus[];
@@ -4011,8 +4118,11 @@ function AgentRow({
   onChange: () => void;
   /** For a person: the team listener's URL, when team access is on. */
   teamUrl?: string;
+  /** Instruction-file status. Agents only: a person has no harness. */
+  ins?: Instructions;
 }) {
   const person = agent.kind === 'person';
+  const harness = ins && !person ? harnessFor(ins.status, agent) : undefined;
   const [copied, copy] = useCopy();
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -4074,6 +4184,8 @@ function AgentRow({
           ) : (
             <span className="small muted">can use {allowed}/{servers.length} servers</span>
           )}
+          {/* Only worth a chip while something is left to do. */}
+          {harness && !harness.current && <InstructionsChip h={harness} />}
         </>
       }
       actions={
@@ -4137,6 +4249,14 @@ function AgentRow({
       </Block>
 
       <ToolPermissions agent={agent} servers={servers} onChange={onChange} />
+
+      {/* Its harness's global instruction file: setup while there is something
+          to do, a one-line status once the block is in. */}
+      {harness && ins && (
+        <Block label="Instructions">
+          <AgentInstructionsBlock h={harness} ins={ins} />
+        </Block>
+      )}
 
       {person ? (
         <Block label="Connect">
@@ -4397,7 +4517,7 @@ function TeamAccessSettings({ token }: { token?: string }) {
       <div className="section-title">Team access</div>
       <p className="small muted section-sub">
         Share this gateway with teammates. When on, Hypergate also listens on one network address you pick, and that
-        address answers only the MCP gateway and only to the tokens of people you add under Servers, People. Your
+        address answers only the MCP gateway and only to the tokens of people you add under People. Your
         agents' tokens, the vault and this manager stay on this machine.
       </p>
       <div className="panel">
@@ -4673,9 +4793,6 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
               {result.output && <pre className="snippet">{result.output}</pre>}
             </div>
           )}
-          {/* Once it's connected (or, for a paste-it-yourself client, while you
-              connect it), offer the global-instructions block for its harness. */}
-          {(t.method !== 'cli' || result?.ok) && <InstructionsOffer target={t.id} />}
         </div>
       )}
     </div>
