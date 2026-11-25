@@ -45,6 +45,26 @@ export const KNOWN_CLIS: CliTool[] = [
     publisher: 'Anthropic',
   },
   {
+    // Google retired Google-account sign-in for Gemini CLI on June 18, 2026;
+    // Antigravity CLI is where a Google AI Pro/Ultra plan now runs from a
+    // terminal, and `agy acp` is how other apps drive it on that plan.
+    id: 'antigravity',
+    name: 'Antigravity CLI',
+    command: 'agy',
+    category: 'mcp',
+    description:
+      "Google's terminal agent. Runs Gemini on your Google AI Pro/Ultra plan from the shell, and `agy acp` lets editors and apps drive it over the Agent Client Protocol.",
+    homepage: 'https://antigravity.google/docs/getting-started?tab=cli',
+    install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    official: true,
+    recommended: true,
+    publisher: 'Google',
+    auth: {
+      command: 'agy',
+      note: 'Interactive: the first run asks for a theme and workspace trust, then opens the browser for Google sign-in.',
+    },
+  },
+  {
     id: 'nekko-agent',
     name: 'Nekko Agent',
     command: 'nekko-agent',
@@ -113,6 +133,10 @@ const EXTRA_INSTALLS: Record<string, CliInstallOption[]> = {
     { label: 'Homebrew', command: 'brew install --cask claude-code', platforms: ['darwin'] },
     { label: 'winget', command: 'winget install Anthropic.ClaudeCode', platforms: ['win32'] },
     { label: 'npm', command: 'npm install -g @anthropic-ai/claude-code' },
+  ],
+  // Google documents only its own installer scripts (no winget, Homebrew or npm).
+  antigravity: [
+    { label: 'PowerShell', command: 'powershell -c "irm https://antigravity.google/cli/install.ps1 | iex"', platforms: ['win32'] },
   ],
   node: [
     { label: 'winget', command: 'winget install OpenJS.NodeJS.LTS', platforms: ['win32'] },
@@ -217,7 +241,13 @@ export const matchesCli = (tool: CliTool, query: string): boolean => {
 export function cliCatalogEntry(tool: CliTool, platform?: string): CliCatalogEntry {
   const primary = tool.install?.trim();
   const isUrl = !!primary && /^https?:\/\//i.test(primary);
-  const isCommand = !!primary && !isUrl && /^(npm|npx|pnpm|yarn|bun|brew|pipx|pip|winget|scoop|choco|apt|cargo|go|curl|powershell) /i.test(primary);
+  // A piped primary is a script for one shell family: `curl ... | bash` cannot run
+  // under cmd.exe, and `powershell ...` is not the route to offer on macOS/Linux.
+  // Both script routes share the manager id `script`, so a route left in the list
+  // for the wrong platform can be picked by `chooseInstall` ahead of the right one.
+  const wrongShell =
+    !!platform && !!primary?.includes('|') && (/^powershell/i.test(primary) ? platform !== 'win32' : platform === 'win32');
+  const isCommand = !!primary && !isUrl && !wrongShell && /^(npm|npx|pnpm|yarn|bun|brew|pipx|pip|winget|scoop|choco|apt|cargo|go|curl|powershell) /i.test(primary);
   const extras = (EXTRA_INSTALLS[tool.id] ?? []).filter((option) => !platform || !option.platforms || option.platforms.includes(platform));
   // A piped primary is a vendor script; label it the way the extras do
   // (`shell` / `PowerShell`) rather than after whichever fetcher it happens to
