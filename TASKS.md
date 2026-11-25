@@ -613,6 +613,13 @@ Philip, on the Agent instructions list: *"let's consolidate these instructions u
 - [x] **People is its own page** in the left rail (`View` gains `people`, with a count badge); the Servers section nav drops it. **Invite a person** in the Servers header switches to People and opens the invite form; arriving from the rail does not. Settings > Team access copy points at People. · Added: 2026-11-26 · Done: 2026-11-26
 - [x] **Verified**: `npm run build` (includes the web `tsc`) and `npm run version:check` at 1.35.0. Before/after captures from two isolated daemons (scratch `HYPERGATE_DIR`, no keychain, `CLAUDE_CONFIG_DIR` stripped) seeded with the echo fixture, a Claude Code agent and one person, at 1440x1000 @2x. · Added: 2026-11-26 · Done: 2026-11-26
 
+## Epic 74: Midnight icons (v1.34.0)
+
+- [x] **One Midnight tile**: match the manager and website with a sparse starfield, pooled violet and cyan light, and a feathered open ring. Keep the macOS menu-bar template unchanged. · [spec](SPEC.md#38-desktop-shell--cli-shipped) · [#129](https://github.com/nekko-labs/hypergate/issues/129) · Done: 2026-11-24
+- [x] **One artwork source**: edit `apps/site/public/favicon.svg`, then run `node scripts/gen-icon.mjs` with Playwright and Chromium installed. It regenerates the browser, shell, OAuth, extension, and MCP assets and their checksum manifest; CI rejects stale artwork without requiring Chromium. The Linux launcher embeds the source SVG, Windows reuses the ICO frames, and macOS assembles its ICNS from the committed master without running the payload binary. · Done: 2026-11-24
+- [x] **Verify icon outputs**: checked the generated formats, native shell exports, and before/after icon renders from 16px through launcher scale. Verified isolated app bundles in macOS Finder and decoded the ICNS using `sips`. Native Windows and Linux desktop captures are still open. · Done: 2026-11-24
+- [x] **Nekko Agent's real mark in the agent picker**: the picker and connected-agent rows drew a retired paw on a generic violet tile. They now use the cat head from Nekko Agent's own app icon (`apps/desktop/build/icon.svg` in nekko-agent), white on its plum gradient, with the 0.5 stroke its website favicon adds for small sizes. · [spec](SPEC.md) · Done: 2026-11-26
+
 ## Epic 73: Antigravity CLI in the catalog (v1.33.0)
 
 Philip, after finding that a Google AI plan can only reach a third-party app through Google's own `agy acp`: *"we should add this to hypergate"*.

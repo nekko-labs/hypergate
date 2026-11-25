@@ -3613,19 +3613,17 @@ type BrandMark = {
   img?: string;
 };
 
+const NEKKO_AGENT_HEAD =
+  'M4.059,10.357C4.034,10.285 4.015,10.212 4.003,10.138L3.007,4.165L2.649,2.016L9.117,5.897C11.039,5.29 12.961,5.29 14.883,5.897L21.351,2.016L20.005,10.088C19.987,10.199 19.959,10.308 19.921,10.415L19.921,10.416C18.733,13.756 15.551,16.006 12,16.006C8.428,16.006 5.23,13.729 4.059,10.357L4.059,10.357ZM5.009,10.027C6.04,12.996 8.856,15 12,15C15.126,15 17.927,13.019 18.973,10.079C18.991,10.028 19.004,9.976 19.013,9.923L20,4L15,7C13,6.267 11,6.267 9,7L4,4L4.995,9.972C4.999,9.991 5.003,10.009 5.009,10.027Z';
+
 const AGENT_BRAND: Record<string, BrandMark> = {
-  // The Nekko Agent paw, at the proportions its own favicon uses. Cropped to the
-  // paw itself: the favicon's 32×32 includes its rounded tile, and keeping that
-  // padding would render the paw a fifth smaller than every mark beside it.
+  // The Nekko Agent cat head, verbatim from nekko-agent's apps/desktop/build/icon.svg,
+  // cropped to the glyph. The 0.5 stroke is the weight its website favicon adds so
+  // the outline survives small sizes.
   'nekko-agent': {
-    box: '5 5.5 22 20.5',
-    fill: [
-      'M23 20a7 5.5 0 0 1-14 0a7 5.5 0 0 1 14 0Z',
-      'M11.5 12.5a3 3 0 0 1-6 0a3 3 0 0 1 6 0Z',
-      'M16.6 9a3.1 3.1 0 0 1-6.2 0a3.1 3.1 0 0 1 6.2 0Z',
-      'M22.1 9a3.1 3.1 0 0 1-6.2 0a3.1 3.1 0 0 1 6.2 0Z',
-      'M27 12.5a3 3 0 0 1-6 0a3 3 0 0 1 6 0Z',
-    ],
+    box: '2.25 1.6 19.5 14.8',
+    fill: [NEKKO_AGENT_HEAD],
+    stroke: [{ d: NEKKO_AGENT_HEAD, width: 0.5 }],
   },
   // Antigravity's arch, lifted out of its wordmark lockup.
   antigravity: {
