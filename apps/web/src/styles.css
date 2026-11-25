@@ -466,6 +466,13 @@ code, .mono, pre, input.mono, textarea { font-family: var(--font-m); }
   text-transform: uppercase; color: var(--signal); display: flex; align-items: center; gap: 10px;
 }
 .section-title .rt { margin-left: auto; font-family: var(--font-b); text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--ink-3); }
+/* A list that belongs to the section above it, one step quieter than its title. */
+.subsection-title {
+  margin: 16px 0 8px; font-family: var(--font-m); font-size: 10.5px; font-weight: 500; letter-spacing: 1.4px;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.detected-row .row-ident { min-width: 0; }
+.instr-done code, .instr-setup code { color: var(--ice); }
 
 /* rows & text */
 .row { display: flex; align-items: center; gap: 10px; }
