@@ -552,6 +552,11 @@ code, .mono, pre, input.mono, textarea { font-family: var(--font-m); }
 .chip { font-size: 11px; padding: 2.5px 9px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--card-2) 80%, transparent); color: var(--ink-2); border: 1px solid var(--line); }
 .chip.mono { font-size: 10.5px; }
 .chip-accent { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+/* Made by Nekko Labs: a solid accent fill, so our own products stand out from the
+   tinted OAuth / Token / registry chips beside them. */
+.chip-nekko { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+/* Light accent is deeper, so dark text drops under 4.5:1 on it; white (the light card) clears it. */
+:root[data-theme='light'] .chip-nekko { color: var(--card); }
 /* Official / verified-publisher chip (green, like the ready pill) */
 .chip-verified { background: color-mix(in srgb, var(--info) 14%, transparent); color: var(--info); border-color: color-mix(in srgb, var(--info) 32%, transparent); font-weight: 600; }
 .chip-official { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); border-color: color-mix(in srgb, var(--success) 32%, transparent); font-weight: 600; }

@@ -53,6 +53,7 @@ import {
 } from '@hypergate/shared';
 import { api } from './api';
 import { AdviceNote } from './components/AdviceNote';
+import { NekkoLabsChip } from './components/NekkoLabsChip';
 import { Dialog } from './components/Dialog';
 import { EmptyState } from './components/EmptyState';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -3451,6 +3452,7 @@ function CatalogRow({
           <div className="row" style={{ gap: 8 }}>
             {e.recommended && <span className="rec-star" title="Recommended">★</span>}
             <span className="server-name">{e.name}</span>
+            <NekkoLabsChip e={e} />
             {/* The chip is the verdict in two words, so it comes from the same
                 verdict as the sentence below it. Before, the chip read the raw
                 `official` namespace flag and could say "Official" over a note
