@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Release notes · Hypergate</title>
-  <meta name="description" content="What changed in every Hypergate release, with direct downloads for the latest Windows, macOS, and Linux installers." />
+  <meta name="description" content="Major Hypergate features, the contributors who shipped them, and the full archive of release notes and installers." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="canonical" href="https://hypergate.app/release-notes.html" />
   <meta property="og:title" content="Hypergate release notes" />
-  <meta property="og:description" content="New features, fixes, and direct downloads for every Hypergate release." />
+  <meta property="og:description" content="Major features, the people who shipped them, and the full release archive." />
   <meta property="og:image" content="https://hypergate.app/og.png" />
   <meta property="og:image:width" content="2560" />
   <meta property="og:image:height" content="1200" />
@@ -23,6 +23,7 @@
   <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/src/styles.css" />
+  <link rel="stylesheet" href="/src/release-notes.css" />
   <script>
     // Keep this check aligned with isMobileBrowser() in src/downloads.ts.
     if (navigator.userAgentData?.mobile || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
@@ -43,7 +44,7 @@
       </svg>
       <span>Hypergate</span>
     </a>
-    <nav class="nav-links">
+    <nav class="nav-links" aria-label="Main navigation">
       <a href="/">Overview</a>
       <a href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">GitHub ↗</a>
     </nav>
@@ -59,7 +60,7 @@
       <header class="release-head">
         <p class="feat-k">Shipping log</p>
         <h1>Release notes</h1>
-        <p>Every new capability, behavior change, and fix in Hypergate. Notes and downloads come directly from the published GitHub releases.</p>
+        <p>The biggest changes in Hypergate and the people who shipped them. For every fix and installer, browse the release archive.</p>
         <div class="hero-ctas">
           <div class="download-control" data-download-group>
             <a class="btn btn-primary download-primary" href="https://github.com/nekko-labs/hypergate/releases/latest" data-download-primary>
@@ -75,12 +76,29 @@
               </div>
             </details>
           </div>
-          <a class="btn btn-ghost repo-cta" href="https://github.com/nekko-labs/hypergate" target="_blank" rel="noopener">View GitHub repo ↗</a>
+          <a class="btn btn-ghost" href="#release-archive">Full release archive <span aria-hidden="true">↓</span></a>
         </div>
       </header>
 
-      <section class="release-list release-state" id="release-list" aria-live="polite">
-        Loading published releases…
+      <div class="release-timeline">
+        <nav class="release-index" aria-label="Featured releases">
+          <p class="release-label">Jump to a release</p>
+          <!-- release-index -->
+        </nav>
+        <div class="release-highlights">
+          <!-- release-highlights -->
+        </div>
+      </div>
+
+      <section id="release-archive" class="release-archive" aria-labelledby="archive-title">
+        <h2 id="archive-title">Release archive</h2>
+        <p>Detailed notes and installers for recent releases. <a href="https://github.com/nekko-labs/hypergate/releases">Browse the full release history on GitHub ↗</a></p>
+        <details>
+          <summary>Show recent releases</summary>
+          <div id="release-list" class="release-list" aria-live="polite">
+            <p class="release-state"><a href="https://github.com/nekko-labs/hypergate/releases">Browse the full release history on GitHub ↗</a></p>
+          </div>
+        </details>
       </section>
     </div>
   </main>
