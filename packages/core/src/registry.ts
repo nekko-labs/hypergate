@@ -348,6 +348,7 @@ export const REGISTRY: RegistryEntry[] = [
     command: 'nekko-vault-mcp',
     requires: ['NEKKO_VAULT'],
     official: true,
+    nekkoLabs: true,
     homepage: 'https://github.com/nekko-labs/nekko-notes',
   },
 ];

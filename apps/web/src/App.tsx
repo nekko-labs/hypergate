@@ -3449,7 +3449,7 @@ function CatalogRow({
     <div className="list-row">
       <div className="row between wrap-gap">
         <div style={{ flex: 1, minWidth: 200 }}>
-          <div className="row" style={{ gap: 8 }}>
+          <div className="row wrap-gap" style={{ gap: 8 }}>
             {e.recommended && <span className="rec-star" title="Recommended">★</span>}
             <span className="server-name">{e.name}</span>
             <NekkoLabsChip e={e} />
