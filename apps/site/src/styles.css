@@ -531,3 +531,95 @@ html[data-download-platform="mobile"] .hero-snippet { display: none; }
   .reveal { opacity: 1; transform: none; transition: none; }
   .hero .fly { opacity: 1; transform: none; animation: none; }
 }
+
+/* ── legal and privacy choices ────────────────────────────── */
+.foot-links { flex-wrap: wrap; align-items: center; }
+.foot-links [aria-current='page'] { color: var(--mut); }
+.foot-links button, .analytics-close {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.foot-links button:hover, .analytics-close:hover { color: var(--cyan); }
+.foot-links button, .foot-links a { display: inline-flex; align-items: center; min-height: 24px; }
+
+.legal-main {
+  width: min(100% - 40px, 720px);
+  min-height: calc(100svh - 94px);
+  margin-inline: auto;
+  padding-block: clamp(104px, 13vh, 144px) 80px;
+  color: var(--mut);
+  overflow-wrap: break-word;
+}
+.legal-main h1, .legal-main h2, .analytics-panel h2 {
+  font-family: var(--font-d);
+  color: var(--ink);
+  line-height: 1.15;
+}
+.legal-main h1 { margin-block: 8px 24px; font-size: clamp(36px, 6vw, 60px); letter-spacing: -0.035em; }
+.legal-main h2 { margin-block: 36px 12px; font-size: 24px; scroll-margin-top: calc(var(--nav-h) + 16px); }
+.legal-main p + p { margin-top: 12px; }
+.legal-main strong { color: var(--ink); }
+.legal-main a, .analytics-details { color: var(--ice); text-decoration: underline; text-underline-offset: 3px; }
+
+.analytics-panel {
+  box-sizing: border-box;
+  width: min(440px, calc(100% - 32px));
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  color: var(--mut);
+  font-size: 14px;
+  line-height: 1.5;
+  box-shadow: 0 16px 48px color-mix(in srgb, var(--bg) 72%, transparent);
+}
+.analytics-banner {
+  position: fixed;
+  z-index: 60;
+  inset: auto max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) auto;
+  max-height: calc(100dvh - var(--nav-h) - 32px);
+  overflow: auto;
+}
+/* Let the last footer link and focused controls scroll clear of the prompt. */
+@media (min-height: 541px) {
+  html:has(.analytics-banner:not([hidden])) { scroll-padding-bottom: var(--analytics-clearance, 270px); }
+  body:has(.analytics-banner:not([hidden])) { padding-bottom: var(--analytics-clearance, 270px); }
+}
+/* At short viewport heights, keep the page and every choice independently reachable. */
+@media (max-height: 540px) {
+  .analytics-banner { position: relative; inset: auto; margin: calc(var(--nav-h) + 16px) auto 0; max-height: none; }
+}
+.analytics-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+}
+.analytics-dialog::backdrop { background: color-mix(in srgb, var(--bg) 76%, transparent); }
+.analytics-panel .feat-k { margin: 0 0 5px; }
+.analytics-panel h2 { margin-bottom: 8px; font-size: 23px; }
+.analytics-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 16px; }
+.analytics-actions button {
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--mut) 60%, transparent);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.analytics-actions button:hover { border-color: var(--cyan); background: var(--bg); }
+.analytics-details, .analytics-close { display: inline-flex; align-items: center; min-height: 44px; margin-top: 2px; }
+.analytics-close { padding-inline: 8px; }
+.analytics-dialog-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.analytics-panel :focus-visible, .foot-links :focus-visible, .legal-main a:focus-visible {
+  outline: 2px solid var(--ice);
+  outline-offset: 3px;
+}

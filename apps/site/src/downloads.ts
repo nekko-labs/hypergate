@@ -173,7 +173,7 @@ export function installCommandFor(device: Device): InstallCommand | null {
   return null;
 }
 
-function hydrateInstallCommand(device: Device): void {
+function hydrateInstallCommand(device: Device, onCommandCopied?: () => void): void {
   const install = installCommandFor(device);
   for (const block of document.querySelectorAll<HTMLElement>('[data-install-command]')) {
     if (!install) {
@@ -187,7 +187,14 @@ function hydrateInstallCommand(device: Device): void {
     if (command) command.textContent = install.command;
     if (copy) {
       copy.addEventListener('click', async () => {
-        await navigator.clipboard.writeText(install.command);
+        try {
+          await navigator.clipboard.writeText(install.command);
+        } catch {
+          copy.textContent = 'Copy failed';
+          setTimeout(() => { copy.textContent = 'Copy'; }, 1200);
+          return;
+        }
+        onCommandCopied?.();
         copy.textContent = 'Copied';
         setTimeout(() => { copy.textContent = 'Copy'; }, 1200);
       });
@@ -205,13 +212,13 @@ function downloadLabel(device: Device, hasDownload: boolean): string {
   return `Download for ${platformName(device.platform)}`;
 }
 
-export async function hydrateDownloadCtas(): Promise<void> {
+export async function hydrateDownloadCtas(onCommandCopied?: () => void): Promise<void> {
   const groups = [...document.querySelectorAll<HTMLElement>('[data-download-group]')];
   if (!groups.length) return;
   if (isMobileBrowser()) document.documentElement.dataset.downloadPlatform = 'mobile';
 
   const device = await detectDevice();
-  hydrateInstallCommand(device);
+  hydrateInstallCommand(device, onCommandCopied);
   if (device.platform === 'mobile') {
     for (const group of groups) group.hidden = true;
     return;

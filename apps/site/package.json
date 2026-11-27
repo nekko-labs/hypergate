@@ -8,7 +8,7 @@
     "dev": "vite --port 4390",
     "build": "vite build",
     "preview": "vite preview --port 4391",
-    "test": "node --experimental-strip-types --test src/downloads.test.ts"
+    "test": "node --experimental-strip-types --test src/*.test.ts"
   },
   "dependencies": {
     "lenis": "^1.3.4"
