@@ -1,21 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { AmbientFinding, WatchEvent } from '@hypergate/shared';
+import type { AmbientFinding } from '@hypergate/shared';
 import { ambientApi } from '../ambientApi';
 import { useToast } from '../toast';
 
 const shortPath = (p: string): string => p.replace(/^\/(Users|home)\/[^/]+/, '~').replace(/^[A-Z]:\\Users\\[^\\]+/i, '~');
 
-const EVENT_LABEL: Record<WatchEvent['kind'], string> = {
-  'ambient-new': 'new login',
-  'ambient-changed': 'login changed',
-  'ambient-imported': 'moved to vault',
-  'cli-new': 'new CLI',
-};
-
-/** What the action button does for a finding, or undefined for report-only rows. */
+/** What the action button does for a finding, or undefined when moving it is not supported. */
 const actionFor = (f: AmbientFinding): string | undefined => {
   if (!f.importable) return undefined;
-  return f.removal === 'manual' ? 'Copy into vault' : 'Move into vault';
+  return f.removal === 'manual' ? 'Copy into Hypergate' : 'Move into Hypergate';
 };
 
 /**
@@ -25,14 +18,12 @@ const actionFor = (f: AmbientFinding): string | undefined => {
  */
 export function AmbientPanel({ token, onImported }: { token?: string; onImported: () => void }) {
   const [findings, setFindings] = useState<AmbientFinding[] | null>(null);
-  const [events, setEvents] = useState<WatchEvent[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const toast = useToast();
 
   const load = useCallback(() => {
     void ambientApi.scan().then((r) => setFindings(r.findings)).catch(() => setFindings([]));
-    void ambientApi.events().then((r) => setEvents(r.events.slice(-6).reverse())).catch(() => {});
   }, []);
   useEffect(() => {
     load();
@@ -68,8 +59,8 @@ export function AmbientPanel({ token, onImported }: { token?: string; onImported
       <div className="row between wrap-gap" style={{ marginBottom: 6 }}>
         <span className="server-name">
           {findings.length === 0
-            ? 'No logins found outside the vault'
-            : `${findings.length} login${findings.length === 1 ? '' : 's'} outside the vault`}
+            ? 'No logins found outside Hypergate'
+            : `${findings.length} login${findings.length === 1 ? '' : 's'} outside Hypergate`}
         </span>
         <span className="row" style={{ gap: 8 }}>
           <span className="small muted">Any process running as you can read these, agents included.</span>
@@ -101,7 +92,9 @@ export function AmbientPanel({ token, onImported }: { token?: string; onImported
                         {busy === f.id ? 'Moving…' : action}
                       </button>
                     ) : (
-                      <span className="small muted">Manual step</span>
+                      <span className="small muted" title="Hypergate can't move this login yet. Details shows how to handle it by hand.">
+                        Not supported
+                      </span>
                     )}
                   </div>
                 </div>
@@ -120,22 +113,6 @@ export function AmbientPanel({ token, onImported }: { token?: string; onImported
               </div>
             );
           })}
-        </div>
-      )}
-      {events.length > 0 && (
-        <div style={{ marginTop: 10 }}>
-          <div className="small muted" style={{ marginBottom: 4 }}>Recently noticed</div>
-          <div className="list">
-            {events.map((e) => (
-              <div key={e.id} className="list-row small">
-                <span className="chip">{EVENT_LABEL[e.kind]}</span>{' '}
-                <span>{e.detail ? `${e.tool} (${e.detail})` : e.tool}</span>{' '}
-                <span className="muted mono" style={{ overflowWrap: 'anywhere' }}>{shortPath(e.location)}</span>{' '}
-                {e.quarantined && <span className="chip">quarantined</span>}{' '}
-                <span className="muted">{new Date(e.at).toLocaleString()}</span>
-              </div>
-            ))}
-          </div>
         </div>
       )}
     </div>

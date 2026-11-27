@@ -4,13 +4,13 @@ import { api } from '../../api';
 import { useToast } from '../../toast';
 
 /**
- * "Agent instructions": the Hypergate block in each harness's global
- * instruction file (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, ...).
+ * Agent instructions: the Hypergate block in each harness's global instruction
+ * file (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, ...).
  *
- * Nothing is ever written without a click. The first time someone lands here
- * with a harness detected and no block installed anywhere, a one-time offer
- * sits above the list; dismissing it is remembered in settings, and the list
- * itself stays.
+ * There is no list of its own any more. A harness's file is part of that agent's
+ * setup, so it is shown inside the agent's row under Connected agents, and a
+ * harness that is on this machine but not connected shows it in the "Detected,
+ * not connected" list beneath. Nothing is ever written without a click.
  */
 
 const summarise = (r: InstructionsWriteResponse, verb: string): string => {
@@ -20,29 +20,28 @@ const summarise = (r: InstructionsWriteResponse, verb: string): string => {
   return changed ? `${verb[0].toUpperCase()}${verb.slice(1)} in ${changed} file(s).` : 'Already up to date.';
 };
 
-function useInstructions() {
+export interface Instructions {
+  status: InstructionsStatusResponse | null;
+  /** The harness id being written, or `all`. */
+  busy: string | null;
+  write: (id: string, remove: boolean) => Promise<void>;
+}
+
+/** Instruction-file status for the whole page, with the one write path. */
+export function useInstructions(): Instructions {
   const [status, setStatus] = useState<InstructionsStatusResponse | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const toast = useToast();
   const refresh = useCallback(() => {
     void api.instructions().then(setStatus).catch(() => setStatus(null));
   }, []);
   useEffect(refresh, [refresh]);
-  return { status, refresh };
-}
 
-export function AgentInstructionsSection({ token }: { token?: string }) {
-  const { status, refresh } = useInstructions();
-  const [busy, setBusy] = useState<string | null>(null);
-  const [dismissed, setDismissed] = useState(true);
-  const toast = useToast();
-
-  useEffect(() => {
-    void api.settings().then((s) => setDismissed(!!s.instructionsPromptDismissed)).catch(() => {});
-  }, []);
-
-  const write = async (id: string, remove: boolean) => {
-    if (!token) return toast.show('No gateway token: reload the page.', 'error');
+  const write = useCallback(async (id: string, remove: boolean) => {
     setBusy(id);
     try {
+      const { token } = await api.gateway();
+      if (!token) throw new Error('no token');
       const r = remove ? await api.removeInstructions(id, token) : await api.installInstructions(id, token);
       toast.show(summarise(r, remove ? 'removed' : 'added'), r.ok ? 'success' : 'error');
     } catch {
@@ -50,95 +49,74 @@ export function AgentInstructionsSection({ token }: { token?: string }) {
     }
     setBusy(null);
     refresh();
-  };
+  }, [refresh, toast]);
 
-  const dismiss = () => {
-    setDismissed(true);
-    void api.updateSettings({ instructionsPromptDismissed: true }).catch(() => {});
-  };
-
-  if (!status) return null;
-  const detected = status.harnesses.filter((h) => h.detected);
-  const anyInstalled = status.harnesses.some((h) => h.installed);
-  const pending = detected.filter((h) => !h.current && !h.damaged);
-  const offer = !dismissed && !anyInstalled && detected.length > 0;
-
-  return (
-    <>
-      <div className="section-title" id="agent-instructions">
-        Agent instructions
-        <span className="rt">
-          <button
-            className="btn sm btn-accent"
-            disabled={!pending.length || busy !== null}
-            onClick={() => void write('all', false)}
-            title="Add or update the Hypergate block in every detected harness's global instructions"
-          >
-            {busy === 'all' ? 'Installing…' : 'Install for all detected'}
-          </button>
-        </span>
-      </div>
-      {offer && (
-        <div className="panel"><div className="list-row">
-          <div style={{ flex: 1 }}>
-            <b>Tell your agents how this machine works?</b>
-            <div className="small muted">
-              Hypergate can add a short block to the global instructions of {detected.map((h) => h.name).join(', ')}:
-              keys come from the vault through <code>hypergate run</code>, never written down or pasted, and a missing
-              key, CLI or server is requested rather than worked around. It works whichever model the agent runs on.
-              Nothing is written until you choose.
-            </div>
-          </div>
-          <div className="row wrap-gap">
-            <button className="btn btn-primary" disabled={busy !== null} onClick={() => void write('all', false).then(dismiss)}>
-              Add to {detected.length} harness{detected.length === 1 ? '' : 'es'}
-            </button>
-            <button className="btn" onClick={dismiss}>Not now</button>
-          </div>
-        </div></div>
-      )}
-      <div className="panel"><div className="list">
-        {status.harnesses.map((h) => (
-          <HarnessRow key={h.id} h={h} busy={busy === h.id} onWrite={(remove) => void write(h.id, remove)} />
-        ))}
-        <div className="list-row small muted">
-          Not written to: {status.skipped.map((s) => `${s.name} (${s.reason})`).join(' ')}
-        </div>
-      </div></div>
-    </>
-  );
+  return { status, busy, write };
 }
 
-function HarnessRow({ h, busy, onWrite }: { h: InstructionsHarnessInfo; busy: boolean; onWrite: (remove: boolean) => void }) {
-  const state = h.damaged
-    ? <span className="chip chip-danger">needs a hand fix</span>
-    : h.current
-      ? <span className="chip chip-official">installed</span>
-      : h.installed
-        ? <span className="chip chip-warning">out of date</span>
-        : h.detected
-          ? <span className="chip">not installed</span>
-          : <span className="chip">not detected</span>;
-  return (
-    <div className="list-row">
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div>
-          <b>{h.name}</b> {state}{' '}
-          <a className="small muted" href={h.source} target="_blank" rel="noreferrer">docs ↗</a>
-        </div>
-        <div className="small muted" style={{ overflowWrap: 'anywhere' }}><code>{h.path}</code></div>
-        {h.note && <div className="small" style={{ color: 'var(--warning)' }}>{h.note}</div>}
+/**
+ * The harness whose instruction file serves this agent: by catalog target for an
+ * agent picked from the catalog, by name for one added by hand (a custom agent
+ * called "Codex" is Codex).
+ */
+export function harnessFor(
+  status: InstructionsStatusResponse | null,
+  agent: { target?: string; name: string },
+): InstructionsHarnessInfo | undefined {
+  if (!status) return undefined;
+  return agent.target
+    ? status.harnesses.find((h) => h.targets.includes(agent.target!))
+    : status.harnesses.find((h) => h.name.toLowerCase() === agent.name.trim().toLowerCase());
+}
+
+/** A small state chip for a harness's file. */
+export function InstructionsChip({ h }: { h: InstructionsHarnessInfo }) {
+  if (h.damaged) return <span className="chip chip-danger" title={h.path}>instructions need a hand fix</span>;
+  if (h.current) return <span className="chip chip-official" title={h.path}>instructions installed</span>;
+  if (h.installed) return <span className="chip chip-warning" title={h.path}>instructions out of date</span>;
+  return <span className="chip chip-warning" title={h.path}>no instructions</span>;
+}
+
+/**
+ * The instructions part of an agent's details.
+ *
+ * Once the block is installed and current there is nothing to set up, so the
+ * explanation and the button go away and only a one-line status stays, with
+ * Remove for anyone who wants it gone.
+ */
+export function AgentInstructionsBlock({ h, ins }: { h: InstructionsHarnessInfo; ins: Instructions }) {
+  const busy = ins.busy === h.id || ins.busy === 'all';
+  if (h.current) {
+    return (
+      <div className="row wrap-gap instr-done">
+        <span className="small muted">
+          ✓ Hypergate block in <code style={{ overflowWrap: 'anywhere' }}>{h.path}</code>
+        </span>
+        <button className="btn sm btn-ghost" disabled={busy} onClick={() => void ins.write(h.id, true)}>
+          {busy ? 'Removing…' : 'Remove'}
+        </button>
       </div>
-      <div className="row wrap-gap">
-        {h.installed ? (
-          <>
-            {!h.current && <button className="btn sm" disabled={busy} onClick={() => onWrite(false)}>Update</button>}
-            <button className="btn sm" disabled={busy} onClick={() => onWrite(true)}>Remove</button>
-          </>
+    );
+  }
+  return (
+    <div className="instr-setup">
+      <div className="small muted">
+        Adds a short block to <code style={{ overflowWrap: 'anywhere' }}>{h.path}</code> so every {h.name} session takes
+        keys from the vault through <code>hypergate run</code>, never writes them down, and asks for a missing key, CLI or
+        server instead of working around Hypergate.{' '}
+        <a href={h.source} target="_blank" rel="noreferrer">docs ↗</a>
+      </div>
+      {h.note && <div className="small" style={{ color: 'var(--warning)', marginTop: 6 }}>{h.note}</div>}
+      <div className="row wrap-gap" style={{ marginTop: 10 }}>
+        {h.damaged ? (
+          <span className="small muted">The file has a Hypergate start marker with no end marker. Fix it by hand first.</span>
         ) : (
-          <button className="btn sm" disabled={busy || !!h.damaged} onClick={() => onWrite(false)}>
-            {busy ? 'Installing…' : 'Install'}
+          <button className="btn sm btn-primary" disabled={busy} onClick={() => void ins.write(h.id, false)}>
+            {busy ? 'Writing…' : h.installed ? 'Update instructions' : 'Add instructions'}
           </button>
+        )}
+        {h.installed && !h.damaged && (
+          <button className="btn sm btn-ghost" disabled={busy} onClick={() => void ins.write(h.id, true)}>Remove</button>
         )}
       </div>
     </div>
@@ -146,39 +124,39 @@ function HarnessRow({ h, busy, onWrite }: { h: InstructionsHarnessInfo; busy: bo
 }
 
 /**
- * The offer shown after an agent connects: if its harness has a global
- * instruction file without a current block, one click adds it there.
+ * A one-time offer above the agents list: shown when a harness is detected and
+ * no block is installed anywhere. Dismissing it is remembered in settings.
  */
-export function InstructionsOffer({ target }: { target?: string }) {
-  const { status, refresh } = useInstructions();
-  const [busy, setBusy] = useState(false);
-  const toast = useToast();
-  const h = target ? status?.harnesses.find((x) => x.targets.includes(target)) : undefined;
-  if (!h || h.current || h.damaged) return null;
-
-  const add = async () => {
-    setBusy(true);
-    try {
-      const { token } = await api.gateway();
-      if (!token) throw new Error('no token');
-      const r = await api.installInstructions(h.id, token);
-      toast.show(summarise(r, 'added'), r.ok ? 'success' : 'error');
-    } catch {
-      toast.show('The daemon could not write the instruction file.', 'error');
-    }
-    setBusy(false);
-    refresh();
+export function InstructionsFirstOffer({ ins }: { ins: Instructions }) {
+  const [dismissed, setDismissed] = useState(true);
+  useEffect(() => {
+    void api.settings().then((s) => setDismissed(!!s.instructionsPromptDismissed)).catch(() => {});
+  }, []);
+  const dismiss = () => {
+    setDismissed(true);
+    void api.updateSettings({ instructionsPromptDismissed: true }).catch(() => {});
   };
-
+  const status = ins.status;
+  if (!status || dismissed) return null;
+  const detected = status.harnesses.filter((h) => h.detected);
+  if (status.harnesses.some((h) => h.installed) || detected.length === 0) return null;
   return (
-    <div className="row wrap-gap" style={{ marginTop: 10 }}>
-      <button className="btn sm" disabled={busy} onClick={() => void add()}>
-        {busy ? 'Adding…' : h.installed ? 'Update Hypergate instructions' : 'Add Hypergate instructions'}
-      </button>
-      <span className="small muted">
-        Puts a short block in <code style={{ overflowWrap: 'anywhere' }}>{h.path}</code> so every {h.name} session uses the vault and asks before working
-        around Hypergate.
-      </span>
-    </div>
+    <div className="panel" style={{ marginBottom: 10 }}><div className="list-row">
+      <div style={{ flex: 1 }}>
+        <b>Tell your agents how this machine works?</b>
+        <div className="small muted">
+          Hypergate can add a short block to the global instructions of {detected.map((h) => h.name).join(', ')}:
+          keys come from the vault through <code>hypergate run</code>, never written down or pasted, and a missing
+          key, CLI or server is requested rather than worked around. It works whichever model the agent runs on.
+          Nothing is written until you choose.
+        </div>
+      </div>
+      <div className="row wrap-gap">
+        <button className="btn btn-primary" disabled={ins.busy !== null} onClick={() => void ins.write('all', false).then(dismiss)}>
+          Add to {detected.length} harness{detected.length === 1 ? '' : 'es'}
+        </button>
+        <button className="btn" onClick={dismiss}>Not now</button>
+      </div>
+    </div></div>
   );
 }
