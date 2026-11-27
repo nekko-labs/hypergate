@@ -1,29 +1,70 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Hypergate">
-  <!-- The gate is an open, luminous ring; its center is intentionally empty. -->
   <defs>
-    <linearGradient id="hgRing" x1="0.08" y1="0.05" x2="0.92" y2="0.95">
-      <stop offset="0" stop-color="#7c6bff"/>
-      <stop offset="0.3" stop-color="#6d5efc"/>
-      <stop offset="0.6" stop-color="#22d3ee"/>
-      <stop offset="0.8" stop-color="#a5f3fc"/>
-      <stop offset="1" stop-color="#6d5efc"/>
+    <rect id="tile" x="5" y="5" width="90" height="90" rx="22"/>
+    <clipPath id="tile-clip"><use href="#tile"/></clipPath>
+    <radialGradient id="violet-pool" cx="84%" cy="9%" r="74%">
+      <stop stop-color="#6d5efc" stop-opacity=".34"/>
+      <stop offset="1" stop-color="#6d5efc" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cyan-pool" cx="9%" cy="92%" r="64%">
+      <stop stop-color="#22d3ee" stop-opacity=".19"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x2=".65" y2="1">
+      <stop stop-color="#a5b5fc" stop-opacity=".23"/>
+      <stop offset=".48" stop-color="#a5b5fc" stop-opacity=".06"/>
+      <stop offset="1" stop-color="#657cb6" stop-opacity=".2"/>
     </linearGradient>
-    <!-- Alpha by radius. The hero shader's ring has no outline: it fades in and out
-         of the space around it, so the mark's edges ramp instead of ending on a
-         stroke, and the ring reads as light rather than as a drawn circle. -->
-    <radialGradient id="hgFeather">
-      <stop offset="0.46" stop-color="#fff" stop-opacity="0"/>
-      <stop offset="0.58" stop-color="#fff" stop-opacity="0.5"/>
-      <stop offset="0.7" stop-color="#fff" stop-opacity="1"/>
-      <stop offset="0.86" stop-color="#fff" stop-opacity="0.32"/>
+    <radialGradient id="halo">
+      <stop offset=".28" stop-color="#6d5efc" stop-opacity="0"/>
+      <stop offset=".62" stop-color="#6d5efc" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#6d5efc" stop-opacity="0"/>
+    </radialGradient>
+    <!-- The in-app mark's violet, cyan and ice sweep, frozen in one pose. -->
+    <linearGradient id="gate" x1="0" y1=".38" x2="1" y2=".62">
+      <stop stop-color="#806fff"/>
+      <stop offset=".32" stop-color="#6d5efc"/>
+      <stop offset=".59" stop-color="#7197ff"/>
+      <stop offset=".81" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#a5f3fc"/>
+    </linearGradient>
+    <radialGradient id="crest" cx="79%" cy="80%" r="34%">
+      <stop stop-color="#d4fbff" stop-opacity=".83"/>
+      <stop offset="1" stop-color="#a5f3fc" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Fade both edges, leaving the middle open rather than filling the portal. -->
+    <radialGradient id="feather">
+      <stop offset=".36" stop-color="#fff" stop-opacity="0"/>
+      <stop offset=".50" stop-color="#fff" stop-opacity=".24"/>
+      <stop offset=".64" stop-color="#fff" stop-opacity="1"/>
+      <stop offset=".70" stop-color="#fff" stop-opacity=".93"/>
+      <stop offset=".86" stop-color="#fff" stop-opacity=".24"/>
       <stop offset="1" stop-color="#fff" stop-opacity="0"/>
     </radialGradient>
-    <!-- r=40 keeps the outer glow inside the tile, corners included. -->
-    <mask id="hgGate" maskContentUnits="userSpaceOnUse">
-      <circle cx="50" cy="50" r="40" fill="url(#hgFeather)"/>
+    <circle id="aperture" cx="50" cy="50" r="43"/>
+    <mask id="ring" x="7" y="7" width="86" height="86" maskUnits="userSpaceOnUse">
+      <use href="#aperture" fill="url(#feather)"/>
     </mask>
   </defs>
-  <!-- deep space tile -->
-  <rect x="4" y="4" width="92" height="92" rx="23" fill="#05060f"/>
-  <circle cx="50" cy="50" r="40" fill="url(#hgRing)" mask="url(#hgGate)"/>
+  <g clip-path="url(#tile-clip)">
+    <use href="#tile" fill="#0a0c16"/>
+    <use href="#tile" fill="url(#violet-pool)"/>
+    <use href="#tile" fill="url(#cyan-pool)"/>
+    <circle cx="50" cy="50" r="48" fill="url(#halo)"/>
+    <g fill="#b2c0fc" opacity=".45">
+      <circle cx="21" cy="26" r=".58"/><circle cx="31" cy="15" r=".72"/>
+      <circle cx="49" cy="17" r=".38"/><circle cx="67" cy="14" r=".42"/>
+      <circle cx="82" cy="31" r=".63"/><circle cx="88" cy="44" r=".42"/>
+      <circle cx="15" cy="48" r=".45"/><circle cx="20" cy="70" r=".61"/>
+      <circle cx="42" cy="46" r=".38"/><circle cx="56" cy="55" r=".27"/>
+      <circle cx="87" cy="63" r=".39"/><circle cx="80" cy="78" r=".48"/>
+      <circle cx="37" cy="86" r=".58"/><circle cx="65" cy="85" r=".56"/>
+    </g>
+    <path d="M78 19v4m-2-2h4M25 77v3.4m-1.7-1.7h3.4" stroke="#c0eafa" stroke-width=".43" stroke-linecap="round" opacity=".64"/>
+    <g mask="url(#ring)">
+      <use href="#aperture" fill="url(#gate)"/>
+      <use href="#aperture" fill="url(#crest)"/>
+    </g>
+    <rect x="5.45" y="5.45" width="89.1" height="89.1" rx="21.55" fill="none" stroke="url(#rim)" stroke-width=".9"/>
+  </g>
 </svg>

@@ -1,291 +1,89 @@
-//! The tray icon, drawn in code rather than shipped as an asset.
-//!
-//! It reproduces the Hypergate warp-gate mark (a hollow, banded violet→cyan
-//! ring) as raw RGBA. Generating it means no `.ico`/`.png` to embed, decode, or
-//! keep in sync across three platforms, and the brand colours live in one place
-//! next to the CSS tokens they mirror.
+//! Colored desktop icons are generated from the same SVG as the web favicons.
+//! The macOS status item keeps its own monochrome, system-tinted ring.
 
 use tray_icon::Icon;
 
+const ICO: &[u8] = include_bytes!("../assets/hypergate.ico");
 const SIZE: u32 = 32;
-/// 3×3 supersampling per pixel. Cheap at this size and the difference between a
-/// crisp mark and a jagged one in a 16px tray slot.
-const SAMPLES: u32 = 3;
 
-/// `#6d5efc` — the violet end of the brand gradient.
-const VIOLET: [f32; 3] = [109.0, 94.0, 252.0];
-/// `#22d3ee` — the cyan end.
-const CYAN: [f32; 3] = [34.0, 211.0, 238.0];
-/// `#a5f3fc` — the bright ice crest from the hero shader.
-const ICE: [f32; 3] = [165.0, 243.0, 252.0];
-/// `#7c6bff` — the halo tint used by the site.
-const HALO: [f32; 3] = [124.0, 107.0, 255.0];
-
-/// Smooth 0→1 ramp across `[edge0, edge1]`, for antialiased edges.
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-/// Coverage and colour of the mark at one sub-sample point.
-///
-/// Returns premultiplied-by-coverage colour plus the coverage itself, so the
-/// caller can average sub-samples correctly (averaging straight RGB would let
-/// transparent samples darken the edges).
-///
-/// All radii are expressed in the original 32px design grid and scaled to
-/// `size`, so one geometry definition serves a 16px tray slot and a 256px
-/// Explorer thumbnail alike.
-fn sample(x: f32, y: f32, size: u32, coloured: bool) -> ([f32; 3], f32) {
-    let k = size as f32 / 32.0;
-    let c = size as f32 / 2.0;
-    let (dx, dy) = (x - c, y - c);
-    let r = (dx * dx + dy * dy).sqrt() / k;
-
-    // The ring: an annulus with both edges feathered. The feather is stated in
-    // grid units and widens with scale, so a 16px tray slot keeps its definition
-    // while a 256px render softens into light the way the site's shader ring does.
-    let feather = 1.0 + 1.4 * (1.0 - 1.0 / k.max(1.0));
-    let ring = smoothstep(8.8, 8.8 + feather, r) * (1.0 - smoothstep(14.2 - feather, 14.2, r));
-
-    // Several violet-dominant bands sweep around the ring, echoing the site's
-    // animated shader without making the static mark look noisy.
-    let angle = dy.atan2(dx); // -PI..PI
-    let phase = 0.5 + 0.5 * (angle * 3.0 + 0.28 * (angle * 5.0).sin()).sin();
-    let crest = phase.powf(3.2);
-    let mut ring_rgb = if crest < 0.68 {
-        let mix = crest / 0.68;
-        [
-            VIOLET[0] + (CYAN[0] - VIOLET[0]) * mix,
-            VIOLET[1] + (CYAN[1] - VIOLET[1]) * mix,
-            VIOLET[2] + (CYAN[2] - VIOLET[2]) * mix,
-        ]
-    } else {
-        let mix = ((crest - 0.68) / 0.32) * 0.67;
-        [
-            CYAN[0] + (ICE[0] - CYAN[0]) * mix,
-            CYAN[1] + (ICE[1] - CYAN[1]) * mix,
-            CYAN[2] + (ICE[2] - CYAN[2]) * mix,
-        ]
-    };
-    // A broad ice bloom on the crests, mixed within the brand ramp. A short white
-    // arc laid over the ring read as a grey scratch across the top of the mark.
-    let bloom = crest.powf(1.6) * ring * 0.22;
-    ring_rgb[0] += (ICE[0] - ring_rgb[0]) * bloom;
-    ring_rgb[1] += (ICE[1] - ring_rgb[1]) * bloom;
-    ring_rgb[2] += (ICE[2] - ring_rgb[2]) * bloom;
-    // The halo starts under the ring's outer edge rather than after it, so the two
-    // blend into one soft falloff instead of meeting at a visible boundary.
-    let halo = if coloured {
-        (1.0 - smoothstep(13.6, 14.9, r)) * smoothstep(12.6, 13.6, r) * 0.42
-    } else {
-        0.0
-    };
-    if ring <= 0.0 {
-        if halo > 0.0 {
-            return ([HALO[0] * halo, HALO[1] * halo, HALO[2] * halo], halo);
+/// Our generated ICO uses 32-bit uncompressed DIBs. Reuse those frames for
+/// native UI icons instead of bundling separate rasters or drawing a second mark.
+fn rgba_at(size: u32) -> Vec<u8> {
+    let count = u16::from_le_bytes([ICO[4], ICO[5]]) as usize;
+    let dimension = (size % 256) as u8;
+    let entry = ICO[6..6 + count * 16]
+        .as_chunks::<16>()
+        .0
+        .iter()
+        .find(|entry| entry[0] == dimension && entry[1] == dimension)
+        .expect("the generated asset includes the requested icon size");
+    let start = u32::from_le_bytes(entry[12..16].try_into().unwrap()) as usize + 40;
+    let stride = size as usize * 4;
+    let pixels = &ICO[start..start + stride * size as usize];
+    let mut rgba = Vec::with_capacity(pixels.len());
+    for row in pixels.rchunks_exact(stride) {
+        for bgra in row.as_chunks::<4>().0 {
+            rgba.extend_from_slice(&[bgra[2], bgra[1], bgra[0], bgra[3]]);
         }
-        return ([0.0; 3], 0.0);
     }
-    let coverage = (ring + halo).min(1.0);
-    (
-        [
-            ring_rgb[0] * ring + HALO[0] * halo,
-            ring_rgb[1] * ring + HALO[1] * halo,
-            ring_rgb[2] * ring + HALO[2] * halo,
-        ],
-        coverage,
-    )
+    rgba
 }
 
-/// Render the mark to RGBA8.
-///
-/// `template` produces a macOS template image: shape in the alpha channel with
-/// black RGB, which AppKit then tints for the current menu bar appearance. A
-/// coloured menu bar icon is the classic macOS mistake — it looks wrong in dark
-/// mode and worse on a tinted wallpaper.
-fn rgba_at(size: u32, template: bool) -> Vec<u8> {
-    let mut out = Vec::with_capacity((size * size * 4) as usize);
-    let step = 1.0 / SAMPLES as f32;
-    for py in 0..size {
-        for px in 0..size {
-            let mut acc = [0.0f32; 3];
-            let mut alpha = 0.0f32;
-            for sy in 0..SAMPLES {
-                for sx in 0..SAMPLES {
-                    let x = px as f32 + (sx as f32 + 0.5) * step;
-                    let y = py as f32 + (sy as f32 + 0.5) * step;
-                    let (rgb, a) = sample(x, y, size, !template);
-                    acc[0] += rgb[0];
-                    acc[1] += rgb[1];
-                    acc[2] += rgb[2];
-                    alpha += a;
+/// Preserve the unbacked ring that AppKit tints for the current menu bar.
+#[cfg(any(target_os = "macos", test))]
+fn template_rgba() -> Vec<u8> {
+    fn smoothstep(start: f32, end: f32, x: f32) -> f32 {
+        let t = ((x - start) / (end - start)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+    let mut out = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let mut alpha = 0.0;
+            for sy in 0..3 {
+                for sx in 0..3 {
+                    let dx = x as f32 + (sx as f32 + 0.5) / 3.0 - 16.0;
+                    let dy = y as f32 + (sy as f32 + 0.5) / 3.0 - 16.0;
+                    let r = (dx * dx + dy * dy).sqrt();
+                    alpha += smoothstep(8.8, 9.8, r) * (1.0 - smoothstep(14.2 - 1.0, 14.2, r));
                 }
             }
-            let n = (SAMPLES * SAMPLES) as f32;
-            let a = alpha / n;
-            if a <= 0.001 {
-                out.extend_from_slice(&[0, 0, 0, 0]);
-                continue;
-            }
-            if template {
-                out.extend_from_slice(&[0, 0, 0, (a * 255.0).round() as u8]);
-            } else {
-                // Un-premultiply back to straight alpha, which is what RGBA8 wants.
-                let unmul = |v: f32| ((v / n) / a).round().clamp(0.0, 255.0) as u8;
-                out.extend_from_slice(&[unmul(acc[0]), unmul(acc[1]), unmul(acc[2]), (a * 255.0).round() as u8]);
-            }
+            out.extend_from_slice(&[0, 0, 0, (alpha / 9.0 * 255.0).round() as u8]);
         }
     }
     out
 }
 
-/// The mark at the tray's own size.
-fn rgba(template: bool) -> Vec<u8> {
-    rgba_at(SIZE, template)
-}
-
-/// The tray icon for the current platform.
 pub fn tray_icon() -> Result<Icon, String> {
-    // macOS menu bar icons must be template images; Windows and Linux want the
-    // real brand colours.
-    let template = cfg!(target_os = "macos");
-    Icon::from_rgba(rgba(template), SIZE, SIZE).map_err(|e| format!("could not build the tray icon: {e}"))
+    #[cfg(target_os = "macos")]
+    let rgba = template_rgba();
+    #[cfg(not(target_os = "macos"))]
+    let rgba = rgba_at(SIZE);
+    Icon::from_rgba(rgba, SIZE, SIZE).map_err(|e| format!("could not build the tray icon: {e}"))
 }
 
-/// The manager window's titlebar/taskbar icon. Bigger than the tray's 32px:
-/// Alt-Tab and the taskbar render at 48–64px, and scaling up a 32px mark
-/// looks soft where rendering at 64px stays crisp.
 pub fn window_icon() -> Result<tao::window::Icon, String> {
     const WINDOW_SIZE: u32 = 64;
-    tao::window::Icon::from_rgba(rgba_at(WINDOW_SIZE, false), WINDOW_SIZE, WINDOW_SIZE)
+    tao::window::Icon::from_rgba(rgba_at(WINDOW_SIZE), WINDOW_SIZE, WINDOW_SIZE)
         .map_err(|e| format!("could not build the window icon: {e}"))
 }
 
 #[cfg(target_os = "macos")]
 pub fn menu_icon() -> Result<muda::Icon, String> {
     const MENU_SIZE: u32 = 128;
-    muda::Icon::from_rgba(rgba_at(MENU_SIZE, false), MENU_SIZE, MENU_SIZE)
+    muda::Icon::from_rgba(rgba_at(MENU_SIZE), MENU_SIZE, MENU_SIZE)
         .map_err(|e| format!("could not build the menu icon: {e}"))
 }
 
-/// Sizes a Windows `.ico` should carry: 16 for the Start Menu list, 32 for the
-/// desktop, 48 for large icons, 256 for Explorer's extra-large view.
-const ICO_SIZES: [u32; 4] = [16, 32, 48, 256];
-
-/// The mark as a Windows `.ico`, for shortcut and window icons.
-///
-/// Uncompressed 32-bit BMP payloads rather than PNG ones: BMP needs no deflate
-/// (so no dependency and nothing to get wrong), every Windows version reads it,
-/// and a few hundred KB on disk is irrelevant for a file written once.
 pub fn ico_bytes() -> Vec<u8> {
-    const HEADER: usize = 6;
-    const ENTRY: usize = 16;
-    const DIB_HEADER: usize = 40;
-
-    let images: Vec<(u32, Vec<u8>)> = ICO_SIZES.iter().map(|&s| (s, rgba_at(s, false))).collect();
-
-    let mut dir = Vec::with_capacity(HEADER + ENTRY * images.len());
-    dir.extend_from_slice(&0u16.to_le_bytes()); // reserved
-    dir.extend_from_slice(&1u16.to_le_bytes()); // 1 = icon
-    dir.extend_from_slice(&(images.len() as u16).to_le_bytes());
-
-    let mut bodies: Vec<Vec<u8>> = Vec::with_capacity(images.len());
-    for (size, rgba) in &images {
-        // 1-bit AND mask: unused for 32-bit icons (alpha wins) but required by
-        // the format. Rows are padded to a 4-byte boundary.
-        let mask_row = ((*size).div_ceil(32) * 4) as usize;
-        let mut body = Vec::with_capacity(DIB_HEADER + rgba.len() + mask_row * *size as usize);
-
-        body.extend_from_slice(&(DIB_HEADER as u32).to_le_bytes()); // biSize
-        body.extend_from_slice(&(*size as i32).to_le_bytes()); // biWidth
-        // Doubled height: the format expects colour rows plus mask rows.
-        body.extend_from_slice(&(*size as i32 * 2).to_le_bytes()); // biHeight
-        body.extend_from_slice(&1u16.to_le_bytes()); // biPlanes
-        body.extend_from_slice(&32u16.to_le_bytes()); // biBitCount
-        body.extend_from_slice(&0u32.to_le_bytes()); // BI_RGB
-        body.extend_from_slice(&0u32.to_le_bytes()); // biSizeImage (0 is fine for BI_RGB)
-        body.extend_from_slice(&[0u8; 16]); // resolution + palette counts
-
-        // BGRA, bottom-up.
-        for y in (0..*size).rev() {
-            for x in 0..*size {
-                let i = ((y * size + x) * 4) as usize;
-                body.extend_from_slice(&[rgba[i + 2], rgba[i + 1], rgba[i], rgba[i + 3]]);
-            }
-        }
-        body.extend(std::iter::repeat_n(0u8, mask_row * *size as usize));
-        bodies.push(body);
-    }
-
-    let mut offset = HEADER + ENTRY * images.len();
-    for ((size, _), body) in images.iter().zip(&bodies) {
-        // 256 is encoded as 0: the field is one byte.
-        let dim = if *size >= 256 { 0u8 } else { *size as u8 };
-        dir.push(dim); // width
-        dir.push(dim); // height
-        dir.push(0); // palette size (0 = no palette)
-        dir.push(0); // reserved
-        dir.extend_from_slice(&1u16.to_le_bytes()); // planes
-        dir.extend_from_slice(&32u16.to_le_bytes()); // bit count
-        dir.extend_from_slice(&(body.len() as u32).to_le_bytes());
-        dir.extend_from_slice(&(offset as u32).to_le_bytes());
-        offset += body.len();
-    }
-
-    for body in bodies {
-        dir.extend_from_slice(&body);
-    }
-    dir
+    ICO.to_vec()
 }
 
-/// The mark as an SVG, for the XDG icon theme on Linux.
-///
-/// Scalable beats a raster pyramid here: freedesktop themes look in
-/// `scalable/apps` first, and one vector file covers every panel size a desktop
-/// environment might ask for. Kept in code so the geometry and the brand colours
-/// stay beside the raster renderer above rather than drifting from it.
+/// Used by the Linux shortcut and icon theme.
 pub fn svg() -> String {
-    let hex = |c: [f32; 3]| format!("#{:02x}{:02x}{:02x}", c[0] as u8, c[1] as u8, c[2] as u8);
-    // The mask's stops restate `sample`'s annulus from the 32px design grid as
-    // fractions of the 16px mask radius: 8.8 → .55, 14.2 → .89.
-    format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <defs>
-    <linearGradient id="gate" gradientUnits="userSpaceOnUse" x1="2" y1="16" x2="30" y2="16">
-      <stop offset="0" stop-color="{violet}"/>
-      <stop offset=".18" stop-color="{violet}"/>
-      <stop offset=".32" stop-color="{cyan}" stop-opacity=".78"/>
-      <stop offset=".46" stop-color="{violet}"/>
-      <stop offset=".62" stop-color="{violet}"/>
-      <stop offset=".76" stop-color="{ice}" stop-opacity=".6"/>
-      <stop offset=".9" stop-color="{violet}"/>
-      <stop offset="1" stop-color="{violet}"/>
-    </linearGradient>
-    <!-- Alpha by radius: both edges of the ring ramp off instead of stopping at a
-         stroke boundary, which is what makes the site's shader ring read as light
-         rather than as a drawn outline. -->
-    <radialGradient id="feather">
-      <stop offset=".42" stop-color="#fff" stop-opacity="0"/>
-      <stop offset=".55" stop-color="#fff" stop-opacity=".85"/>
-      <stop offset=".72" stop-color="#fff" stop-opacity=".95"/>
-      <stop offset=".89" stop-color="#fff" stop-opacity=".34"/>
-      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
-    </radialGradient>
-    <mask id="ring" maskContentUnits="userSpaceOnUse">
-      <circle cx="16" cy="16" r="16" fill="url(#feather)"/>
-    </mask>
-  </defs>
-  <circle cx="16" cy="16" r="16" fill="url(#gate)" mask="url(#ring)"/>
-</svg>
-"##,
-        violet = hex(VIOLET),
-        cyan = hex(CYAN),
-        ice = hex(ICE),
-    )
+    include_str!("../../site/public/favicon.svg").to_owned()
 }
 
-/// True when the tray icon should be handed to the OS as a template image.
 pub fn is_template() -> bool {
     cfg!(target_os = "macos")
 }
@@ -294,80 +92,38 @@ pub fn is_template() -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn renders_a_full_rgba_buffer() {
-        let buf = rgba(false);
-        assert_eq!(buf.len(), (SIZE * SIZE * 4) as usize);
-    }
+    const SIZES: [u32; 6] = [16, 32, 48, 64, 128, 256];
 
     #[test]
-    fn corners_and_centre_are_transparent() {
-        let buf = rgba(false);
-        let at = |x: u32, y: u32| {
-            let i = ((y * SIZE + x) * 4) as usize;
-            (buf[i], buf[i + 1], buf[i + 2], buf[i + 3])
-        };
-        assert_eq!(at(0, 0).3, 0, "top-left corner should be transparent");
-        assert_eq!(at(SIZE - 1, SIZE - 1).3, 0, "bottom-right corner should be transparent");
-        assert_eq!(at(SIZE / 2, SIZE / 2).3, 0, "the gate opening should be transparent");
-    }
-
-    #[test]
-    fn the_hollow_ring_is_drawn() {
-        let buf = rgba(false);
-        let alpha_at = |x: u32, y: u32| buf[(((y * SIZE + x) * 4) + 3) as usize];
-        // y = centre, x sweeping right: opening (16), inner gap (~23), ring (~27), outside (31).
-        assert_eq!(alpha_at(16, 16), 0, "gate opening");
-        assert!(alpha_at(23, 16) < 60, "space inside the ring");
-        assert!(alpha_at(27, 16) > 200, "ring");
-        assert!(alpha_at(30, 16) > 0, "subtle outer halo");
-        assert!(alpha_at(30, 16) < 140, "halo must remain weaker than the ring");
-        assert_eq!(alpha_at(31, 16), 0, "outside the ring");
-    }
-
-    #[test]
-    fn a_violet_trough_stays_brand_saturated() {
-        let (rgb, alpha) = sample(6.05, 10.25, SIZE, true);
-        assert!(alpha > 0.9, "trough sample should be inside the ring");
-        for (actual, expected) in rgb.into_iter().zip(VIOLET) {
+    fn the_colored_icon_has_clear_corners_and_a_dark_open_center() {
+        for size in SIZES {
+            let buf = rgba_at(size);
+            assert_eq!(buf.len(), (size * size * 4) as usize);
+            assert_eq!(&buf[..4], &[0; 4], "transparent corner at {size}px");
+            let i = ((size / 2 * size + size / 2) * 4) as usize;
+            assert_eq!(buf[i + 3], 255, "opaque tile at {size}px");
             assert!(
-                (actual - expected).abs() < 4.0,
-                "violet trough was diluted: {actual} vs {expected}"
+                buf[i] < 40 && buf[i + 1] < 40 && buf[i + 2] < 65,
+                "dark center at {size}px"
             );
+            let ring = ((size / 2 * size + size * 4 / 5) * 4) as usize;
+            assert!(buf[ring + 1] > 100 && buf[ring + 2] > 125, "cyan ring at {size}px");
         }
     }
 
     #[test]
-    fn template_variant_is_black_with_shape_in_alpha() {
-        let buf = rgba(true);
-        let i = (((16 * SIZE) + 16) * 4) as usize;
-        assert_eq!(
-            (buf[i], buf[i + 1], buf[i + 2]),
-            (0, 0, 0),
-            "template RGB must be black"
-        );
-        assert_eq!(buf[i + 3], 0, "template center must preserve the gate opening");
+    fn the_template_remains_an_unbacked_monochrome_ring() {
+        let rgba = template_rgba();
+        let alpha = |x, y| rgba[((y * SIZE + x) * 4 + 3) as usize];
+        assert!(rgba.as_chunks::<4>().0.iter().all(|rgba| rgba[..3] == [0; 3]));
+        assert_eq!(alpha(0, 0), 0);
+        assert_eq!(alpha(16, 16), 0);
+        assert!(alpha(27, 16) > 200);
     }
 
     #[test]
-    fn the_mark_scales_to_other_sizes() {
-        for size in [16u32, 48, 256] {
-            let buf = rgba_at(size, false);
-            assert_eq!(buf.len(), (size * size * 4) as usize, "{size}px buffer");
-            let alpha = |x: u32, y: u32| buf[(((y * size + x) * 4) + 3) as usize];
-            assert_eq!(alpha(0, 0), 0, "{size}px: corner should be transparent");
-            assert_eq!(
-                alpha(size / 2, size / 2),
-                0,
-                "{size}px: gate opening should be transparent"
-            );
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn builds_the_macos_menu_icon() {
-        assert!(menu_icon().is_ok());
+    fn linux_uses_the_same_svg_as_the_browser() {
+        assert_eq!(svg(), include_str!("../../web/public/favicon.svg"));
     }
 
     #[test]
@@ -380,9 +136,9 @@ mod tests {
         assert_eq!(u16at(0), 0, "reserved");
         assert_eq!(u16at(2), 1, "type 1 = icon");
         let count = u16at(4) as usize;
-        assert_eq!(count, ICO_SIZES.len());
+        assert_eq!(count, SIZES.len());
 
-        for (i, &size) in ICO_SIZES.iter().enumerate() {
+        for (i, &size) in SIZES.iter().enumerate() {
             let e = 6 + i * 16;
             // 256 does not fit in the one-byte dimension field and is encoded as 0.
             let expected_dim = if size >= 256 { 0 } else { size as u8 };
@@ -406,55 +162,5 @@ mod tests {
                 "{size}px payload length"
             );
         }
-    }
-
-    #[test]
-    fn ico_pixels_are_bgra_bottom_up() {
-        let ico = ico_bytes();
-        // First entry is 16px; its pixel data starts after the 40-byte DIB header.
-        let off = u32::from_le_bytes([ico[18], ico[19], ico[20], ico[21]]) as usize + 40;
-        // Bottom-up means row 0 of the payload is the image's last row, which is
-        // outside the mark and therefore fully transparent.
-        assert_eq!(ico[off + 3], 0, "bottom row should be transparent");
-
-        // The centre pixel of a 16px image, counting rows from the bottom.
-        let centre = off + ((16 - 1 - 8) * 16 + 8) * 4;
-        assert_eq!(ico[centre + 3], 0, "gate opening should be transparent");
-    }
-
-    #[test]
-    fn writes_an_svg_carrying_the_brand_colours() {
-        let svg = svg();
-        assert!(svg.starts_with("<svg"), "must be a bare SVG document");
-        assert!(svg.contains("viewBox=\"0 0 32 32\""));
-        assert!(svg.contains("#6d5efc"), "violet stop missing");
-        assert!(svg.contains("#22d3ee"), "cyan stop missing");
-        assert!(svg.contains("fill=\"url(#gate)\""), "SVG must use the banded gradient");
-        assert!(
-            svg.contains("mask=\"url(#ring)\""),
-            "SVG must feather the annulus through the radial mask"
-        );
-        assert!(!svg.contains("#baf6ff"), "the hollow gate must not render a core");
-        assert!(
-            !svg.contains("#d8fbff"),
-            "the white hot arc read as a grey line across the top of the mark"
-        );
-        assert!(svg.contains("</svg>"));
-    }
-
-    #[test]
-    fn the_gradient_actually_varies_around_the_ring() {
-        let buf = rgba(false);
-        let px = |x: u32, y: u32| {
-            let i = ((y * SIZE + x) * 4) as usize;
-            (buf[i], buf[i + 1], buf[i + 2])
-        };
-        // The static mark has multiple band transitions, not one folded sweep.
-        let points = [(16, 4), (27, 16), (16, 27), (5, 16), (16, 4)];
-        let changes = points
-            .windows(2)
-            .filter(|pair| px(pair[0].0, pair[0].1) != px(pair[1].0, pair[1].1))
-            .count();
-        assert!(changes >= 3, "ring colour should band more than once around the ring");
     }
 }

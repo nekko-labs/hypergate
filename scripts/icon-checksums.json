@@ -1,0 +1,13 @@
+{
+  "apps/site/public/favicon.svg": "f15f599438fcfe1e9911215ccfca39ac19acb6923d24de02368b8ed7bdfffa16",
+  "scripts/gen-icon.mjs": "7d6ec435be86815f2da0ffb7cad7ee545b406a704466a9a4a8b8bdb022b41f10",
+  "apps/web/public/favicon.svg": "f15f599438fcfe1e9911215ccfca39ac19acb6923d24de02368b8ed7bdfffa16",
+  "apps/web/public/favicon.ico": "e4495ccdebdf6f7766b17084196ced351e7c05aa619dabf30eba327a191605ed",
+  "apps/web/public/icon-128.png": "0b79faba9c371163e6d7660e8acd1a08177db2ba58c39aec03d3aa7cd3ff0b0f",
+  "apps/site/public/icon-192.png": "13e42a798d11b1924028ee3db8fc5f44fdfba800ebc4719b4255fb164b021a92",
+  "apps/site/public/icon-512.png": "0adf1cdea18ed18731611c47f3a9c17e0108672e9688647ee4714269e8a5e139",
+  "apps/shell/assets/hypergate.ico": "534157abc84c899a6df7691b9deffb1ac9716f875010e11507a5de38b0c7e996",
+  "apps/shell/assets/hypergate-1024.png": "67a82c24baf88e6696f60a2dbd5da91d46bb4f145e41591b671f6c3846a8c1cc",
+  "packages/core/src/icon-64.png": "164e8ea9386d31cf996a998e08fc0baa16d5e7d7a67e9d3cae4befe7e6b6aa52",
+  "packages/core/src/icon-data.ts": "c88537aaefd8d495d972cbd6f6d1169cb2a11017493b302f4ea2cca5d65021e9"
+}

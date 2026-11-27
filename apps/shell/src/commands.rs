@@ -58,7 +58,14 @@ pub fn parse_curated_install(command: &str) -> Option<Vec<String>> {
 /// Hosts a curated install script may fetch from. Mirrors `SCRIPT_HOSTS` in
 /// packages/core/src/cli-actions.ts. The two runners must not disagree about
 /// which vendors are trusted, so changing one means changing both.
-const SCRIPT_HOSTS: [&str; 5] = ["claude.ai", "bun.sh", "deno.land", "astral.sh", "fly.io"];
+const SCRIPT_HOSTS: [&str; 6] = [
+    "claude.ai",
+    "bun.sh",
+    "deno.land",
+    "astral.sh",
+    "fly.io",
+    "antigravity.google",
+];
 
 /// The host of an https URL, rejecting the userinfo and port tricks that make
 /// `https://bun.sh@evil.example/x` read like a trusted host at a glance.
@@ -2641,6 +2648,8 @@ mod tests {
             "powershell -c \"irm https://bun.sh/install.ps1 | iex\"",
             "powershell -ExecutionPolicy ByPass -c \"irm https://astral.sh/uv/install.ps1 | iex\"",
             "powershell -c \"iwr https://fly.io/install.ps1 -useb | iex\"",
+            "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+            "powershell -c \"irm https://antigravity.google/cli/install.ps1 | iex\"",
         ] {
             assert!(parse_curated_script(good).is_some(), "{good}");
         }

@@ -59,7 +59,7 @@ export function parseCuratedCommand(command: string): string[] | null {
  * blast radius of the script runner is a one-line diff someone has to review
  * rather than a regex that quietly grows. Matched exactly, never as a suffix.
  */
-const SCRIPT_HOSTS = new Set(['claude.ai', 'bun.sh', 'deno.land', 'astral.sh', 'fly.io']);
+const SCRIPT_HOSTS = new Set(['claude.ai', 'bun.sh', 'deno.land', 'astral.sh', 'fly.io', 'antigravity.google']);
 
 /** `curl -fsSL <url> | bash`, optionally with the vendor's own `-s <channel>` argument. */
 const POSIX_SCRIPT = /^(curl|wget)((?: -[A-Za-z0-9-]+)+) (https:\/\/[^\s"|]+) \| (sh|bash)(?: -s [A-Za-z0-9._-]+)?$/;
