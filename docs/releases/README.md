@@ -73,3 +73,22 @@ The site renders a deliberately small subset of Markdown (`###` headings,
 bullet lists, paragraphs, `**bold**`, `` `code` `` and links) as real DOM nodes
 rather than parsed HTML. Anything outside that subset shows up as its own
 literal punctuation on the page, so keep to it.
+
+## Featured releases on hypergate.app
+
+The Highlights timeline and the full archive share `/release-notes.html`. The
+archive reads recent GitHub releases and links to the complete history. It does
+not use the curated data.
+
+For a release with something worth featuring, add an entry to
+[`apps/site/src/release-highlights.json`](../../apps/site/src/release-highlights.json)
+**after** the stable release is public. Use the UTC publication day from GitHub
+and add newest entries first. Write one short title, one to three headliners
+(each with a title and detail), and optional shorter `changes`. Give each item
+its merged PR number and author handles, verified on GitHub. Include the human
+contributors whose PRs shipped in that release, even if their changes aren't
+featured. Don't add bots or unpublished tags.
+
+The site build validates the entries and renders the index, headliners, and
+credit links as static HTML. Run `npm --prefix apps/site test` and
+`npm --prefix apps/site run build` when editing the list.
