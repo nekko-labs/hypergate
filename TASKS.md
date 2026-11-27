@@ -604,11 +604,17 @@ The section could already find and describe tools (v0.22.0); everything it found
 - [x] **Agents list and request, the user approves and sees the log**: `hypergate__clis_list` (installed tools + catalog search) and `hypergate__cli_install_request` (curated id or npm/brew package + reason) join the gateway builtins; the request queue is the credential-request shape reused (dedupe per agent+tool, TTL, cap, in-memory), the CLI tools nav carries the pending badge, and **Install & approve** starts the job with the log on screen while **Deny** runs nothing. A master caller is pointed at the manager instead of the queue, and `GATEWAY_INSTRUCTIONS` now opens by naming Hypergate as how MCP servers, CLIs and credentials are managed on this machine, with the CLI steps spelled out like the credential ones. · [spec](SPEC.md#33-registry--catalog-shipped) · Added: 2026-08-25 · Done: 2026-08-25
 - [x] **Verified**: 243 core tests (11 new: the grammar's parity cases with the Rust allowlist, lifecycle inverses per manager, npm-family derivation idempotence, catalog-wide integrity of every runnable route and auth hint) and 99 daemon tests (15 new: real spawns through the job runner covering success, failure, unspawnable, kill, line cap and one-per-tool, plus the request store's dedupe/TTL/cap/resolve). The feature smoke grew three blocks: managers + enriched routes, the job routes refusing no-token/unknown-action/unknown-tool/hostile-package with zero jobs started, and the agent loop end to end (list → request → dedupe with attempts → master told to use the manager → agent token refused on answer → deny resolves without installing), plus the instructions naming the CLI tools. Live on the dev Mac against an isolated daemon: a real `npm install -g cowsay@latest` from the search row with its log streaming in the row, the row flipping to installed with Repair/Uninstall, and a real uninstall leaving the machine clean; gh's Manage panel showing brew guessed from its path and the copy-only sign-in note; a real agent-filed flyctl request showing the badge and the approve/deny row. Before/after screenshots in the PR. · Added: 2026-08-25 · Done: 2026-08-25
 
-## Epic 76: major releases and the people behind them (v1.36.0)
+## Epic 77: major releases and the people behind them (v1.37.0)
 
 - [x] Verify the featured tags are published and match the changes, merged PRs, and contributor handles on GitHub. · [#135](https://github.com/nekko-labs/hypergate/issues/135)
 - [x] Build a responsive release index and headliners with contributor and PR links on the existing release notes route. Keep detailed notes and downloads in the expandable archive. · [spec](SPEC.md#37-marketing-site-shipped)
 - [x] Verify the production site build, desktop/mobile layouts, GitHub failure fallback, and JavaScript-off reading. · [screenshots](docs/site-changes/2026-11-26-release-highlights/)
+
+## Epic 76: logins outside Hypergate, one list (v1.36.0)
+
+Philip, on the Ambient logins panel: *"remove the manual step text from these. recently noticed should go away. instead it should be identified logins outside of hypergate. show either the option to move into hypergate or not supported."*
+
+- [x] **One list of what to fix**: `AmbientPanel` drops the "Recently noticed" event feed (and its `/api/watch/events` poll); the heading reads "N logins outside Hypergate". Importable rows say **Move into Hypergate** / **Copy into Hypergate**; report-only rows say **Not supported** instead of "Manual step", with the how-to kept under Details. · [spec](SPEC.md#312-ambient-credentials-watch-and-alerts-shipped) · Added: 2026-11-27 · Done: 2026-11-27
 
 ## Epic 75: instructions live with the agent, people get a page (v1.35.0)
 
