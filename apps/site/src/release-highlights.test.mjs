@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { build } from 'vite';
+import { fileURLToPath } from 'node:url';
 import { renderReleaseHighlights } from './release-highlights.mjs';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -22,6 +24,25 @@ test('generates one indexed milestone per release with full notes and credited c
   }
   assert.equal((html.match(/Newest highlight/g) || []).length, 1);
   assert.ok(html.includes('id="release-archive"'));
+});
+
+test('includes static highlights in the Vite production artifact', async () => {
+  const result = await build({
+    root: fileURLToPath(new URL('../', import.meta.url)),
+    logLevel: 'silent',
+    build: { write: false },
+  });
+  const artifacts = [result].flat().flatMap(({ output }) => output);
+  const releasePage = artifacts.find(({ fileName }) => fileName === 'release-notes.html');
+  assert.equal(typeof releasePage?.source, 'string');
+  assert.doesNotMatch(releasePage.source, /<!-- release-(index|highlights) -->/);
+  assert.equal((releasePage.source.match(/class="highlight-release"/g) ?? []).length, releases.length);
+  assert.ok(releasePage.source.includes('id="release-archive"'));
+  for (const { tag, contributors } of releases) {
+    assert.ok(releasePage.source.includes(`href="#${tag}"`));
+    assert.ok(releasePage.source.includes(`id="${tag}"`));
+    for (const login of contributors) assert.ok(releasePage.source.includes(`href="https://github.com/${login}"`));
+  }
 });
 
 test('keeps curated text escaped and does not request GitHub avatars', () => {
