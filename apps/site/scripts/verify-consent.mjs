@@ -7,7 +7,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 
 const require = createRequire(import.meta.url);
 const { chromium, devices } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const base = 'http://127.0.0.1:4510';
+const base = 'http://127.0.0.1:4540';
 const after = 'http://127.0.0.1:4521';
 const off = 'http://127.0.0.1:4522';
 const evidence = process.env.SITE_EVIDENCE_DIR;
@@ -91,9 +91,6 @@ async function visit(page, origin, path) {
   assert.equal(result.status(), 200);
   await page.evaluate(() => document.fonts.ready);
   if (path === '/' || path.startsWith('/?') || path.startsWith('/release-notes.html')) {
-    if (path.startsWith('/release-notes.html')) {
-      await page.getByRole('heading', { name: 'Midnight icons' }).waitFor();
-    }
     await page.locator('[data-download-primary]').first().filter({ hasText: 'Download for Mac (Apple silicon)' })
       .waitFor({ state: 'attached', timeout: 700 }).catch(() => {});
   }
@@ -189,7 +186,16 @@ async function verify(browser) {
   assert.equal(await page.getByRole('button', { name: 'Copy install command' }).innerText(), 'Copied');
 
   await page.getByRole('link', { name: 'Release notes', exact: true }).last().click();
-  await page.getByRole('heading', { name: 'Midnight icons' }).waitFor();
+  await page.locator('.release-highlights .highlight-release').first().waitFor();
+  await count(requests, 4);
+  const releaseHeading = page.locator('#release-list').getByRole('heading', { name: 'Midnight icons' });
+  assert.equal(await releaseHeading.count(), 0, 'the archive has not loaded yet');
+  const highlightLink = page.locator('.release-highlights a[href*="/releases/tag/"]').first();
+  const beforeHighlightClick = destinations.length;
+  await highlightLink.click();
+  await countDestinations(destinations, beforeHighlightClick + 1);
+  await page.getByText('Show recent releases', { exact: true }).click();
+  await releaseHeading.waitFor();
   await count(requests, 4);
   await page.locator('.release-assets a').filter({ hasText: 'windows-x64-setup.exe' }).click({ button: 'middle' });
   await count(requests, 5);
@@ -287,6 +293,28 @@ async function verify(browser) {
   assert.deepEqual(mobile.unexpected, []);
   await mobile.ctx.close();
   console.log('Linux picker, disabled RPM, Intel release fallback, and mobile touch choices pass.');
+
+  const failure = await context(browser, 'desktop', { failReleases: true });
+  const fallbackPage = await failure.ctx.newPage();
+  await visit(fallbackPage, after, '/release-notes.html');
+  await fallbackPage.getByText('Show recent releases', { exact: true }).click();
+  await fallbackPage.getByText('Release notes could not be loaded right now.').waitFor();
+  assert(await fallbackPage.locator('.release-highlights .highlight-release').first().isVisible());
+  await fallbackPage.getByRole('link', { name: 'View releases on GitHub' }).waitFor();
+  assert.deepEqual(failure.unexpected, []);
+  await count(failure.requests, 0);
+  await failure.ctx.close();
+
+  const noScript = await browser.newContext({ javaScriptEnabled: false, serviceWorkers: 'block' });
+  await noScript.route('**/*', (route) => new URL(route.request().url()).origin === after ? route.continue() : route.abort());
+  const staticPage = await noScript.newPage();
+  await staticPage.goto(`${after}/release-notes.html`);
+  assert(await staticPage.locator('.release-highlights .highlight-release').first().isVisible());
+  assert(await staticPage.getByRole('link', { name: 'Privacy', exact: true }).isVisible());
+  assert(await staticPage.getByRole('link', { name: 'Terms', exact: true }).isVisible());
+  assert(!await bubble(staticPage).isVisible());
+  await noScript.close();
+  console.log('Release highlights and legal navigation survive GitHub failure and disabled JavaScript.');
 }
 
 async function capture(browser) {

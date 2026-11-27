@@ -1,0 +1,123 @@
+/* ── release notes ────────────────────────────────────────── */
+.release-main { min-height: calc(100svh - 90px); padding: clamp(96px, 10vw, 142px) clamp(20px, 6vw, 80px) 90px; }
+.release-wrap { max-width: 1040px; margin: 0 auto; }
+.release-head { max-width: 760px; }
+.release-head h1 {
+  margin-top: 10px; font-family: var(--font-d); font-size: clamp(44px, 7vw, 82px);
+  line-height: 1; letter-spacing: -0.035em;
+}
+.release-head > p:last-of-type { max-width: 620px; margin-top: 24px; color: var(--mut); }
+.release-head .hero-ctas { justify-content: flex-start; margin-top: 28px; }
+.release-state { padding: 36px 0; color: var(--mut); }
+.release-entry {
+  display: grid; grid-template-columns: minmax(140px, 200px) minmax(0, 1fr); gap: clamp(30px, 7vw, 88px);
+  padding: 54px 0; border-top: 1px solid var(--line);
+}
+.release-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
+.release-version { font-family: var(--font-m); color: var(--ice); font-size: 14px; }
+.release-date { color: var(--dim); font-size: 13px; }
+.release-content h3 { font-family: var(--font-d); font-size: clamp(25px, 4vw, 38px); line-height: 1.15; letter-spacing: -0.02em; }
+.release-body { margin-top: 20px; max-width: 72ch; color: var(--mut); font-size: 15.5px; }
+.release-body p + p, .release-body ul + p, .release-body p + ul { margin-top: 14px; }
+.release-body ul { padding-left: 20px; }
+.release-body li + li { margin-top: 8px; }
+/* Features / Bug fixes / Performance improvements: the same mono kicker the
+   feature sections use, so a group of changes reads as a label, not a title. */
+.release-body h4 {
+  margin-top: 30px; font-family: var(--font-m); font-size: 12px; font-weight: 500;
+  letter-spacing: 1.5px; text-transform: uppercase; color: var(--cyan);
+}
+.release-body h4 + p, .release-body h4 + ul { margin-top: 12px; }
+.release-body strong { color: var(--ink); font-weight: 600; }
+.release-body code { padding: 2px 5px; border-radius: 5px; background: rgba(109, 94, 252, 0.12); color: var(--ice); }
+.release-body a { color: var(--ice); text-decoration: underline; text-underline-offset: 3px; }
+.release-actions { display: flex; align-items: center; gap: 18px; margin-top: 24px; flex-wrap: wrap; }
+.release-actions > a { color: var(--ice); font-size: 14px; font-weight: 600; }
+.release-assets { display: flex; gap: 8px; flex-wrap: wrap; }
+.release-assets a {
+  padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--mut); font-family: var(--font-m); font-size: 11px;
+}
+.release-assets a:hover { border-color: var(--cyan); color: var(--ink); }
+.release-head .hero-ctas { align-items: flex-start; }
+.release-head .feat-k { margin-bottom: 0; }
+.release-timeline { display: grid; grid-template-columns: 182px minmax(0, 1fr); gap: clamp(24px, 5vw, 70px); margin-top: 64px; }
+.release-index { position: sticky; top: calc(var(--nav-h) + 24px); align-self: start; }
+.release-label {
+  color: var(--cyan); font: 500 12px/1.4 var(--font-m); text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.release-index ul { margin-top: 12px; list-style: none; border-left: 1px solid var(--line); }
+.release-index a {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  min-height: 34px; padding: 3px 10px; font: 500 13px/1.4 var(--font-m); color: var(--ink);
+}
+.release-index a span { color: var(--mut); font: 400 12px/1.4 var(--font-b); }
+.release-index a:hover { background: var(--panel); color: var(--ice); }
+.release-index a:focus-visible, .release-highlights a:focus-visible, .release-archive :is(a, summary):focus-visible {
+  outline: 2px solid var(--ice); outline-offset: 3px;
+}
+.highlight-release, .release-archive { scroll-margin-top: calc(var(--nav-h) + 24px); }
+.highlight-release { padding: 32px 0 38px; border-top: 1px solid var(--line); }
+.highlight-release:first-child { padding-top: 22px; }
+.highlight-release:target { border-top-color: var(--cyan); }
+.highlight-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.highlight-meta time { color: var(--mut); font-size: 13px; }
+.highlight-recent { color: var(--ice); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; font-size: 11px; }
+.highlight-release h2, .release-archive h2 {
+  margin: 10px 0 14px;
+  font: 700 clamp(26px, 3.6vw, 42px)/1.12 var(--font-d); letter-spacing: -0.025em;
+}
+.release-people, .release-credit { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 10px; }
+.release-people { color: var(--mut); font-size: 13px; margin: 16px 0 20px; }
+.release-profile { display: inline-flex; align-items: center; gap: 6px; color: var(--ice); overflow-wrap: anywhere; }
+.release-profile span {
+  display: grid; place-items: center; width: 26px; height: 26px;
+  border: 1px solid var(--line); border-radius: 50%; background: var(--panel);
+  font: 500 10px var(--font-m);
+}
+.release-headliners {
+  padding: clamp(16px, 3vw, 30px); border-radius: 18px; border: 1px solid var(--line);
+  background: radial-gradient(ellipse at 0 0, rgba(109, 94, 252, 0.17), transparent 70%), var(--bg-2);
+}
+.release-headliners .release-label { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; }
+.release-headliners img { border-radius: 6px; }
+.release-headliners ul { list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px; }
+.release-headliners li:first-child, .release-headliners li:last-child:nth-child(even) { grid-column: 1 / -1; }
+.release-headliners li + li { border-top: 1px solid var(--line); padding-top: 14px; }
+.release-headliners h3 { font: 700 19px/1.2 var(--font-d); }
+.release-headliners li:first-child h3 { font-size: clamp(21px, 2.5vw, 27px); }
+.release-headliners h3 + p { margin-top: 6px; color: var(--mut); font-size: 15px; max-width: 65ch; }
+.release-credit { margin-top: 8px; color: var(--mut); font: 400 12px/1.5 var(--font-m); }
+.release-pr { color: var(--mut); }
+.release-changes { margin-top: 20px; }
+.release-changes ul { list-style: none; margin-top: 8px; }
+.release-changes li {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 20px;
+  border-bottom: 1px solid var(--line); padding: 8px 0; font-size: 14px;
+}
+.release-changes .release-credit { margin-top: 0; }
+.release-full { display: inline-block; color: var(--ice); margin-top: 16px; font-size: 14px; }
+.release-full:hover, .release-profile:hover, .release-pr:hover { text-decoration: underline; text-underline-offset: 3px; }
+.release-archive { border-top: 1px solid var(--line); padding-top: 28px; margin-top: 24px; }
+.release-archive > p { color: var(--mut); font-size: 15px; }
+.release-archive a:not(.release-assets a) { color: var(--ice); }
+.release-archive > p a, .release-state a { text-decoration: underline; text-underline-offset: 3px; }
+.release-archive summary { cursor: pointer; color: var(--ice); width: fit-content; padding: 10px 0; margin-top: 8px; }
+.release-body, .release-assets a { overflow-wrap: anywhere; }
+
+@media (max-width: 800px), (max-height: 530px) {
+  .release-timeline { display: block; margin-top: 38px; }
+  .release-index { position: static; margin-bottom: 24px; }
+  .release-index ul { display: flex; flex-wrap: wrap; gap: 6px; border: 0; }
+  .release-index a { border: 1px solid var(--line); border-radius: 999px; }
+  .release-index a span { display: none; }
+}
+@media (max-width: 600px) {
+  .release-head .hero-ctas { gap: 8px; }
+  .release-head .hero-ctas .btn { padding: 10px 16px; font-size: 14px; }
+  .release-head > p:last-of-type { margin-top: 14px; }
+  .release-head .hero-ctas { margin-top: 20px; }
+  .release-headliners ul { grid-template-columns: 1fr; }
+  .release-entry { grid-template-columns: 1fr; gap: 10px; padding: 28px 0; }
+}

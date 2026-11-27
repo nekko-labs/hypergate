@@ -3,7 +3,7 @@
 ## Reference and baseline
 
 - The reference is the current [Nekko Agent privacy policy](https://nekkoagent.com/privacy) and the website’s `analytics.js` / `privacy-controls.css` at Nekko Agent `origin/main` (`247dad21e` when inspected). The shared patterns are plain-language scopes, equally prominent choices, and a persistent way back to preferences. Hypergate uses its own Midnight palette and sends fewer kinds of data. Nekko Agent’s public `/terms` returned 404, so Hypergate’s Terms points to its own MIT license rather than an unrelated policy.
-- The baseline is a clean `git archive` of Hypergate `7ddfc1d`, built in a separate temporary directory. Both previews use the same intercepted GitHub release fixture. Desktop is 1440 × 900 and phone is 390 × 844 (Chromium with touch and mobile UA); both use the same site theme. New legal and settings surfaces have no before state.
+- The baseline is a clean `git archive` of Hypergate `7ddfc1d`, built in a separate temporary directory. The refreshed release-notes comparison uses `1ca5c08` (the merge of #136) and the integrated build, both with the archive collapsed. Both previews use the same intercepted GitHub release fixture. Desktop is 1440 × 900 and phone is 390 × 844 (Chromium with touch and mobile UA); both use the same site theme. New legal and settings surfaces have no before state.
 
 ## Download and install intent inventory
 
@@ -24,19 +24,19 @@ A download event measures a click, not a completed download or installation. The
 | --- | --- | --- |
 | Home · desktop | [Hero](before-home-desktop.png) · [Footer](before-home-footer-desktop.png) | [Hero / first choice](after-home-desktop.png) · [Footer](after-home-footer-desktop.png) |
 | Home · mobile | [Hero](before-home-mobile.png) · [Footer](before-home-footer-mobile.png) | [Hero / first choice](after-home-mobile.png) · [Footer](after-home-footer-mobile.png) |
-| Release notes · desktop | [Top](before-releases-desktop.png) · [Footer](before-releases-footer-desktop.png) | [Top / first choice](after-releases-desktop.png) · [Footer](after-releases-footer-desktop.png) |
-| Release notes · mobile | [Top](before-releases-mobile.png) · [Footer](before-releases-footer-mobile.png) | [Top / first choice](after-releases-mobile.png) · [Footer](after-releases-footer-mobile.png) |
+| Release notes · desktop | [Top](../2026-11-27-consent-release-highlights/before-releases-desktop.png) · [Footer](../2026-11-27-consent-release-highlights/before-releases-footer-desktop.png) | [Top / first choice](../2026-11-27-consent-release-highlights/after-releases-desktop.png) · [Footer](../2026-11-27-consent-release-highlights/after-releases-footer-desktop.png) |
+| Release notes · mobile | [Top](../2026-11-27-consent-release-highlights/before-releases-mobile.png) · [Footer](../2026-11-27-consent-release-highlights/before-releases-footer-mobile.png) | [Top / first choice](../2026-11-27-consent-release-highlights/after-releases-mobile.png) · [Footer](../2026-11-27-consent-release-highlights/after-releases-footer-mobile.png) |
 | Remote card · desktop | [Before](before-remote-desktop.png) | [After](after-remote-desktop.png) |
 | Remote card · mobile | [Before](before-remote-mobile.png) | [After](after-remote-mobile.png) |
 | Privacy choices | New | [Desktop](after-settings-desktop.png) · [Mobile](after-settings-mobile.png) |
-| Privacy policy | New | Desktop: [first view](after-privacy-desktop.png) · [full page](after-privacy-full-desktop.png) / Mobile: [first view](after-privacy-mobile.png) · [full page](after-privacy-full-mobile.png) |
+| Privacy policy | New | Desktop: [first view](../2026-11-27-consent-release-highlights/after-privacy-desktop.png) · [full page](../2026-11-27-consent-release-highlights/after-privacy-full-desktop.png) / Mobile: [first view](../2026-11-27-consent-release-highlights/after-privacy-mobile.png) · [full page](../2026-11-27-consent-release-highlights/after-privacy-full-mobile.png) |
 | Terms | New | Desktop: [first view](after-terms-desktop.png) · [full page](after-terms-full-desktop.png) / Mobile: [first view](after-terms-mobile.png) · [full page](after-terms-full-mobile.png) |
 
 The legal pages were recaptured from the integrated source: first view with the choice prompt, full page after declining. For the Remote card the browser was scrolled to the same card position on both builds and the prompt was dismissed on the after build.
 
 ## Reproducing the checks
 
-Run `npm --prefix apps/site test`. For the browser checks, use three isolated Vite production previews: the clean baseline on loopback port 4510 (captures only), the working build on 4521, and the working build with empty config on 4522. Build the working variants from the integrated source, including `packages/browser-analytics/{index,build-config}.ts`, in isolated directories with no `.env` files or inherited overrides. The first command uses a fake client token; the explicitly empty variables in the second override the production defaults:
+Run `npm --prefix apps/site test`. For the browser checks, use three isolated Vite production previews: the clean baseline on loopback port 4540 (captures only), the working build on 4521, and the working build with empty config on 4522. Build the working variants from the integrated source, including `packages/browser-analytics/{index,build-config}.ts`, in isolated directories with no `.env` files or inherited overrides. The first command uses a fake client token; the explicitly empty variables in the second override the production defaults:
 
 ```sh
 # Run from apps/site in the isolated working source copy; serve the two builds in separate terminals.
@@ -56,9 +56,9 @@ Set `SITE_EVIDENCE_DIR` to save screenshots; also set `SITE_VIDEO_TMP` to a sepa
 
 ## Verification results
 
-- All 11 site unit tests passed. The configured and explicitly empty Vite production builds passed the Chromium harness using the integrated shared helper. The desktop flow asserted exactly **eight intercepted collector attempts**. Middle-clicking the rendered **Portable ZIP** link in the release fixture followed the exact ZIP URL and produced one `hypergate_site_download_clicked` with `value: 'other'`. The suite checks the full event JSON, a stable UUIDv4 while opted in, disabled person profiles and GeoIP enrichment, and no cookie or referrer header.
+- All 15 site unit tests and both shared analytics transport tests passed. The configured and explicitly empty Vite production builds passed the Chromium harness using the integrated shared helper. The desktop flow asserted exactly **eight intercepted collector attempts**. Middle-clicking the rendered **Portable ZIP** link in the release fixture followed the exact ZIP URL and produced one `hypergate_site_download_clicked` with `value: 'other'`. The suite checks the full event JSON, a stable UUIDv4 while opted in, disabled person profiles and GeoIP enrichment, and no cookie or referrer header.
 - First visit, decline, withdrawal, empty config, Global Privacy Control and Do Not Track sent nothing. Withdrawal removed the ID. Keyboard and touch choices, installer navigation, the Linux picker and disabled RPM, Intel fallback, and both clipboard outcomes passed. A failed copy and the generic GitHub release link did not produce events.
-- Inspected the 12 new or refreshed PNGs via OCR, pixel checks and matched render bounds. Both legal pages show the updated Nekko Labs LLC copy and the two consent actions in the first viewport. The full-page captures include the policy/terms sections after decline. The Remote card kept its bounds at both sizes; the old “nothing phones home” language was replaced with an explanation that the provider receives the requests sent to its server. Prior consent motion evidence remains unchanged: [desktop GIF](consent-flow-desktop.gif) · [mobile GIF](consent-flow-mobile.gif).
+- After merging #136, the suite also confirmed that the archive stays collapsed until opened, highlight links do not count as installer intent, and static highlights and legal links survive GitHub failure or JavaScript being off. Refreshed release notes and final Privacy copy at both widths; checked the PNG dimensions and inspected text and placement with OCR. Both legal pages show the updated Nekko Labs LLC copy and the two consent actions in the first viewport. The full-page captures include the policy/terms sections after decline. The Remote card kept its bounds at both sizes; the old “nothing phones home” language was replaced with an explanation that the provider receives the requests sent to its server. Prior consent motion evidence remains unchanged: [desktop GIF](consent-flow-desktop.gif) · [mobile GIF](consent-flow-mobile.gif).
 
 ### Vercel build and public site
 
@@ -74,6 +74,5 @@ Read-only checks of the public Vercel site on 27 November 2026 returned HTTP 200
 
 ## Unfinished work / release limits
 
-- Confirm the effective Vercel root and source inclusion before deploying; after deployment verify the integrated homepage and both legal routes on the public domain without opting in.
-- The Privacy paragraph was clarified after capture to include portable archives.
+- Inspect all four routes and their assets using an authorized Vercel preview session. Build success is not rendered preview verification. If the root or include-source setting changes, confirm the repository parent source is still available; after deployment check all four public routes without opting in.
 - No live PostHog ingestion, EU-host runtime, real installer download, physical phone, Safari or Firefox was tested. See the [manager verification](../../../screenshots/140-analytics/README.md) for desktop-shell limits.

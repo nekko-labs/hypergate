@@ -83,11 +83,10 @@ function releaseBody(text: string): HTMLElement {
   // A body edited in GitHub's web UI comes back with CRLF line endings.
   for (const block of text.replace(/\r\n/g, '\n').trim().split(/\n\s*\n/)) {
     const lines = block.split('\n');
-    // `### Features` and friends. Everything lands on h3: the release title is
-    // the h2 above, so a note's own heading level should not compete with it.
+    // `### Features` and friends sit one level below the archive entry title.
     const heading = lines.length === 1 ? lines[0].match(/^#{1,3}\s+(.+)$/) : null;
     if (heading) {
-      const element = document.createElement('h3');
+      const element = document.createElement('h4');
       appendInline(element, heading[1]);
       body.append(element);
       continue;
@@ -137,7 +136,7 @@ function releaseEntry(release: GithubRelease): HTMLElement {
 
   const content = document.createElement('div');
   content.className = 'release-content';
-  const heading = document.createElement('h2');
+  const heading = document.createElement('h3');
   heading.textContent = release.name || release.tag_name;
   const body = releaseBody(release.body || 'Installer and binary updates for this release.');
   const actions = document.createElement('div');
@@ -170,26 +169,36 @@ function releaseEntry(release: GithubRelease): HTMLElement {
   return article;
 }
 
+const archive = document.querySelector<HTMLDetailsElement>('#release-archive details');
 const list = document.getElementById('release-list');
-if (list) {
+let requested = false;
+
+function loadArchive() {
+  if (!archive?.open || !list || requested) return;
+  requested = true;
+  list.setAttribute('aria-busy', 'true');
+  list.classList.add('release-state');
+  list.textContent = 'Loading published releases…';
   void fetchReleases()
     .then((releases) => {
-      list.replaceChildren();
       if (!releases.length) {
         list.textContent = 'No published releases yet.';
-        list.className = 'release-list release-state';
         return;
       }
-      list.append(...releases.map(releaseEntry));
+      list.classList.remove('release-state');
+      list.replaceChildren(...releases.map(releaseEntry));
     })
     .catch(() => {
-      list.className = 'release-list release-state';
-      list.replaceChildren();
+      requested = false;
       const message = document.createElement('p');
       message.textContent = 'Release notes could not be loaded right now.';
       const link = document.createElement('a');
       link.href = 'https://github.com/nekko-labs/hypergate/releases';
       link.textContent = 'View releases on GitHub ↗';
-      list.append(message, link);
-    });
+      list.replaceChildren(message, link);
+    })
+    .finally(() => list.removeAttribute('aria-busy'));
 }
+
+archive?.addEventListener('toggle', loadArchive);
+loadArchive();

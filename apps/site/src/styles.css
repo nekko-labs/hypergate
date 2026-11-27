@@ -449,48 +449,6 @@ html[data-download-platform="mobile"] .hero-snippet { display: none; }
 .foot-dim { color: var(--dim); }
 .foot-links { display: flex; gap: 18px; }
 
-/* ── release notes ────────────────────────────────────────── */
-.release-main { min-height: calc(100svh - 90px); padding: 150px clamp(20px, 6vw, 80px) 100px; }
-.release-wrap { max-width: 980px; margin: 0 auto; }
-.release-head { max-width: 760px; }
-.release-head h1 {
-  margin-top: 10px; font-family: var(--font-d); font-size: clamp(44px, 8vw, 88px);
-  line-height: 1; letter-spacing: -0.035em;
-}
-.release-head > p:last-of-type { max-width: 620px; margin-top: 24px; color: var(--mut); }
-.release-head .hero-ctas { justify-content: flex-start; margin-top: 28px; }
-.release-list { margin-top: 88px; }
-.release-state { padding: 36px 0; color: var(--mut); }
-.release-entry {
-  display: grid; grid-template-columns: minmax(140px, 220px) 1fr; gap: clamp(30px, 7vw, 88px);
-  padding: 54px 0; border-top: 1px solid var(--line);
-}
-.release-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
-.release-version { font-family: var(--font-m); color: var(--ice); font-size: 14px; }
-.release-date { color: var(--dim); font-size: 13px; }
-.release-content h2 { font-family: var(--font-d); font-size: clamp(25px, 4vw, 38px); line-height: 1.15; letter-spacing: -0.02em; }
-.release-body { margin-top: 20px; max-width: 72ch; color: var(--mut); font-size: 15.5px; }
-.release-body p + p, .release-body ul + p, .release-body p + ul { margin-top: 14px; }
-.release-body ul { padding-left: 20px; }
-.release-body li + li { margin-top: 8px; }
-/* Features / Bug fixes / Performance improvements: the same mono kicker the
-   feature sections use, so a group of changes reads as a label, not a title. */
-.release-body h3 {
-  margin-top: 30px; font-family: var(--font-m); font-size: 12px; font-weight: 500;
-  letter-spacing: 1.5px; text-transform: uppercase; color: var(--cyan);
-}
-.release-body h3 + p, .release-body h3 + ul { margin-top: 12px; }
-.release-body strong { color: var(--ink); font-weight: 600; }
-.release-body code { padding: 2px 5px; border-radius: 5px; background: rgba(109, 94, 252, 0.12); color: var(--ice); }
-.release-body a { color: var(--ice); text-decoration: underline; text-underline-offset: 3px; }
-.release-actions { display: flex; align-items: center; gap: 18px; margin-top: 24px; flex-wrap: wrap; }
-.release-actions > a { color: var(--ice); font-size: 14px; font-weight: 600; }
-.release-assets { display: flex; gap: 8px; flex-wrap: wrap; }
-.release-assets a {
-  padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px;
-  color: var(--mut); font-family: var(--font-m); font-size: 11px;
-}
-.release-assets a:hover { border-color: var(--cyan); color: var(--ink); }
 @media (max-width: 640px) {
   .nav { gap: 14px; }
   .nav-cta { padding: 8px 12px; }
@@ -499,9 +457,6 @@ html[data-download-platform="mobile"] .hero-snippet { display: none; }
   .hero-snippet { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding-left: 12px; }
   .install-shell { display: none; }
   .repo-cta { order: 2; flex-basis: 100%; }
-  .release-main { padding-top: 120px; }
-  .release-list { margin-top: 60px; }
-  .release-entry { grid-template-columns: 1fr; gap: 16px; padding: 38px 0; }
 }
 
 /* ── reveal animation ────────────────────────────────────── */

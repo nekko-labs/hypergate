@@ -606,7 +606,7 @@ The section could already find and describe tools (v0.22.0); everything it found
 
 ## Optional adoption analytics ([#140](https://github.com/nekko-labs/hypergate/issues/140), release pending)
 
-Measure adoption without exporting local gateway activity. See [SPEC §3.14](SPEC.md#314-optional-adoption-analytics-140) and the [operator guide](docs/analytics.md). The checklist tracks work in this change; no release number is assigned here.
+Measure adoption without exporting local gateway activity. See [SPEC §3.14](SPEC.md#314-optional-adoption-analytics-140) and the [operator guide](docs/analytics.md). PR #141 carries no version bump while #137 is queued for v1.38.0. After v1.38.0 is published, update from main, run the standard minor bump (expected v1.39.0), and move the [pending notes](docs/site-changes/2026-11-27-consent/pending-release-notes.md) into the matching release file before requesting merge.
 
 - [x] Bound the event schema and consent gates in the shared browser transport: fixed labels and scoped UUIDs; no SDK, analytics cookies or gateway data.
 - [x] Measure opted-in site page views and installer intent; offer a reversible website choice.
@@ -615,6 +615,12 @@ Measure adoption without exporting local gateway activity. See [SPEC §3.14](SPE
 - [x] Verified intercepted requests and silence before opt-in and after withdrawal, DNT/GPC and non-native exclusions; inspected desktop and mobile browser evidence.
 - [ ] Verify the actual packaged Manager webview (not the simulated shell-marker browser).
 - [ ] Verify the configured PostHog destination and expected event shape for the built release surfaces before marking collection live.
+
+## Epic 77: major releases and the people behind them (v1.37.0)
+
+- [x] Verify the featured tags are published and match the changes, merged PRs, and contributor handles on GitHub. · [#135](https://github.com/nekko-labs/hypergate/issues/135)
+- [x] Build a responsive release index and headliners with contributor and PR links on the existing release notes route. Keep detailed notes and downloads in the expandable archive. · [spec](SPEC.md#37-marketing-site-shipped)
+- [x] Verify the production site build, desktop/mobile layouts, GitHub failure fallback, and JavaScript-off reading. · [screenshots](docs/site-changes/2026-11-26-release-highlights/)
 
 ## Epic 76: logins outside Hypergate, one list (v1.36.0)
 
