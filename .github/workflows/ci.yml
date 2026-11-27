@@ -10,6 +10,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  site:
+    name: marketing site
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/site/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
   daemon:
     name: daemon + core (node ${{ matrix.node }})
     runs-on: ubuntu-latest
