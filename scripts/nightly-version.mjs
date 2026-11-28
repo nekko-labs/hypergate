@@ -11,6 +11,7 @@
 //
 //   node scripts/nightly-version.mjs          # prints the next version, e.g. 1.38.1
 //   node scripts/nightly-version.mjs --last   # prints the newest release tag, e.g. v1.38.0
+//   node scripts/nightly-version.mjs --previous v1.39.0   # the release before it, for its notes
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -35,6 +36,15 @@ export function newestTag(tags) {
   return tags.filter((t) => /^v\d+\.\d+\.\d+$/.test(t)).sort(compare).at(-1) ?? null;
 }
 
+/**
+ * The release before `tag`, among the full tags in its history (the same commit
+ * included, so a new line started on a commit a nightly already shipped finds
+ * that nightly and its notes come out empty, not a repeat of older ones).
+ */
+export function previousTag(tag, mergedTags) {
+  return newestTag(mergedTags.filter((t) => t !== tag && parse(t) && compare(t, tag) < 0));
+}
+
 /** The next nightly version, from the release tags and the committed package.json version. */
 export function nextVersion({ tags, committed }) {
   const last = newestTag(tags);
@@ -47,7 +57,12 @@ export function nextVersion({ tags, committed }) {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   const tags = execFileSync('git', ['tag', '--list', 'v*'], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
-  if (process.argv.includes('--last')) {
+  const previous = process.argv.indexOf('--previous');
+  if (previous > 0) {
+    const tag = process.argv[previous + 1];
+    const merged = execFileSync('git', ['tag', '--merged', tag, '--list', 'v*'], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
+    console.log(previousTag(tag, merged) ?? '');
+  } else if (process.argv.includes('--last')) {
     console.log(newestTag(tags) ?? '');
   } else {
     const committed = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;

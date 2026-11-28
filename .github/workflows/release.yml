@@ -167,7 +167,7 @@ jobs:
           npm_flag=""
           if [ -n "$NPM_TOKEN" ]; then npm_flag="--npm"; fi
           # A nightly's notes are what landed since the previous full tag.
-          prev=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          prev=$(node scripts/nightly-version.mjs --previous "$GITHUB_REF_NAME")
           since=()
           if [ -n "$prev" ]; then since=(--since "$prev"); fi
           node scripts/release-notes.mjs "$version" $npm_flag "${since[@]}" > "$RUNNER_TEMP/notes.md"
