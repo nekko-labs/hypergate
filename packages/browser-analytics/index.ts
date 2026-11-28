@@ -11,7 +11,11 @@ export function createAnalytics(scope: keyof typeof events, config: {key?:string
   function available(): boolean {
     try {
       const nav = navigator as Navigator & {globalPrivacyControl?:boolean; msDoNotTrack?:string};
-      if (nav.globalPrivacyControl || [nav.doNotTrack, nav.msDoNotTrack, (window as Window & {doNotTrack?:string}).doNotTrack].some(v => v === '1' || v === 'yes')) return false;
+      if (nav.globalPrivacyControl || [nav.doNotTrack, nav.msDoNotTrack, (window as Window & {doNotTrack?:string}).doNotTrack].some(v => v === '1' || v === 'yes')) {
+        // A privacy signal is a withdrawal: drop a saved grant and its ID so reporting can't resume later.
+        if (window.localStorage.getItem(choiceKey) === 'granted') { window.localStorage.removeItem(idKey); window.localStorage.setItem(choiceKey, 'denied'); }
+        return false;
+      }
       return !!config.key?.match(/^phc_[a-zA-Z0-9]+$/) && ['https://us.i.posthog.com','https://eu.i.posthog.com'].includes(config.host ?? '') && !!window.crypto?.randomUUID && window.localStorage.getItem(choiceKey) !== undefined;
     } catch { return false; }
   }

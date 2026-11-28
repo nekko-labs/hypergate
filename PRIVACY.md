@@ -38,8 +38,8 @@ these events. There is no session replay. PostHog receives standard connection
 metadata such as your IP address when your device sends a report.
 
 When your browser or desktop webview exposes **Do Not Track (DNT)** or **Global
-Privacy Control (GPC)**, that signal blocks reporting even if you previously opted
-in. It does not change your saved choice. Turning analytics off in the controls
+Privacy Control (GPC)**, that signal blocks reporting and counts as turning analytics
+off: a previous opt-in is withdrawn and its local ID removed. Turning analytics off in the controls
 stops future events and removes the local analytics ID, but does not erase
 reports already sent.
 

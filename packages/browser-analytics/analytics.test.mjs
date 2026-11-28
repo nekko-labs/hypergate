@@ -30,3 +30,16 @@ test('only known labels under current consent leave the device; withdrawal rotat
   a.setConsent('denied'); a.track('page_view','home'); assert.equal(calls.length,1); assert.equal(values.size,1);
   a.setConsent('granted'); a.track('page_view','home'); assert.notEqual(JSON.parse(calls[1][1].body).properties.distinct_id,event.properties.distinct_id);
 });
+
+test('a privacy signal after opt-in withdraws consent and drops the ID', () => {
+  const values = new Map();
+  globalThis.window = { crypto, localStorage: { getItem: k => values.get(k) ?? null, setItem: (k,v) => values.set(k,v), removeItem: k => values.delete(k) } };
+  const a = createAnalytics('site', {key:'phc_test',host:'https://us.i.posthog.com'});
+  a.setConsent('granted'); assert.equal(a.consent(), 'granted'); assert.equal(values.size, 2);
+  Object.defineProperty(globalThis.navigator, 'globalPrivacyControl', { value: true, configurable: true });
+  try {
+    assert.equal(a.available(), false);
+    assert.equal(a.consent(), 'denied'); assert.equal(values.size, 1);
+  } finally { delete globalThis.navigator.globalPrivacyControl; }
+  assert.equal(a.consent(), 'denied');
+});

@@ -257,7 +257,7 @@ async function verify(browser) {
     await view.getByRole('switch', { name: `Start ${serverName}` }).click();
     await view.getByRole('switch', { name: `Stop ${serverName}` }).waitFor();
     await count(check.reports, 0);
-    if (!scenario.frame) assert.deepEqual(await local(check.page), scenario.seeded ? ['granted', fixtureId] : [null, null]);
+    if (!scenario.frame) assert.deepEqual(await local(check.page), scenario.signal ? ['denied', null] : scenario.seeded ? ['granted', fixtureId] : [null, null]);
     await check.close();
   }
   console.log('Manager: empty config (including stored grant), both privacy signals, unmarked browser/guest and marked iframe remain silent.');
