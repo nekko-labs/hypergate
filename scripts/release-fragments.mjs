@@ -14,7 +14,7 @@
 //   - **Nekko Labs servers are tagged in the catalog.** So our own servers stand out.
 
 export const UNRELEASED = 'docs/releases/unreleased';
-export const SECTIONS = ['Features', 'Bug fixes', 'Performance improvements'];
+export const SECTIONS = ['Features', 'Bug fixes', 'Improvements', 'Performance improvements'];
 
 /** Merge note fragments into one notes body. Sections keep SECTIONS order; unknown ones follow, in first-seen order. */
 export function mergeFragments(fragments) {

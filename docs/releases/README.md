@@ -8,7 +8,7 @@ under [`unreleased/`](unreleased/), named for the change
 
 When a nightly is cut, `scripts/release-notes.mjs <version> --since <previous tag>`
 takes every `unreleased/` file added since the previous tag, merges their
-sections (Features, then Bug fixes, then Performance improvements), and adds the
+sections (Features, Bug fixes, Improvements, then Performance improvements), and adds the
 install footer. A night with no files lists the titles of the PRs merged since the
 last tag, so a release is never blank. The GitHub release and
 [hypergate.app/release-notes.html](https://hypergate.app/release-notes.html)
@@ -37,6 +37,10 @@ One sentence on what this release is for.
 
 - **What was broken, from the outside.** Say what users saw and what happens
   now in one short sentence.
+
+### Improvements
+
+- **What works better.** Say how it makes an existing task easier.
 
 ### Performance improvements
 
@@ -75,7 +79,8 @@ For a release with something worth featuring, add an entry to
 [`apps/site/src/release-highlights.json`](../../apps/site/src/release-highlights.json)
 **after** the stable release is public. Use the UTC publication day from GitHub
 and add newest entries first. Write one short title, one to three headliners
-(each with a title and detail), and optional shorter `changes`. Give each item
+(each with a title and detail), and optional shorter `fixes` and `improvements`
+under the headliners. Give each item
 its merged PR number and author handles, verified on GitHub. Include the human
 contributors whose PRs shipped in that release, even if their changes aren't
 featured. Don't add bots or unpublished tags.

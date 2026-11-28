@@ -13,17 +13,31 @@ const render = (data = releases) => renderReleaseHighlights(template, data);
 test('generates one indexed milestone per release with full notes and credited changes', () => {
   const html = render();
   assert.doesNotMatch(html, /<!-- release-(index|highlights) -->/);
-  for (const { tag, date, contributors, features, changes = [] } of releases) {
+  for (const { tag, date, contributors, features, fixes = [], improvements = [] } of releases) {
     assert.equal(html.split(`id="${tag}"`).length, 2);
     assert.ok(html.includes(`href="#${tag}"`));
     const section = html.split(`id="${tag}"`)[1].split('</article>')[0];
     assert.ok(section.includes(`datetime="${date}"`));
     assert.ok(section.includes(`/releases/tag/${tag}"`));
     for (const login of contributors) assert.ok(section.includes(`href="https://github.com/${login}"`));
-    for (const { pr } of [...features, ...changes]) assert.ok(section.includes(`/pull/${pr}"`));
+    for (const { pr } of [...features, ...fixes, ...improvements]) assert.ok(section.includes(`/pull/${pr}"`));
   }
   assert.equal((html.match(/Newest highlight/g) || []).length, 1);
   assert.ok(html.includes('id="release-archive"'));
+});
+
+test('puts non-empty fix and improvement lists after the headliners', () => {
+  const html = render();
+  for (const { tag, fixes = [], improvements = [] } of releases) {
+    const section = html.split(`id="${tag}"`)[1].split('</article>')[0];
+    const start = section.indexOf(' Headliners');
+    const end = section.indexOf('class="release-full"');
+    for (const [label, items] of [['Bug fixes', fixes], ['Improvements', improvements]]) {
+      const heading = section.indexOf(`>${label}</h3>`);
+      if (items.length) assert.ok(start < heading && heading < end, `${tag}: ${label}`);
+      else assert.equal(heading, -1, `${tag}: empty ${label}`);
+    }
+  }
 });
 
 test('includes static highlights in the Vite production artifact', async () => {
@@ -56,6 +70,7 @@ test('keeps curated text escaped and does not request GitHub avatars', () => {
 test('rejects malformed editorial data rather than publishing broken credits or dates', () => {
   for (const [change, message] of [
     [(a) => { a[0].features = []; }, /headliner/],
+    [(a) => { a[0].fixes = null; }, /fixes and improvements/],
     [(a) => { a[0].features[0].detail = ' '; }, /description/],
     [(a) => { a[0].contributors.push('Ermish'); }, /unique contributor/],
     [(a) => { a[0].contributors[0] = 'bad/profile'; }, /contributor logins/],

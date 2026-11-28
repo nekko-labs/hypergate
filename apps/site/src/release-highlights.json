@@ -1,5 +1,19 @@
 [
   {
+    "tag": "v1.37.0",
+    "date": "2026-11-27",
+    "title": "Release highlights and the people behind them",
+    "contributors": ["ermish"],
+    "features": [
+      { "title": "Find major changes and who shipped them", "detail": "The release notes now open with a timeline of featured releases, with links to contributors and their pull requests.", "pr": 136, "authors": ["ermish"] }
+    ],
+    "improvements": [
+      { "title": "Manage Hypergate instructions directly in each connected agent’s row", "pr": 134, "authors": ["ermish"] },
+      { "title": "See detected agents that aren’t connected and connect them from the Agents page", "pr": 134, "authors": ["ermish"] },
+      { "title": "Invite teammates and manage their access on the new People page", "pr": 134, "authors": ["ermish"] }
+    ]
+  },
+  {
     "tag": "v1.34.0",
     "date": "2026-11-25",
     "title": "A new look for the Hypergate icon",
@@ -7,7 +21,7 @@
     "features": [
       { "title": "The Midnight gate, from Dock to browser tab", "detail": "The launcher, browser tab, and MCP connection now share the same violet-to-cyan gate. The macOS menu-bar icon stays monochrome.", "pr": 131, "authors": ["ermish"] }
     ],
-    "changes": [
+    "improvements": [
       { "title": "Nekko Agent shows its own icon in the agent picker", "pr": 131, "authors": ["ermish"] }
     ]
   },
@@ -18,6 +32,9 @@
     "contributors": ["ermish"],
     "features": [
       { "title": "Install Antigravity CLI from Hypergate", "detail": "Run Google’s installer from the tool catalog, or approve an agent’s request to install it. Sign in to Google from your terminal afterward.", "pr": 127, "authors": ["ermish"] }
+    ],
+    "fixes": [
+      { "title": "Windows shows PowerShell installers for Antigravity and Claude Code instead of Unix commands", "pr": 127, "authors": ["ermish"] }
     ]
   },
   {
@@ -30,8 +47,11 @@
       { "title": "Invite teammates to your gateway", "detail": "Opt in to team access and give each person a token scoped to the servers and tools they need.", "pr": 117, "authors": ["ermish"] },
       { "title": "Flag unusual activity", "detail": "Security Insights surfaces denied calls, sudden spikes, and first-time use of tools that can make changes.", "pr": 117, "authors": ["ermish"] }
     ],
-    "changes": [
+    "improvements": [
       { "title": "Block vault keys in tool arguments and redact them from results", "pr": 117, "authors": ["ermish"] }
+    ],
+    "fixes": [
+      { "title": "Settings no longer cuts off the last row, including Start minimized", "pr": 117, "authors": ["ermish"] }
     ]
   },
   {
@@ -41,6 +61,10 @@
     "contributors": ["ermish"],
     "features": [
       { "title": "The app and website share a design", "detail": "Both app themes use the site’s type, capsule buttons, and colour accents. The fonts are bundled, so the app looks the same offline.", "pr": 116, "authors": ["ermish"] }
+    ],
+    "fixes": [
+      { "title": "Restart and remove controls on server and agent rows display at full size", "pr": 116, "authors": ["ermish"] },
+      { "title": "The 24-hour calls chart shows the current hour even when earlier hours had no calls", "pr": 116, "authors": ["ermish"] }
     ]
   },
   {
@@ -52,7 +76,7 @@
       { "title": "Credential lockdown", "detail": "Turn off direct key retrieval by agents and let approved programs use keys through Hypergate instead.", "pr": 115, "authors": ["ermish"] },
       { "title": "Find logins stored outside Hypergate", "detail": "Review credentials that supported tools saved locally, and choose which ones to move into the vault.", "pr": 115, "authors": ["ermish"] }
     ],
-    "changes": [
+    "improvements": [
       { "title": "Offer managed instructions for supported agent harnesses", "pr": 115, "authors": ["ermish"] }
     ]
   },
@@ -73,6 +97,10 @@
     "features": [
       { "title": "See what a server needs before you add it", "detail": "Look up a server in the official MCP Registry and get a setup checklist, from runtimes and credentials to browser sign-in.", "pr": 95, "authors": ["ermish"] },
       { "title": "Agents can request servers", "detail": "Review why a server was requested, how it will run, and which setup steps remain before approving it.", "pr": 95, "authors": ["ermish"] }
+    ],
+    "fixes": [
+      { "title": "Registry search picks the newest stable release instead of the oldest one", "pr": 95, "authors": ["ermish"] },
+      { "title": "Hosted servers can be added directly from registry results", "pr": 95, "authors": ["ermish"] }
     ]
   },
   {
@@ -83,6 +111,9 @@
     "features": [
       { "title": "Install, repair, or remove tools with a live log", "detail": "Run supported package-manager commands from the tool’s row and see the output as it arrives.", "pr": 93, "authors": ["ermish"] },
       { "title": "Approve or deny an agent’s install request", "detail": "See the tool and why the agent needs it before Hypergate runs the installer.", "pr": 93, "authors": ["ermish"] }
+    ],
+    "improvements": [
+      { "title": "Install routes show which supported package managers are available on your machine", "pr": 93, "authors": ["ermish"] }
     ]
   },
   {
@@ -92,6 +123,9 @@
     "contributors": ["ermish"],
     "features": [
       { "title": "Store API keys in your OS keychain", "detail": "Keep keys out of server configuration files, grant access per agent, and see when a key was used.", "pr": 86, "authors": ["ermish"] }
+    ],
+    "fixes": [
+      { "title": "The startup animation stops if Hypergate can’t start", "pr": 86, "authors": ["ermish"] }
     ]
   }
 ]
