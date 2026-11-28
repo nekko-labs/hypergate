@@ -997,3 +997,8 @@ Philip, the morning after v1.12.0: *"when clicking on about hypergate, it crashe
 ## v1.38.0: identify Nekko Labs servers (#137)
 
 - [x] Show the publisher chip on the two curated entries and on matching registry namespaces; wrap badges on narrow rows. Verify look-alike namespaces are not tagged.
+
+## Neutral CLI descriptions and repository attribution (#143)
+
+- [x] Keep the [Claude Code catalog description](SPEC.md#33-registry--catalog-shipped) factual without changing the product name or install routes.
+- [x] Disable default commit and PR attribution in shared settings, document the separate comment check, and cover the catalog entry and settings with regression tests.
