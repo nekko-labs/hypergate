@@ -1,12 +1,15 @@
 name: Release
 
-# Cut a release by tagging: `git tag v0.9.0 && git push --tags`.
-# The tag must match the version in package.json, which the publish job checks.
-# The notes come from `docs/releases/<version>.md`, so write that first
-# (docs/releases/README.md says what goes in it).
+# Started by a `vX.Y.Z` tag: nightly-release.yml every night, version-release.yml
+# for a new line, or a person pushing one. The version comes from the tag and is
+# stamped into every file that carries it before building (bump-version.mjs), so
+# nothing has to be committed first. The notes are `docs/releases/<version>.md`
+# when someone wrote one, else the `docs/releases/unreleased/` files added since
+# the previous tag (docs/releases/README.md).
 on:
   push:
-    tags: ['v*']
+    # Full tags only: the short `vX.Y` belongs to version-release.yml.
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
   workflow_dispatch:
 
 permissions:
@@ -36,6 +39,9 @@ jobs:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The previous tag, for a nightly's notes.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -43,15 +49,12 @@ jobs:
           cache: npm
       - run: npm ci
 
-      - name: Check the tag matches package.json
+      # PRs don't bump the version (TASKS.md §4.1): the tag is the version.
+      - name: Stamp the version from the tag
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          version=$(node -p "require('./package.json').version")
-          tag="${GITHUB_REF_NAME#v}"
-          if [ "$version" != "$tag" ]; then
-            echo "tag $tag does not match package.json version $version" >&2
-            exit 1
-          fi
+          version="${GITHUB_REF_NAME#v}"
+          node scripts/bump-version.mjs "$version"
 
       - run: npm run build
       - uses: actions/download-artifact@v4
@@ -163,7 +166,11 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           npm_flag=""
           if [ -n "$NPM_TOKEN" ]; then npm_flag="--npm"; fi
-          node scripts/release-notes.mjs "$version" $npm_flag > "$RUNNER_TEMP/notes.md"
+          # A nightly's notes are what landed since the previous full tag.
+          prev=$(node scripts/nightly-version.mjs --previous "$GITHUB_REF_NAME")
+          since=()
+          if [ -n "$prev" ]; then since=(--since "$prev"); fi
+          node scripts/release-notes.mjs "$version" $npm_flag "${since[@]}" > "$RUNNER_TEMP/notes.md"
           title=$(node scripts/release-notes.mjs "$version" --title)
           cat "$RUNNER_TEMP/notes.md"
           # On a re-run the release already exists, so `create` fails and the

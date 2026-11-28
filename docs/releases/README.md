@@ -1,34 +1,25 @@
 # Release notes
 
-One file per version: `docs/releases/<version>.md`, matching the version in the
-root `package.json`. Every PR bumps that version (TASKS.md §4.1), so every PR
-that changes something a user would notice writes or extends the matching file.
-The release workflow reads it, `scripts/release-notes.mjs` adds the install
-footer, and both the GitHub release and
+**PRs don't bump the version** (TASKS.md §4.1): releases go out nightly, as the
+next patch on the current line, so a PR can't know which version will carry it.
+Instead, a PR that changes something a user would notice adds **its own file**
+under [`unreleased/`](unreleased/), named for the change
+(`unreleased/nekko-labs-tag.md`). One file per PR means two PRs never conflict.
+
+When a nightly is cut, `scripts/release-notes.mjs <version> --since <previous tag>`
+takes every `unreleased/` file added since the previous tag, merges their
+sections (Features, then Bug fixes, then Performance improvements), and adds the
+install footer. A night with no files lists the titles of the PRs merged since the
+last tag, so a release is never blank. The GitHub release and
 [hypergate.app/release-notes.html](https://hypergate.app/release-notes.html)
 render the result.
 
-**Merging a version bump now cuts the release.** `version-release.yml` watches
-pushes to main that touch `package.json`: when that version has no tag yet, it
-tags it and dispatches `release.yml`. So the notes file has to exist **in the
-same PR as the bump**, and the workflow refuses to tag without it, rather than
-leaving a tag pointing at a release that never built. It also refuses when
-`apps/shell/Cargo.toml` disagrees with `package.json`, since that version ends
-up inside the built binaries.
+A hand-written `docs/releases/<version>.md` still wins over the files: write one
+when Philip starts a new line (`v1.39`) and wants it headlined. The older
+`<version>.md` files are the history from when every PR bumped the minor.
 
-**A release's notes cover everything since the last released tag, not just its
-own version.** This mattered more before the automation, when a minor bump per
-PR outran the tags: v0.16.0 was bumped and never released, so its changes went
-out under v0.16.1, whose notes fold them in and say so. Bumps and tags now move
-together, but if a release did get skipped, check what the next one actually
-contains and make sure its file accounts for all of it:
-
-```
-git log $(git describe --tags --abbrev=0)..HEAD --no-merges --oneline
-```
-
-Nothing can tell that a notes file is *incomplete*. That part is the read-through
-above.
+An `unreleased/` file is a cut of the shape below: `###` sections and their
+bullets, no `# Headline` (a nightly's title is its version).
 
 The shape:
 
