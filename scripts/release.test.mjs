@@ -30,10 +30,13 @@ test('note files merge by section, in the README order', () => {
     '### Bug fixes\n\n- **Links work.** They opened nothing.\n',
     '# Stray title\n\n### Features\n\n- **A chip.** It stands out.\n\n### Bug fixes\n\n- **Logs scroll.** They jumped.',
     '- **No heading.** Still listed.',
+    '### Performance improvements\n\n- Charts load faster.\n\n### Improvements\n\n- Setup shows the next step.',
   ]);
   assert.equal(notes, [
     '### Features\n\n- **A chip.** It stands out.',
     '### Bug fixes\n\n- **Links work.** They opened nothing.\n- **Logs scroll.** They jumped.',
+    '### Improvements\n\n- Setup shows the next step.',
+    '### Performance improvements\n\n- Charts load faster.',
     '### Changes\n\n- **No heading.** Still listed.',
   ].join('\n\n'));
   assert.equal(mergeFragments([]), '');

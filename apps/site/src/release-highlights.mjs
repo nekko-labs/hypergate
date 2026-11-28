@@ -7,6 +7,7 @@ const monthFormat = new Intl.DateTimeFormat('en', { month: 'long', timeZone: 'UT
 const escapes = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const escape = (text) => text.replace(/[&<>"']/g, (ch) => escapes[ch]);
 const isText = (value) => typeof value === 'string' && value.trim().length > 0;
+const detailGroups = [['fixes', 'Bug fixes'], ['improvements', 'Improvements']];
 
 function uniqueLogins(values) {
   return Array.isArray(values) && values.length > 0
@@ -19,7 +20,7 @@ function validate(releases) {
   const tags = new Set();
   let previousDate = '';
   for (const release of releases) {
-    const { tag, date, title, contributors, features, changes = [] } = release;
+    const { tag, date, title, contributors, features } = release;
     const fail = (message) => { throw new Error(`Release highlights (${tag}): ${message}`); };
     if (typeof tag !== 'string' || !tagPattern.test(tag) || tags.has(tag)) fail('expected a unique stable release tag');
     if (typeof date !== 'string' || !dayPattern.test(date) || Number.isNaN(Date.parse(date))
@@ -27,9 +28,11 @@ function validate(releases) {
       fail('expected a valid UTC publication date, newest first');
     }
     if (!isText(title) || !uniqueLogins(contributors)) fail('expected a title and unique contributor logins');
-    if (!Array.isArray(features) || !features.length || !Array.isArray(changes)) fail('expected at least one headliner and optional additional changes');
+    if (!Array.isArray(features) || !features.length) fail('expected at least one headliner');
+    const groups = detailGroups.map(([key]) => release[key] === undefined ? [] : release[key]);
+    if (!groups.every(Array.isArray)) fail('expected fixes and improvements to be lists');
     const logins = new Set(contributors.map((login) => login.toLowerCase()));
-    for (const item of [...features, ...changes]) {
+    for (const item of [...features, ...groups.flat()]) {
       if (!isText(item?.title) || !Number.isSafeInteger(item.pr) || item.pr <= 0
         || !uniqueLogins(item.authors) || item.authors.some((login) => !logins.has(login.toLowerCase()))) {
         fail('each change needs a title, PR number, and credited authors in contributors');
@@ -49,7 +52,13 @@ function credit({ pr, authors }) {
   return `<p class="release-credit"><span>By</span> ${authors.map((login) => profile(login)).join(', ')} <a class="release-pr" href="${repo}/pull/${pr}" aria-label="Pull request ${pr}">#${pr} ↗</a></p>`;
 }
 
-function section({ tag, date, title, contributors, features, changes = [] }, index) {
+function section(release, index) {
+  const { tag, date, title, contributors, features } = release;
+  const details = detailGroups.map(([key, label]) => {
+    const items = release[key];
+    if (!items?.length) return '';
+    return `<div class="release-changes"><h3 class="release-label">${label}</h3><ul>${items.map((item) => `<li><span>${escape(item.title)}</span>${credit(item)}</li>`).join('')}</ul></div>`;
+  }).filter(Boolean).join('\n          ');
   return `<article class="highlight-release" id="${tag}" aria-labelledby="title-${tag}">
           <div class="highlight-meta"><span class="release-version">${tag}</span><time datetime="${date}">${dateFormat.format(new Date(date))}</time>${index === 0 ? '<span class="highlight-recent">Newest highlight</span>' : ''}</div>
           <h2 id="title-${tag}">${escape(title)}</h2>
@@ -58,7 +67,7 @@ function section({ tag, date, title, contributors, features, changes = [] }, ind
             <p class="release-label"><img src="/favicon.svg" width="25" height="25" alt=""> Headliners</p>
             <ul>${features.map((item) => `<li><h3>${escape(item.title)}</h3><p>${escape(item.detail)}</p>${credit(item)}</li>`).join('')}</ul>
           </div>
-          ${changes.length ? `<div class="release-changes"><h3 class="release-label">Also in ${tag}</h3><ul>${changes.map((item) => `<li><span>${escape(item.title)}</span>${credit(item)}</li>`).join('')}</ul></div>` : ''}
+          ${details}
           <a class="release-full" href="${repo}/releases/tag/${tag}">Full notes for ${tag} on GitHub ↗</a>
         </article>`;
 }
