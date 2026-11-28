@@ -72,6 +72,18 @@ stop Hypergate and delete its local database files. To remove local daemon data,
 delete its data directory and its associated keychain entries. Removing a server
 deletes its stored OAuth grant.
 
+## Nekko Cloud employee preview (optional)
+
+Settings shows a Nekko Cloud panel. Only eligible Nekko accounts can use it, and
+nothing reaches Cloud unless you sign in. Your work email is used for sign-in.
+When you publish a setup, Cloud stores your start-minimized and window-close
+choices, recognized catalog server IDs and their enabled flags under your
+account, plus the revision and its timestamp. The console can read it; it is not
+an end-to-end encrypted backup. It never includes keys, commands, URLs,
+environment values, account grants, usage history or logs. Deleting local data
+does not delete a published setup; it stays until replaced or the Cloud account
+is deleted.
+
 ## When Hypergate uses the network
 
 The daemon and CLI do not send analytics. Other requests serve the actions or
@@ -79,6 +91,8 @@ features you use:
 
 - **Registry and CLI search** — while you type, against the MCP registry or the
   supported package indexes (such as npm and Homebrew).
+- **Nekko Cloud preview** — sign-in, publish, refresh and apply, only when you
+  use them.
 - **Catalog popularity** — npm download counts and GitHub stars, fetched when you
   open the catalog and cached for a day.
 - **Releases and updates** — lookups against the npm registry or GitHub when you

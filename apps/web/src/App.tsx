@@ -1,3 +1,4 @@
+import { CloudSetup } from './components/CloudSetup';
 import { Fragment, useEffect, useState, useCallback, useId, useRef, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type {
@@ -2819,6 +2820,8 @@ function SettingsView({ gateway, version, u, usageReports }: {
           <p>How Hypergate runs on this machine. Local-first — these only affect your own device.</p>
         </div>
       </div>
+
+      <CloudSetup master={gateway?.token} onApply={() => { void api.settings().then(setS).catch(() => setErr('Could not refresh settings.')); }} />
 
       {usageReports && <UsageReportsSettings reports={usageReports} />}
 

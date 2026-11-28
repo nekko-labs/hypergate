@@ -1138,3 +1138,10 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
   .verbox-offer .vb-tertiary { display: none; }
   .footer > span { display: none; }
 }
+
+.cloud-setup { padding:16px; }
+.cloud-setup table { border-collapse:collapse; margin:12px 0; width:100%; font-size:13px; }
+.cloud-setup caption { text-align:left; font-weight:600; margin-bottom:6px; }
+.cloud-setup th,.cloud-setup td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.cloud-setup input { max-width:100%; }
+.cloud-setup .btn { margin-block:4px; }

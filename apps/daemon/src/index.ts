@@ -6,6 +6,8 @@ import { homedir, networkInterfaces } from 'node:os';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { projectSetup } from './cloud-setup.ts';
+import { isSetup, fields } from '@hypergate/shared';
 import { resolveUserPath } from './login-path.ts';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -2841,6 +2843,30 @@ if (STDIO_MODE) {
           since: url.searchParams.get('since') ?? undefined,
         }),
       );
+    }
+
+    // Local review only. The daemon never contacts Cloud, enrolls a machine or executes a received command.
+    if (pathname === '/api/cloud-setup') {
+      res.setHeader('Cache-Control','no-store');
+      if (authScope(req)?.kind !== 'master') return json(res, 401, {error:'unauthorized'});
+      if (req.method === 'GET') return json(res,200,projectSetup(loadSettings(),servers));
+      if (req.method === 'POST') {
+        let b: unknown;
+        try { b=JSON.parse(await readBody(req)); } catch { return json(res,400,{error:'invalid_json'}); }
+        if (!fields(b,['reviewed','desired']) || !isSetup(b.reviewed) || !isSetup(b.desired)) return json(res,400,{error:'invalid_setup'});
+        const cur=loadSettings(), local=projectSetup(cur,servers);
+        if (JSON.stringify(b.reviewed)!==JSON.stringify(local)) return json(res,409,{error:'local_setup_changed'});
+        const wanted=new Map(b.desired.servers.map(s=>[s.catalogId,s.enabled]));
+        const installed=new Set(local.servers.map(s=>s.catalogId));
+        const next=servers.map(s=>installed.has(s.id) && wanted.has(s.id) ? {...s,enabled:wanted.get(s.id)!} : s);
+        // Two files: if the second write fails, put the first back so apply is all-or-nothing.
+        try { saveConfig(next); } catch { return json(res,500,{error:'apply_failed'}); }
+        try { saveSettings({...cur,startMinimized:b.desired.startMinimized,closeAction:b.desired.closeAction}); }
+        catch { try { saveConfig(servers); } catch { /* config keeps the new flags; reported below */ } return json(res,500,{error:'apply_failed'}); }
+        servers=next;
+        return json(res,200,projectSetup(loadSettings(),servers));
+      }
+      return json(res,405,{error:'method_not_allowed'});
     }
 
     // ── desktop/service settings (autostart, start-minimized, close button) ──
