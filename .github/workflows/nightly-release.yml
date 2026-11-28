@@ -1,0 +1,96 @@
+name: Nightly release
+
+# Every night, release whatever merged to main since the last release, as the
+# next patch on the current line (scripts/nightly-version.mjs): v1.38.0, then
+# v1.38.1, v1.38.2. PRs no longer bump the version or wait for each other to
+# reserve one (TASKS.md §4.1). A person starts a new MAJOR.MINOR line by pushing
+# the short tag `vMAJOR.MINOR` (version-release.yml).
+#
+# Skipped when main has not moved since the last release, or when CI on main's
+# head is not green: a red main waits for the next night rather than shipping.
+#
+# Why this tags *and* dispatches: a tag pushed with GITHUB_TOKEN starts no other
+# workflow (GitHub's recursion guard), so release.yml would never fire on the tag
+# alone. `--ref <tag>` means that run sees the tag as `github.ref_name`, exactly
+# as it would from a hand-pushed tag.
+
+on:
+  schedule:
+    # 03:41 JST.
+    - cron: '41 18 * * *'
+  # Release now instead of waiting for the night: gh workflow run nightly-release.yml
+  workflow_dispatch:
+
+concurrency:
+  # Shared with version-release.yml: two triggers must not race to create a tag.
+  group: version-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # Tags decide the version and whether there is anything new.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Work out the version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          last=$(node scripts/nightly-version.mjs --last)
+          next=$(node scripts/nightly-version.mjs)
+          head=$(git rev-parse HEAD)
+          fresh=true
+          if [ -n "$last" ] && [ "$(git rev-list --count "$last..HEAD")" = 0 ]; then
+            echo "main has not moved since $last; nothing to release."
+            fresh=false
+          elif git rev-parse -q --verify "refs/tags/v$next" >/dev/null; then
+            echo "v$next already exists; nothing to release."
+            fresh=false
+          else
+            ci=$(gh run list --workflow ci.yml --branch main --event push --commit "$head" --limit 1 --json conclusion -q '.[0].conclusion // ""')
+            if [ "$ci" != success ]; then
+              echo "::warning::CI on main's head $head is '${ci:-missing or running}', so v$next waits for the next night (or a dispatch once it is green)."
+              fresh=false
+            fi
+          fi
+          echo "Releasing $([ "$fresh" = true ] && echo "v$next at $head" || echo nothing)."
+          echo "tag=v$next" >> "$GITHUB_OUTPUT"
+          echo "fresh=$fresh" >> "$GITHUB_OUTPUT"
+
+      - name: Tag it
+        if: steps.version.outputs.fresh == 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "refs/tags/$TAG"
+
+      - name: Build the installers and publish the release
+        if: steps.version.outputs.fresh == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh workflow run release.yml --ref "$TAG"
+          echo "Dispatched release.yml at $TAG."
+          echo "Watch: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions"

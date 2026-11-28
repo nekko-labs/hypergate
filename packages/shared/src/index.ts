@@ -261,6 +261,12 @@ export interface RegistryEntry {
    * an explicitly community (not first-party) pick; `undefined` = unknown.
    */
   official?: boolean;
+  /**
+   * Made by Nekko Labs (Hypergate's own maker), shown as a "Nekko Labs" chip. Hand-set
+   * on curated entries; derived on registry hits from the namespace (see
+   * `isNekkoLabsNamespace`), so a new Nekko Labs listing is tagged without a code change.
+   */
+  nekkoLabs?: boolean;
   /** In Hypergate's recommended set — sorts first and gets a ★ marker. */
   recommended?: boolean;
   /**

@@ -99,6 +99,13 @@ rather than remembered:
 - **Versions must agree.** `server.json` states the version twice (its own and
   the npm package's); `scripts/bump-version.mjs` moves both, and
   `npm run version:check` fails on drift.
+- **Use the released version, not the committed one.** PRs no longer bump the
+  version (TASKS.md §4.1): releases stamp it from the tag at build time, so the
+  committed `server.json` (and the plugin and marketplace manifests the Claude
+  Code marketplace reads from Git) can trail the newest release. Before
+  publishing, stamp the release you are listing:
+  `node scripts/bump-version.mjs "$(node scripts/nightly-version.mjs --last | sed 's/^v//')"`,
+  publish, and don't commit the stamp.
 
 There is a nice wrinkle in the namespace choice. `server.json` currently claims
 `io.github.nekko-labs/hypergate`, which is verified by GitHub org ownership and

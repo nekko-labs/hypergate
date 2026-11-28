@@ -101,6 +101,20 @@ jobs:
           fi
 
       - run: npm ci
+      # A release run (release.yml at a `vX.Y.Z` tag): the tag is the version,
+      # since PRs no longer bump it (TASKS.md §4.1). It ends up inside the shell
+      # binary, the daemon's /health and the installers, so stamp it first.
+      - name: Stamp the version from the tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            node scripts/bump-version.mjs "$version"
+          else
+            echo "$GITHUB_REF_NAME is not a release tag; building the committed version."
+          fi
+
       - run: npm run build
       - run: cargo build --release --target ${{ matrix.target }} --manifest-path apps/shell/Cargo.toml
 

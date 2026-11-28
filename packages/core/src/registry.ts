@@ -39,6 +39,7 @@ export const REGISTRY: RegistryEntry[] = [
     command: 'nekko-agent',
     args: ['mcp'],
     official: true,
+    nekkoLabs: true,
     recommended: true,
     note: 'Requires the Nekko Agent CLI on PATH (`npm i -g nekko-agent`), check the CLIs section below.',
     homepage: 'https://github.com/nekko-labs/nekko-agent',
@@ -347,6 +348,7 @@ export const REGISTRY: RegistryEntry[] = [
     command: 'nekko-vault-mcp',
     requires: ['NEKKO_VAULT'],
     official: true,
+    nekkoLabs: true,
     homepage: 'https://github.com/nekko-labs/nekko-notes',
   },
 ];

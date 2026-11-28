@@ -15,15 +15,25 @@
 //   node scripts/release-notes.mjs 0.17.0          # the release body, on stdout
 //   node scripts/release-notes.mjs 0.17.0 --title  # just the release title
 //   node scripts/release-notes.mjs 0.17.0 --npm    # footer points at the registry
+//   node scripts/release-notes.mjs 1.38.2 --since v1.38.1   # a nightly (below)
+//
+// A nightly has no `docs/releases/<version>.md`: PRs don't know which nightly
+// carries them. With `--since <previous tag>`, the notes are the
+// `docs/releases/unreleased/` files added since that tag (release-fragments.mjs),
+// or, when no PR added one, the titles of the PRs merged since it. A hand-written
+// `docs/releases/<version>.md` still wins, for a new line someone wants to headline.
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { UNRELEASED, mergeFragments, titlesFromLog } from './release-fragments.mjs';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const args = process.argv.slice(2);
-const version = args.find((arg) => !arg.startsWith('-'))?.replace(/^v/, '');
+const version = args.find((arg, i) => !arg.startsWith('-') && args[i - 1] !== '--since')?.replace(/^v/, '');
 const wantsTitle = args.includes('--title');
 const published = args.includes('--npm');
+const since = args.includes('--since') ? args[args.indexOf('--since') + 1] : null;
 
 if (!version) {
   console.error('usage: node scripts/release-notes.mjs <version> [--title] [--npm]');
@@ -31,9 +41,21 @@ if (!version) {
 }
 
 const file = join(repo, 'docs', 'releases', `${version}.md`);
-const notes = existsSync(file) ? readFileSync(file, 'utf8').trim() : '';
+const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' });
 
-if (!notes && !wantsTitle) {
+function nightlyNotes(tag) {
+  const added = git('diff', '--name-only', '--diff-filter=A', tag, 'HEAD', '--', UNRELEASED)
+    .split('\n')
+    .filter((f) => f.endsWith('.md') && !f.endsWith('/README.md'));
+  const merged = mergeFragments(added.map((f) => readFileSync(join(repo, f), 'utf8')));
+  if (merged) return merged;
+  const titles = titlesFromLog(git('log', '--first-parent', '--format=%s%x1f%b%x1e', `${tag}..HEAD`));
+  return titles.length ? `### Changes\n\n${titles.map((t) => `- ${t}`).join('\n')}` : '';
+}
+
+const notes = existsSync(file) ? readFileSync(file, 'utf8').trim() : since ? nightlyNotes(since) : '';
+
+if (!notes && !wantsTitle && !since) {
   // A release with no notes still installs fine, so this must not fail the
   // release. It should be loud, though: notes that say nothing about what
   // changed are the reason this script exists.
