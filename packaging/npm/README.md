@@ -68,10 +68,12 @@ claude plugin install hypergate@nekko-labs
 ## Requirements
 
 - **Node 20+** to run. Node **22.5+** is recommended: durable usage history and logs use the built-in `node:sqlite`, and on older runtimes Hypergate degrades to in-memory analytics rather than refusing to start.
-- Nothing else. Docker is optional (opt-in per server), and there is no account, no cloud, and no telemetry.
+- Docker is optional (opt-in per server). No account or hosted control plane is required.
 
 ## Where things are stored
 
-Everything is local, under `~/.hypergate/` (override with `HYPERGATE_DIR`). Secrets live in the OS keychain (Credential Manager / Keychain / Secret Service), falling back to files there where no keychain exists.
+Gateway history and configuration stay on your machine, under `~/.hypergate/` (override with `HYPERGATE_DIR`). Secrets live in the OS keychain (Credential Manager / Keychain / Secret Service), falling back to files there where no keychain exists.
+
+Neither the daemon nor CLI commands send usage reports. If you open the native desktop Manager, **Settings → Share usage reports** controls optional reports and is off by default. Reports do not include local gateway history. [Privacy policy](https://hypergate.app/privacy/).
 
 Full documentation: <https://github.com/nekko-labs/hypergate>

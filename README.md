@@ -282,11 +282,15 @@ If an agent token leaks, rotate it in place with `hypergate agent rotate <id>`; 
 
 ### Privacy Policy
 
-Hypergate has no backend, no account and no telemetry: everything it stores stays
-on your machine, and the only network calls are ones you trigger. The full policy —
-what is stored, where, and for how long — is in [PRIVACY.md](PRIVACY.md).
+Hypergate runs locally and requires no account or hosted control plane. The
+website and native desktop Manager have separate, off-by-default analytics
+choices: **Privacy choices** in the website footer and **Settings → Share usage
+reports** in the desktop app. Neither shares your local gateway activity. The
+browser Manager, Nekko Agent embed, daemon and CLI do not send usage reports.
+See [PRIVACY.md](PRIVACY.md) for what is stored, shared and retained, or the
+[analytics operator guide](docs/analytics.md) for what the signals can tell us.
 
-## Analytics: visibility for free
+## Local Analytics: visibility for free
 Because every tool call fans through the one gateway, Hypergate records it: server, tool, caller (from the MCP handshake), success/error, latency, and bytes in/out. The web UI's **Analytics** tab turns that into headline metrics, a 24h call-volume sparkline, usage-by-server, a who's-calling breakdown, and a live recent-calls feed, served from `/api/analytics` and persisted across restarts. It's a private audit trail with nothing to wire up and no data leaving your machine.
 
 ## Status
