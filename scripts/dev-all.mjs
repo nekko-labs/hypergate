@@ -20,8 +20,9 @@
 // (point the manager at it with HYPERGATE_DEV_API). Dependency-free.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +50,7 @@ const desktop = !wantsBrowser && !noOpen && hasCargo();
 // global, and the shell (and the daemon, through it) would write this run's
 // token and OAuth grants over the real ones. Give it its own namespace.
 if (process.env.HYPERGATE_DIR && !process.env.HYPERGATE_KEYCHAIN_NAMESPACE) {
-  const id = createHash('sha256').update(process.env.HYPERGATE_DIR).digest('hex').slice(0, 8);
+  const id = createHash('sha256').update(existsSync(process.env.HYPERGATE_DIR) ? realpathSync(process.env.HYPERGATE_DIR) : process.env.HYPERGATE_DIR).digest('hex').slice(0, 8);
   process.env.HYPERGATE_KEYCHAIN_NAMESPACE = `dev-${id}`;
 }
 
@@ -333,8 +334,19 @@ const maybeBanner = () => {
   // Only now: started before the daemon answers, the shell would launch a
   // daemon of its own, from apps/daemon/dist, which a dev tree rarely has fresh.
   if (desktop) {
-    say('Opening the desktop app (cargo builds it first; the first build takes a few minutes)...');
-    start(app(managerUrl));
+    // The shell's single-instance lock is the daemon port + 1. If something holds
+    // it, the shell hands off and exits 0, which would read as a quit and stop the stack.
+    const lockPort = Number(new URL(gatewayUrl).port || 7777) + 1;
+    const probe = createServer();
+    probe.once('error', () => {
+      say(paint('33', `Port ${lockPort} (the desktop app's lock) is taken, likely by your installed Hypergate, so the manager opens in your browser instead.`));
+      openBrowser(managerUrl);
+    });
+    probe.listen(lockPort, '127.0.0.1', () => probe.close(() => {
+      if (stopping) return;
+      say('Opening the desktop app (cargo builds it first; the first build takes a few minutes)...');
+      start(app(managerUrl));
+    }));
   }
 };
 

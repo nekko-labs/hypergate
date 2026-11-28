@@ -802,6 +802,14 @@ pub fn ui_url() -> String {
         .unwrap_or_else(|| format!("{}/", paths::base_url()))
 }
 
+/// True when `HYPERGATE_UI_URL` points the window at a dev server (`npm run dev`).
+pub fn dev_ui() -> bool {
+    std::env::var("HYPERGATE_UI_URL")
+        .ok()
+        .and_then(|url| loopback_url(&url))
+        .is_some()
+}
+
 /// `url` when it is plain http on this machine (`localhost`, `127.0.0.1`,
 /// `[::1]`), else `None`.
 fn loopback_url(url: &str) -> Option<String> {
