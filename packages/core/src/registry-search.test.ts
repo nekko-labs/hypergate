@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapRegistryServer, searchRegistry, officialFromNamespace, resolveServer } from './registry-search.js';
+import { mapRegistryServer, searchRegistry, officialFromNamespace, isNekkoLabsNamespace, resolveServer } from './registry-search.js';
 
 describe('mapRegistryServer', () => {
   it('maps an npm package to an npx process command with env requires', () => {
@@ -80,6 +80,22 @@ describe('mapRegistryServer', () => {
     });
     expect(firstParty.publisher).toBe('app.linear');
     expect(firstParty.official).toBe(true);
+  });
+});
+
+describe('Nekko Labs tag', () => {
+  it('tags the Nekko Labs domain and GitHub namespaces, and nothing else', () => {
+    expect(isNekkoLabsNamespace('com.nekkolabs')).toBe(true);
+    expect(isNekkoLabsNamespace('io.github.nekko-labs')).toBe(true);
+    expect(isNekkoLabsNamespace('io.github.nekko-labs-fan')).toBe(false);
+    expect(isNekkoLabsNamespace('com.nekkolabs.evil')).toBe(false);
+    expect(isNekkoLabsNamespace('')).toBe(false);
+  });
+  it('marks a mapped registry hit from a Nekko Labs namespace', () => {
+    const floop = mapRegistryServer({ name: 'com.nekkolabs/floop', title: 'Floop', remotes: [{ type: 'streamable-http', url: 'https://floop-nekko.fly.dev/api/mcp' }] });
+    expect(floop.nekkoLabs).toBe(true);
+    expect(floop.official).toBe(true);
+    expect(mapRegistryServer({ name: 'app.linear/linear', remotes: [{ type: 'streamable-http', url: 'https://mcp.linear.app/mcp' }] }).nekkoLabs).toBeUndefined();
   });
 });
 

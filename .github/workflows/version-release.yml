@@ -1,37 +1,37 @@
-name: Release on version bump
+name: Start a release line
 
-# Ships a release whenever a merge to main changes the version in package.json,
-# so cutting one is part of the PR that earned it rather than a manual tag
-# afterwards. Bump the version (and write its notes), merge, and the installers
-# appear.
+# The manual MAJOR.MINOR bump. A person starts a new line by pushing the short
+# tag `vMAJOR.MINOR` (or creating a GitHub release with it): this adds
+# `vMAJOR.MINOR.0` on the same commit and releases it. Every nightly after that
+# is the next patch on the line (nightly-release.yml, scripts/nightly-version.mjs).
+# Nothing else moves MAJOR or MINOR: PRs no longer bump the version (TASKS.md §4.1).
 #
-# Why this tags *and* dispatches, rather than just tagging: a tag pushed with
-# GITHUB_TOKEN does not trigger other workflows (GitHub blocks that to prevent
-# recursion), so release.yml would never fire. Dispatching it explicitly at the
-# new tag is what makes it work without a personal access token, and `--ref
-# <tag>` means that run sees the tag as `github.ref_name`, exactly as it would
-# from a hand-pushed tag.
+#   git tag -a v1.39 -m v1.39 origin/main && git push origin v1.39
+#
+# A full `vX.Y.Z` tag pushed by a person starts release.yml on its own.
+#
+# Earlier this released whenever a merge to main changed package.json's version,
+# which made every PR bump the minor and queue behind the others for the next
+# number.
+#
+# Why this tags *and* dispatches: a tag pushed with GITHUB_TOKEN starts no other
+# workflow (GitHub's recursion guard), so release.yml would never fire on the tag
+# alone. `--ref <tag>` means that run sees the tag as `github.ref_name`.
 
 on:
-  # A human merge fires this immediately.
   push:
-    branches: [main]
-    paths:
-      - 'package.json'
-  # ...but a merge performed by a bot does not: a push made with GITHUB_TOKEN
-  # never starts a workflow run (the same recursion guard that stops a
-  # bot-pushed tag from triggering release.yml). Merges here are human today, so
-  # the push above is the fast path, but nekko-agent's are not and its release
-  # was silently skipped because of exactly this. So a schedule is the backstop: it
-  # notices an untagged version bump whoever merged it. Everything below is
-  # idempotent (it stops once the tag exists), so overlapping triggers are safe.
-  schedule:
-    - cron: '*/15 * * * *'
-  # Cut a pending release right now instead of waiting for the tick.
+    tags:
+      # The short form only; release.yml takes the full one.
+      - 'v[0-9]+.[0-9]+'
+  # Re-run for a short tag by hand: gh workflow run version-release.yml -f tag=v1.39
   workflow_dispatch:
+    inputs:
+      tag:
+        description: The short tag that starts the line (vMAJOR.MINOR)
+        required: true
 
 concurrency:
-  # Two ticks (or a tick and a push) must not race to create the same tag.
+  # Shared with nightly-release.yml: two triggers must not race to create a tag.
   group: version-release
   cancel-in-progress: false
 
@@ -48,31 +48,29 @@ jobs:
           # Tags are needed to tell an already-released version from a new one.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Read the version
+      - name: Work out the release tag
         id: version
         shell: bash
+        env:
+          SHORT: ${{ inputs.tag || github.ref_name }}
         run: |
-          version=$(node -p "require('./package.json').version")
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "package.json version '$version' is not a release version." >&2
+          set -euo pipefail
+          if [[ ! "$SHORT" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+            echo "$SHORT is not a short release tag (vMAJOR.MINOR)." >&2
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          git rev-parse -q --verify "refs/tags/$SHORT^{commit}" >/dev/null || { echo "No tag $SHORT." >&2; exit 1; }
+          echo "tag=$SHORT.0" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse "$SHORT^{commit}")" >> "$GITHUB_OUTPUT"
 
-      - name: Skip if this version is already tagged
+      - name: Skip if it is already tagged
         id: check
         shell: bash
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          # A push that touches package.json without changing the version (a
-          # dependency bump, a script edit) lands here too, so the tag is the
-          # thing that decides whether there is a release to cut.
+          # Idempotent: a re-run, or someone who pushed both v1.39 and v1.39.0,
+          # releases once (a hand-pushed v1.39.0 already started release.yml).
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             echo "$TAG already exists; nothing to release."
             echo "fresh=false" >> "$GITHUB_OUTPUT"
@@ -80,39 +78,17 @@ jobs:
             echo "fresh=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check the release is actually ready to cut
-        if: steps.check.outputs.fresh == 'true'
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          status=0
-          # The version lives in seven files (TASKS.md §4.1) and the repo already
-          # owns the assertion, so use it rather than re-implementing part of it.
-          # It needs no dependencies, only Node built-ins, so no install first.
-          if ! node scripts/bump-version.mjs --check; then
-            status=1
-          fi
-          # release.yml takes its notes from docs/releases/<version>.md and fails
-          # without it. Checking here means a missing notes file stops the run
-          # *before* a tag exists, rather than leaving a tag pointing at a
-          # release that never built. See docs/releases/README.md.
-          if [ ! -f "docs/releases/$VERSION.md" ]; then
-            echo "docs/releases/$VERSION.md is missing; write the notes in the same PR as the bump." >&2
-            status=1
-          fi
-          exit $status
-
       - name: Tag it
         if: steps.check.outputs.fresh == 'true'
         shell: bash
         env:
           TAG: ${{ steps.version.outputs.tag }}
+          COMMIT: ${{ steps.version.outputs.commit }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git tag -a "$TAG" -m "$TAG"
-          git push origin "$TAG"
+          git tag -a "$TAG" -m "$TAG" "$COMMIT"
+          git push origin "refs/tags/$TAG"
 
       - name: Build the installers and publish the release
         if: steps.check.outputs.fresh == 'true'
