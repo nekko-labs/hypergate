@@ -148,11 +148,14 @@ fn build(child: Option<std::process::Child>) -> Result<Tray, String> {
     let open = MenuItem::with_id(id::OPEN, "Open manager", true, None);
     let start_all = MenuItem::with_id(id::START_ALL, "Start all servers", true, None);
     let stop_all = MenuItem::with_id(id::STOP_ALL, "Stop all servers", true, None);
-    let restart = MenuItem::with_id(id::RESTART_DAEMON, "Restart daemon", true, None);
+    // A dev window (`npm run dev`) doesn't own the watched daemon or the installed
+    // app's login item, so it must not restart the one or rewrite the other.
+    let dev = crate::api::dev_ui();
+    let restart = MenuItem::with_id(id::RESTART_DAEMON, "Restart daemon", !dev, None);
     let start_at_login = CheckMenuItem::with_id(
         id::AUTOSTART,
         "Start at login",
-        autostart::is_supported(),
+        autostart::is_supported() && !dev,
         autostart::is_enabled(),
         None,
     );

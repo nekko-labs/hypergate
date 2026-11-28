@@ -1,74 +1,133 @@
 # Privacy Policy
 
-**Hypergate** (Nekko Labs) — last updated 2 August 2026.
+**Hypergate** — last updated 27 November 2026.
 
-Hypergate is a local-first application. It runs on your machine, stores its data
-on your machine, and needs no account. There is no telemetry or analytics service. The optional Nekko Cloud employee preview is described below.
+Hypergate is local-first. No account or hosted control plane is required. The
+local gateway’s activity history is not shared with Nekko Labs or PostHog.
+This policy covers the app and [hypergate.app](https://hypergate.app/). The
+[website privacy policy](https://hypergate.app/privacy/) also describes the
+website’s service providers and privacy controls.
 
-## What we collect
+## Who controls this data
 
-If you choose to sign in to Nekko Cloud, your work email is used for authentication. Only when you publish a setup does Cloud store your start-minimized and window-close choices, recognized catalog server IDs, and their enabled flags under your account. The console can read this setup; it is not an end-to-end encrypted backup. It never includes keys, commands, URLs, environment values, account grants, or activity logs.
+Nekko Labs LLC is the controller for Hypergate’s website and optional usage
+reports. We are a Wyoming company at 30 North Gould Street, Suite N, Sheridan,
+WY 82801, United States. Contact us at <hello@nekkoagent.com> for privacy questions
+or requests. Do not post private data in a public issue.
 
-## What Hypergate stores, and where
+## Optional analytics
 
-Local data lives under `~/.hypergate` on your own machine (`%USERPROFILE%\.hypergate`
-on Windows), plus your operating system's keychain:
+We use analytics to understand how people find Hypergate and which desktop
+Manager features they use. The two choices are independent, off by default and
+based on your consent. Declining does not limit the site or app.
+
+| Where | What is sent if you opt in | How to change your choice |
+| --- | --- | --- |
+| **Website** | Visits to the home, release notes, privacy and terms pages; supported installer-link clicks by platform (macOS, Windows, Linux or a portable archive); successful copies of the shell install command. These actions measure interest, not downloads or completed installations. | **Privacy choices** in the footer |
+| **Native Hypergate desktop Manager** | The Manager becoming active for reporting in the current document, which of its four views you open (Servers, People, Analytics or Settings), and reports of adding, starting, stopping or restarting a server, or connecting an agent, through the Manager. No device, server or agent names are sent. The browser-based Manager, Nekko Agent's embedded Manager, the background tray, the daemon and CLI commands do not send these events. | **Settings → Share usage reports** |
+
+Each report uses a fixed event and value, the Hypergate product and the reporting
+surface, and a random identifier for that surface. The website and desktop
+Manager have separate identifiers; neither is linked to a Hypergate account.
+The site and native Manager webview remember their respective choices in local
+storage and create an analytics ID only after opt-in. The analytics transport
+uses no SDK or analytics cookies and does not collect full URLs, referrers,
+clipboard contents, tool calls, tool inputs or outputs, credentials, logs or
+local gateway history. Location enrichment and person profiles are disabled for
+these events. There is no session replay. PostHog receives standard connection
+metadata such as your IP address when your device sends a report.
+
+When your browser or desktop webview exposes **Do Not Track (DNT)** or **Global
+Privacy Control (GPC)**, that signal blocks reporting and counts as turning analytics
+off: a previous opt-in is withdrawn and its local ID removed. Turning analytics off in the controls
+stops future events and removes the local analytics ID, but does not erase
+reports already sent.
+
+We use PostHog to process the reports on our behalf. We keep event-level data
+only as long as needed to understand adoption and feature use, subject to the
+retention settings for the receiving PostHog project and any applicable legal
+requirements. The local choice stays until you change it or clear that storage.
+We do not sell personal data or share it for cross-context behavioral advertising.
+
+## What Hypergate stores locally
+
+The daemon’s data directory defaults to `~/.hypergate`
+(`%USERPROFILE%\.hypergate` on Windows); secrets may live in your OS keychain.
+The website and native Manager analytics choices described above are stored
+separately in their respective browser and webview storage.
 
 | Data | Where | Why |
 | --- | --- | --- |
 | The MCP servers you configure | `~/.hypergate/servers.json` | So your servers are still there after a restart |
-| Usage history: which tool was called, by which client, when, how long it took, how many bytes moved, and the error message if it failed | `~/.hypergate/hypergate.db` (SQLite) | The activity view in the manager. Tool *arguments and results are not stored* — only their sizes |
+| Usage history: which tool was called, by which client, when, how long it took, how many bytes moved, and the error message if it failed | `~/.hypergate/hypergate.db` (SQLite) | The activity view in the Manager. Tool arguments and results are not stored as such; their sizes are recorded |
 | Server logs (stdout/stderr of the servers you run) | `~/.hypergate/hypergate.db` | Diagnosing a server that won't start |
 | Connected agents and their gateway tokens | OS keychain, else `~/.hypergate/clients.json` | So a client can authenticate to your local gateway |
 | OAuth grants for remote servers you sign in to | OS keychain, else `~/.hypergate/oauth/` | So you don't sign in again every launch |
 | Settings and update state | `~/.hypergate/settings.json`, `update.json` | Preferences, and when we last checked for a release |
 
-Deleting `~/.hypergate` (and the `hypergate*` entries in your keychain) removes
-the local data, not a previously published Cloud setup. Removing a server deletes its stored OAuth grant with it.
+Usage history is kept for 90 days by default and server logs for 14, pruned on
+boot and daily thereafter (`HYPERGATE_RETAIN_USAGE_DAYS` and
+`HYPERGATE_RETAIN_LOG_DAYS` change or disable these windows). To clear the database,
+stop Hypergate and delete its local database files. To remove local daemon data,
+delete its data directory and its associated keychain entries. Removing a server
+deletes its stored OAuth grant.
+
+## Nekko Cloud employee preview (optional)
+
+Settings shows a Nekko Cloud panel. Only eligible Nekko accounts can use it, and
+nothing reaches Cloud unless you sign in. Your work email is used for sign-in.
+When you publish a setup, Cloud stores your start-minimized and window-close
+choices, recognized catalog server IDs and their enabled flags under your
+account, plus the revision and its timestamp. The console can read it; it is not
+an end-to-end encrypted backup. It never includes keys, commands, URLs,
+environment values, account grants, usage history or logs. Deleting local data
+does not delete a published setup; it stays until replaced or the Cloud account
+is deleted.
 
 ## When Hypergate uses the network
 
-Network actions include:
+The daemon and CLI do not send analytics. Other requests serve the actions or
+features you use:
 
-- **Nekko Cloud preview**: sign-in, publishing, refreshing, and applying a reviewed setup are explicit actions. Cloud stores only the latest revision and its timestamp.
-
-- **Registry search** — while you type a query into the catalog search, against
-  the official MCP registry.
+- **Registry and CLI search** — while you type, against the MCP registry or the
+  supported package indexes (such as npm and Homebrew).
+- **Nekko Cloud preview** — sign-in, publish, refresh and apply, only when you
+  use them.
 - **Catalog popularity** — npm download counts and GitHub stars, fetched when you
   open the catalog and cached for a day.
-- **Update check** — the npm registry (or the GitHub releases feed) when you open
-  the manager or press the button, cached for a day. It sends nothing about your
-  installation; it is a lookup, not a report.
-- **The remote MCP servers you add** — their endpoint, plus the OAuth sign-in and
-  token exchange for the ones that need it. Those services have their own privacy
-  policies; Nekko Labs is not a party to that traffic.
+- **Releases and updates** — lookups against the npm registry or GitHub when you
+  open the Manager or check for an update, and downloads when you request them.
+  These are not usage reports.
+- **The remote MCP servers you add** — traffic to their endpoint, plus OAuth
+  sign-in and token exchange where needed. Managed local servers can also make
+  their own requests. Review the services and their privacy policies before
+  giving them access.
+- **Team access and alerts** — the management interface listens on loopback.
+  An optional team listener lets authorized people reach the gateway on your
+  network. If you configure a team webhook, Hypergate sends alert metadata such
+  as host, user, tool, event type, location and time to your chosen destination;
+  it does not send credential values or parts of them.
 
-The daemon binds to localhost. Nothing listens on an external interface.
+Vercel serves the website, and GitHub serves public release information and
+installer assets. These requests work without analytics consent. Both services
+receive the IP address and other standard request metadata needed to serve the
+requests. GitHub also publishes aggregate release-asset download counts.
 
-## Third parties
+## Your privacy rights
 
-Hypergate runs MCP servers *you* choose, including ones published by other
-people. Once running, a server can do whatever its own code does with the data
-you send it. Hypergate isolates them (sandboxed processes or containers, secrets
-injected at launch, per-client permissions) but it cannot vet their behaviour.
-Review a server before you add it, exactly as you would any other software.
+Depending on where you live, your rights can include access, correction,
+erasure, restriction, portability, objection and withdrawal of consent. You may
+also complain to your local data protection authority. Withdrawing consent
+stops future reports and does not affect processing that already occurred.
 
-## Data retention
+Email <hello@nekkoagent.com> to make a request. We do not use an account or email
+address to identify analytics events and may not be able to locate them without
+the relevant random identifier. If you want to make a request and are unsure
+how to identify your reports, contact us for help before clearing local storage
+or turning off analytics, which removes the ID.
 
-Usage history is kept for 90 days and server logs for 14, pruned on every boot
-and once a day after that (`HYPERGATE_RETAIN_USAGE_DAYS` and
-`HYPERGATE_RETAIN_LOG_DAYS` change or disable those windows). You can clear the
-lot at any time by deleting the database. Usage history and server logs are not synced. The latest published portable setup stays in Cloud until replaced or the Cloud account is deleted.
+## Children and changes
 
-## Children
-
-Hypergate is a developer tool and is not directed at children under 13.
-
-## Changes
-
-Material changes to this policy will be reflected in this file, whose history is
+Hypergate is a developer tool and is not directed at children under 13. We will
+update this policy and its date when it changes. The history of this file is
 public in the repository.
-
-## Contact
-
-privacy@nekkolabs.com · <https://github.com/nekko-labs/hypergate/issues>

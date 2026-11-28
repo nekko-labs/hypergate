@@ -246,7 +246,7 @@ Everything is local, under `~/.hypergate/` (override with `HYPERGATE_DIR`):
 
 `HYPERGATE_ALLOWED_HOSTS` is a comma-separated escape hatch for a reverse proxy or forwarded port; it extends the loopback Host allow-list without replacing it. Hypergate binds to loopback by default, rejects non-loopback Host headers, sends no CORS headers for the management API, and checks browser origins on every management mutation.
 
-`npm run dev` runs the daemon + web UI together and opens the site in your browser once Vite is ready (set `HYPERGATE_OPEN=0` to skip). After a pull it installs when `package-lock.json` changed and rebuilds `@hypergate/shared` and `@hypergate/core` before starting (and keeps them rebuilding on save), since the daemon imports their build. Once everything is up it prints what runs where; then **q** or **Enter** stops everything it started (twice to force), **r** restarts from what is on disk, and **o** opens the manager. It uses your real `~/.hypergate` on port 7777; for a scratch copy, run it with `HYPERGATE_DIR`, `HYPERGATE_PORT` and `HYPERGATE_DEV_API` pointing at that port.
+`npm run dev` runs the daemon + web UI together and, once both are up, opens the manager in the desktop app: it builds the Rust shell with `cargo run` and points its native window at Vite, so the window hot-reloads like a tab. Quitting the app stops the run. `npm run dev:browser` opens a browser tab instead, as does a machine without `cargo`; `HYPERGATE_OPEN=0` opens neither. After a pull it installs when `package-lock.json` changed and rebuilds `@hypergate/shared` and `@hypergate/core` before starting (and keeps them rebuilding on save), since the daemon imports their build. Once everything is up it prints what runs where; then **q** or **Enter** stops everything it started (twice to force), **r** restarts from what is on disk, and **o** opens the manager in your browser. It uses your real `~/.hypergate` on port 7777; for a scratch copy, run it with `HYPERGATE_DIR`, `HYPERGATE_PORT` and `HYPERGATE_DEV_API` pointing at that port.
 
 ### Use it from your agent
 
@@ -282,11 +282,15 @@ If an agent token leaks, rotate it in place with `hypergate agent rotate <id>`; 
 
 ### Privacy Policy
 
-Hypergate has no backend, no account and no telemetry: everything it stores stays
-on your machine, and the only network calls are ones you trigger. The full policy —
-what is stored, where, and for how long — is in [PRIVACY.md](PRIVACY.md).
+Hypergate runs locally and requires no account or hosted control plane. The
+website and native desktop Manager have separate, off-by-default analytics
+choices: **Privacy choices** in the website footer and **Settings → Share usage
+reports** in the desktop app. Neither shares your local gateway activity. The
+browser Manager, Nekko Agent embed, daemon and CLI do not send usage reports.
+See [PRIVACY.md](PRIVACY.md) for what is stored, shared and retained, or the
+[analytics operator guide](docs/analytics.md) for what the signals can tell us.
 
-## Analytics: visibility for free
+## Local Analytics: visibility for free
 Because every tool call fans through the one gateway, Hypergate records it: server, tool, caller (from the MCP handshake), success/error, latency, and bytes in/out. The web UI's **Analytics** tab turns that into headline metrics, a 24h call-volume sparkline, usage-by-server, a who's-calling breakdown, and a live recent-calls feed, served from `/api/analytics` and persisted across restarts. It's a private audit trail with nothing to wire up and no data leaving your machine.
 
 ## Status

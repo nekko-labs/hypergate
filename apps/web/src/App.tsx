@@ -69,8 +69,7 @@ import { AgentInstructionsBlock, InstructionsChip, InstructionsFirstOffer, harne
 import { useToast } from './toast';
 import { AmbientPanel } from './components/AmbientPanel';
 import { AlertSettings } from './components/AlertSettings';
-
-type View = 'servers' | 'people' | 'analytics' | 'settings';
+import { MANAGER_VIEWS, trackManagerFeature, useManagerUsageReports, type ManagerView as View } from './manager-analytics';
 type ServerSection = 'agents' | 'mcp-servers' | 'cli' | 'credentials';
 type AnalyticsSection = 'overview' | 'usage-by-server' | 'callers' | 'tools' | 'security' | 'recent-calls';
 
@@ -410,6 +409,7 @@ function sortCatalog(entries: RegistryEntry[], pop: PopularityMap): RegistryEntr
 export function App() {
   const toast = useToast();
   const [view, setView] = useState<View>('servers');
+  const usageReports = useManagerUsageReports(view);
   const [servers, setServers] = useState<ServerStatus[] | null>(null);
   const [registry, setRegistry] = useState<RegistryEntry[]>([]);
   const [gateway, setGateway] = useState<GatewayInfo | null>(null);
@@ -527,6 +527,7 @@ export function App() {
         return;
       }
       openAuth(status.authUrl, popup);
+      trackManagerFeature('server_added');
       toast.show(`Added ${e.name} — finish signing in to connect`, 'success');
     } catch {
       const existing = servers?.find((server) => server.id === e.id);
@@ -665,10 +666,11 @@ export function App() {
       <div className="app-main">
         <aside className="side-rail">
           <nav className="nav" aria-label="Primary navigation">
-            {(['servers', 'people', 'analytics', 'settings'] as View[]).map((item) => (
+            {MANAGER_VIEWS.map((item) => (
               <div className="nav-group" key={item}>
                 <button
                   className={view === item ? 'active' : ''}
+                  aria-label={item[0].toUpperCase() + item.slice(1)}
                   aria-current={view === item ? 'page' : undefined}
                   onClick={() => { if (item === 'people') setInviteSignal(0); openView(item); }}
                 >
@@ -870,6 +872,7 @@ export function App() {
                             url: e.url, transport: e.transport ?? 'http', auth: 'token', token, enabled: true,
                           });
                           if (status.state === 'authorizing') throw new Error(status.error ?? 'token rejected');
+                          trackManagerFeature('server_added');
                           toast.show(`Connected ${e.name}`, 'success');
                         }
                         setTokenTarget(null);
@@ -907,7 +910,7 @@ export function App() {
               ) : view === 'analytics' ? (
                 <AnalyticsView stats={stats} servers={servers ?? []} registry={registry} />
               ) : (
-                <SettingsView gateway={gateway} version={version} u={updater} />
+                <SettingsView gateway={gateway} version={version} u={updater} usageReports={usageReports} />
               )}
             </ErrorBoundary>
           </main>
@@ -1524,7 +1527,13 @@ function ServerRow({ s, agents, onChange, onToken, onOAuthApp }: {
   const authorizing = s.state === 'authorizing';
   const act = async (action: 'start' | 'stop' | 'restart') => {
     try {
-      await api.action(s.id, action);
+      const result = await api.action(s.id, action);
+      if (action === 'stop' && result.state === 'stopped') {
+        trackManagerFeature('server_stopped');
+      } else if (result.state === 'ready') {
+        if (action === 'start') trackManagerFeature('server_started');
+        if (action === 'restart') trackManagerFeature('server_restarted');
+      }
       toast.show(`${action === 'stop' ? 'Stopped' : action === 'restart' ? 'Restarted' : 'Started'} ${s.name}`, 'success');
     } catch {
       toast.show(`Could not ${action} ${s.name}`, 'error');
@@ -2684,17 +2693,20 @@ function SchemaParams({ schema }: { schema: unknown }) {
 /** A labeled on/off switch row. */
 function ToggleRow({
   label, desc, checked, disabled, onChange,
-}: { label: string; desc: string; checked: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
+}: { label: string; desc: ReactNode; checked: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
+  const descriptionId = useId();
   return (
     <div className="list-row setting-row">
       <div className="setting-text">
         <div className="setting-label">{label}</div>
-        <div className="small muted">{desc}</div>
+        <div className="small muted" id={descriptionId}>{desc}</div>
       </div>
       <button
+        type="button"
         role="switch"
         aria-checked={checked}
         aria-label={label}
+        aria-describedby={descriptionId}
         className={`toggle ${checked ? 'on' : ''}`}
         disabled={disabled}
         onClick={() => onChange(!checked)}
@@ -2746,8 +2758,39 @@ function CloseActionRow({ value, busy, onChange }: { value: CloseAction; busy: b
   );
 }
 
+function UsageReportsSettings({ reports }: { reports: NonNullable<ReturnType<typeof useManagerUsageReports>> }) {
+  return (
+    <>
+      <h2 className="section-title">Help the Nekko team</h2>
+      <div className="panel"><div className="list">
+        <ToggleRow
+          label="Share usage reports"
+          desc={reports.blocked
+            ? 'Nothing is sent while Do Not Track or Global Privacy Control is on.'
+            : !reports.available
+              ? 'Usage reporting is not available in this build. Nothing is sent.'
+              : 'Off by default. You can turn it off any time.'}
+          checked={reports.enabled}
+          disabled={!reports.available || reports.blocked}
+          onChange={reports.setEnabled}
+        />
+        <div className="list-row usage-reports-copy small muted">
+          <p>Share when you open the Hypergate desktop manager, which views you open, and when you complete actions like adding a server.</p>
+          <p>Reports never include names, credentials, tool calls, or their inputs and outputs. Your gateway’s Analytics stays on this machine.</p>
+          <a href="https://hypergate.app/privacy/" target="_blank" rel="noreferrer">Privacy policy</a>
+        </div>
+      </div></div>
+    </>
+  );
+}
+
 /** Updates, service/desktop options (run at login, start minimized), stop the daemon. */
-function SettingsView({ gateway, version, u }: { gateway: GatewayInfo | null; version: string; u: Updater }) {
+function SettingsView({ gateway, version, u, usageReports }: {
+  gateway: GatewayInfo | null;
+  version: string;
+  u: Updater;
+  usageReports: ReturnType<typeof useManagerUsageReports>;
+}) {
   const checking = u.stage === 'checking';
   const onCheck = (): void => void u.check(true);
   const [s, setS] = useState<SettingsInfo | null>(null);
@@ -2779,6 +2822,9 @@ function SettingsView({ gateway, version, u }: { gateway: GatewayInfo | null; ve
       </div>
 
       <CloudSetup master={gateway?.token} onApply={() => { void api.settings().then(setS).catch(() => setErr('Could not refresh settings.')); }} />
+
+      {usageReports && <UsageReportsSettings reports={usageReports} />}
+
       <div className="section-title" id="updates">
         Updates
         <span className="rt">
@@ -3311,6 +3357,7 @@ function AddServer({ entry, token, onClose, onAdded }: { entry: RegistryEntry | 
     };
     try {
       await api.add(cfg);
+      trackManagerFeature('server_added');
       toast.show(`Added ${cfg.name} — starting…`, 'success');
       onAdded();
     } catch (e) {
@@ -4622,6 +4669,7 @@ function AgentConnect({ agent, initialTarget, autoRun }: { agent: AgentClientInf
     setBusy(true);
     setResult(null);
     const r = await api.connect(agent.id, targetId).catch(() => null);
+    if (r?.ok) trackManagerFeature('agent_connected');
     setResult(r ?? { ok: false, target: targetId, command: '', output: '', error: 'The daemon could not run the command.' });
     setBusy(false);
   }, [agent.id]);
@@ -5608,6 +5656,7 @@ function ServerRequestRow({ r, token, onAnswered }: {
       } else if (res.alreadyConfigured) {
         toast.show(`${r.displayName} was already added.`);
       } else {
+        trackManagerFeature('server_added');
         toast.show(`Added ${r.displayName}${r.outstanding.length ? ' — see what it still needs' : ''}`, 'success');
       }
     } catch {

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy policy · Hypergate</title>
+  <meta name="description" content="What Hypergate keeps on your device, what optional website and desktop usage reports send, and how to change your privacy choices." />
+  <link rel="canonical" href="https://hypergate.app/privacy/" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body data-legal-page="privacy">
+  <header class="nav scrolled" id="nav">
+    <a class="nav-brand" href="/"><img class="nav-mark" src="/favicon.svg" alt="" width="26" height="26" />Hypergate</a>
+    <nav class="nav-links" aria-label="Main navigation">
+      <a href="/">Overview</a><a href="/release-notes.html">Release notes</a>
+    </nav>
+  </header>
+
+  <main class="legal-main">
+    <p class="feat-k">Hypergate / Legal</p>
+    <h1>Privacy policy</h1>
+    <p>Last updated: 27 November 2026</p>
+    <p><strong>Nekko Labs LLC</strong>, a Wyoming company at 30 North Gould Street, Suite N, Sheridan, WY 82801, United States, is the controller for the data described here. This policy covers the website and the local Hypergate app. Your analytics choice for one does not change the other.</p>
+
+    <section aria-labelledby="website-analytics">
+      <h2 id="website-analytics">Visiting this website</h2>
+      <p>Vercel serves hypergate.app. Your browser also requests public release information from GitHub to show release notes and find installers. When you use a GitHub download link, GitHub serves the download. These requests work without analytics and your IP address and standard request metadata are visible to the service handling the request.</p>
+      <p><strong>Website analytics is off unless you allow it.</strong> If you opt in, we count visits to the home, release notes, privacy and terms pages, clicks on supported installer and portable archive links, and successful copies of the shell install command. Clicks and copies tell us how visitors intend to install, not whether they finished a download or installed the app. We send only fixed labels, not full URLs, query strings, referrers, clicked text or clipboard contents.</p>
+      <p>Use <strong>Privacy choices</strong> in the footer to change your website setting. You can use the site and follow download links without opting in.</p>
+    </section>
+
+    <section aria-labelledby="local-app">
+      <h2 id="local-app">Using the Hypergate app</h2>
+      <p><strong>Desktop usage reports are off by default.</strong> In the native Hypergate desktop Manager, go to <strong>Settings → Share usage reports</strong> to opt in or turn sharing off. If you opt in, we collect a report when the Manager opens (or when you enable reporting while it is open), which of its main views you open, and fixed labels for certain actions: adding, starting, stopping or restarting a server, or connecting an agent. The browser Manager, the Manager embedded in Nekko Agent, the background tray, the daemon and the CLI do not send these reports.</p>
+      <p>The gateway’s Analytics dashboard is your local audit trail, not a usage report. Neither website analytics nor desktop usage reports include server or agent names, credentials, logs, tool calls, or their inputs and outputs. External services you choose to connect have their own policies. See the <a href="https://github.com/nekko-labs/hypergate/blob/main/PRIVACY.md">app privacy notes</a> for details about local storage, updates and connected services.</p>
+    </section>
+
+    <section aria-labelledby="choices">
+      <h2 id="choices">Consent and local storage</h2>
+      <p>We rely on your consent for analytics. The site and the desktop webview each save their own choice in local storage. Each creates its own random ID only after you opt in; we don’t link the two IDs. The banner calls them cookies, but nothing is set as an HTTP cookie: the choice and ID stay in local storage and never ride along with page requests. Turning analytics off stops future reports and removes that surface’s local ID. It doesn’t erase events already sent. The choice stays until you change it or clear that storage.</p>
+      <p><strong>Do Not Track (DNT)</strong> and <strong>Global Privacy Control (GPC)</strong>, where exposed by your browser or desktop webview, block reports and count as turning analytics off: a previous opt-in is withdrawn and its local ID removed.</p>
+    </section>
+
+    <section aria-labelledby="processing">
+      <h2 id="processing">Who handles the reports and how long we keep them</h2>
+      <p>PostHog processes reports for us to help us understand interest in Hypergate and use of its desktop features. Each report includes a fixed event and value, the product and reporting surface, and that surface’s random ID. PostHog receives standard connection metadata such as your IP address when it receives the request. We disable location enrichment and person profiles for these events and do not use session replay. We do not sell personal information or share it for cross-context behavioral advertising.</p>
+      <p>We keep event-level data only as long as needed for those purposes, subject to the retention settings for the receiving PostHog project and applicable legal requirements.</p>
+    </section>
+
+    <section aria-labelledby="contact">
+      <h2 id="contact">Your rights and how to contact us</h2>
+      <p>Depending on where you live, you can ask to access, correct or delete your data, restrict its use, get a portable copy, or object to processing. You can withdraw consent at any time without affecting processing before withdrawal, and you may complain to your local data protection authority.</p>
+      <p>Email <a href="mailto:hello@nekkoagent.com">hello@nekkoagent.com</a> for questions or privacy requests. We don’t use an account or email address to identify analytics reports and may need the random ID to find them. Contact us for help identifying your reports before turning analytics off or clearing local storage, which removes the ID.</p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-in">
+      <span>Hypergate · local-first · MIT</span>
+      <span class="foot-dim">Built by <a href="https://github.com/nekko-labs" target="_blank" rel="noopener">Nekko Labs</a></span>
+      <span class="foot-links"><a href="/">Overview</a><a href="/release-notes.html">Release notes</a></span>
+      <nav class="foot-links" aria-label="Legal and privacy">
+        <a href="/privacy/" aria-current="page">Privacy</a><a href="/terms/">Terms</a>
+        <button type="button" data-analytics-settings aria-haspopup="dialog" hidden>Privacy choices</button>
+      </nav>
+    </div>
+  </footer>
+  <script type="module" src="/src/legal.ts"></script>
+</body>
+</html>

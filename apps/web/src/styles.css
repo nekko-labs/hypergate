@@ -887,6 +887,9 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .setting-text { min-width: 0; }
 .setting-label { font-weight: 600; font-size: 14px; letter-spacing: -0.2px; }
+.usage-reports-copy { display: grid; gap: 8px; }
+.usage-reports-copy p { margin: 0; }
+.usage-reports-copy a { justify-self: start; text-decoration: underline; }
 .toggle {
   flex: none; width: 40px; height: 23px; border-radius: 999px; padding: 0; margin: 0;
   border: 1px solid var(--line-2); background: var(--card-2); cursor: pointer;

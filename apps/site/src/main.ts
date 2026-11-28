@@ -5,8 +5,10 @@
  */
 import Lenis from 'lenis';
 import { hydrateDownloadCtas } from './downloads';
+import { initSiteAnalytics, recordInstallCommandCopy } from './analytics';
 
-void hydrateDownloadCtas();
+initSiteAnalytics('home');
+void hydrateDownloadCtas(recordInstallCommandCopy);
 
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const lowPower = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 760;

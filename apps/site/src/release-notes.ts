@@ -1,5 +1,8 @@
 import { fetchReleases, hydrateDownloadCtas, type GithubRelease } from './downloads';
+import { initSiteAnalytics } from './analytics';
+import { installerPlatform } from './installer-intent';
 
+initSiteAnalytics('releases');
 void hydrateDownloadCtas();
 
 const nav = document.getElementById('nav');
@@ -63,6 +66,7 @@ function appendInline(parent: HTMLElement, text: string) {
     if (linkMatch) {
       const link = document.createElement('a');
       link.href = linkMatch[2];
+      if (installerPlatform(link.href)) link.dataset.releaseInstaller = '';
       link.target = '_blank';
       link.rel = 'noopener';
       link.textContent = linkMatch[1];
@@ -151,6 +155,7 @@ function releaseEntry(release: GithubRelease): HTMLElement {
     for (const asset of assets) {
       const link = document.createElement('a');
       link.href = asset.browser_download_url;
+      link.dataset.releaseInstaller = '';
       link.textContent = asset.name
         .replace(`hypergate-${release.tag_name.replace(/^v/, '')}-`, '')
         .replace(`hypergate_${release.tag_name.replace(/^v/, '')}_`, '');
