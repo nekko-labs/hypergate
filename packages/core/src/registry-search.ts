@@ -95,6 +95,18 @@ export function officialFromNamespace(namespace: string): boolean | undefined {
   return ns.includes('.'); // a real reverse-DNS (domain-verified) namespace
 }
 
+/**
+ * The registry namespaces Nekko Labs publishes under: its verified domain
+ * (`com.nekkolabs/floop`) and its GitHub organisation (`io.github.nekko-labs/hypergate`).
+ * Only the owner of each can publish there, so the tag can't be claimed by anyone else.
+ */
+const NEKKO_LABS_NAMESPACES = new Set(['com.nekkolabs', 'io.github.nekko-labs']);
+
+/** True when a registry namespace belongs to Nekko Labs. */
+export function isNekkoLabsNamespace(namespace: string): boolean {
+  return NEKKO_LABS_NAMESPACES.has(namespace.trim().toLowerCase());
+}
+
 /** The registry spells streamable HTTP `streamable-http`; we call it `http`. */
 const remoteTransport = (type?: string): RemoteTransport => (String(type).toLowerCase() === 'sse' ? 'sse' : 'http');
 
@@ -113,6 +125,7 @@ export function mapRegistryServer(srv: RegistryServer): RegistryEntry {
     runnable: false,
     publisher: namespace || undefined,
     official: officialFromNamespace(namespace),
+    nekkoLabs: isNekkoLabsNamespace(namespace) || undefined,
   };
 
   // Prefer a stdio package we know how to launch, best channel first. An `mcpb`

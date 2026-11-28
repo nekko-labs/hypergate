@@ -73,23 +73,21 @@ hypergate/                         GitHub: nekko-labs/hypergate (public, MIT)
 - Build → verify → push to `main` (CI green). Conventional commits. Mock/test the supervisor with a trivial in-repo echo MCP server so tests need no external binaries.
 - Every shipped feature → status + release in `SPEC.md`; new work broken down here first.
 
-### 4.1 Versioning: every PR bumps the minor
+### 4.1 Versioning: nightly releases, no version bumps in PRs
 
-**Every PR bumps the release version by one minor** (`0.17.0` → `0.18.0`), unless the PR itself says otherwise. Run it, don't hand-edit:
+**PRs never bump the version** (unless Philip asks). Since 2026-11-28 the version comes from tags, the way nekko-agent does it (its decision 0055):
 
-```
-npm run version:bump          # minor, the rule
-npm run version:bump -- --patch   # only when explicitly called for (a fix on a cut release)
-npm run version:check         # assert every file still agrees
-```
+- **Every night** `nightly-release.yml` releases whatever merged to `main` since the last release, as the next patch on the current line: v1.38.0, then v1.38.1, v1.38.2 (`scripts/nightly-version.mjs`). It skips a night when `main` has not moved, or when CI on `main`'s head is not green. `gh workflow run nightly-release.yml` releases now instead of waiting.
+- **A release that fails after its tag exists** is not retried by the next night (the tag counts as released, and a night with new merges takes the next patch). Re-run it at its tag: `gh workflow run release.yml --ref vX.Y.Z`.
+- **A new MAJOR.MINOR line** starts only on Philip's say-so, by pushing the short tag: `git tag -a v1.39 -m v1.39 origin/main && git push origin v1.39`. `version-release.yml` adds `v1.39.0` on the same commit and releases it. A hand-pushed full `vX.Y.Z` tag also releases.
+- **The tag is the version.** `release.yml` and `build-artifacts.yml` stamp it into every file that carries it (`node scripts/bump-version.mjs <version>`) before building, so nothing has to be committed first. The committed version is only what local and PR builds report, and a floor: if it is above every tag, the nightly releases exactly that.
+- **Release notes** come from `docs/releases/unreleased/<topic>.md`, one file per PR (so two PRs never conflict), merged by the release into one body. Without any, the release lists the PR titles merged since the last tag. See [docs/releases/README.md](docs/releases/README.md).
 
-Why a minor every time: the publish job checks the tag against the root `package.json`, so a merged PR that left the version alone can never be released on its own. Bumping in the PR means `main` is always taggable, and the version in a bug report names the exact merge.
+Why: with a minor bump per PR, every PR had to reserve the next number, so PRs queued behind each other ("keep this draft until #137 lands") and a single blocked PR held up every release.
 
-**Merging the bump is what cuts the release.** `version-release.yml` watches pushes to main that touch `package.json` and, when that version has no tag yet, tags it and dispatches `release.yml`; hand-tagging still works and is the fallback. It tags *and* dispatches because a tag pushed with `GITHUB_TOKEN` cannot trigger another workflow, so tagging alone would leave `release.yml` unfired. Before tagging it runs `version:check` and requires `docs/releases/<version>.md` to exist, so a partial bump or missing notes fails while there is still nothing tagged. Which means: **the notes file belongs in the same PR as the bump.**
+The version is written in the files `scripts/bump-version.mjs` lists (root and daemon `package.json`, the daemon's `VERSION` constant, `apps/shell/Cargo.toml` + `Cargo.lock`, the plugin manifest, the marketplace entry and `server.json`). `npm run version:check` asserts they agree, and CI's stamping moves them all at once.
 
-The version is written in **seven** files that must move together, which is the whole reason for the script: root `package.json`, `apps/daemon/package.json`, the `VERSION` constant in `apps/daemon/src/index.ts` (served on `/health` and compared against the update feed), `apps/shell/Cargo.toml` + `Cargo.lock`, `.claude-plugin/marketplace.json`, and `plugins/hypergate/.claude-plugin/plugin.json`. `npm run version:check` fails on drift.
-
-New features land under that version in `SPEC.md` (the **Release** column) and as a shipped entry here. A PR that ships nothing user-visible (docs, tests, CI) still bumps, so "unless mentioned" is the escape hatch, not a judgement call to make silently.
+New features land in `SPEC.md` with the **Release** column left as `next` until the nightly that ships them; fill it in afterwards if it matters.
 
 ## 5. Execution Plan (backlog)
 
@@ -986,3 +984,7 @@ Philip, the morning after v1.12.0: *"when clicking on about hypergate, it crashe
 - [x] **One horizontal toggle, one action button**: the per-route button wall became a `.seg` toggle of manager labels with a single Install (or Repair + armed Uninstall when installed) that runs the selected route; script routes say they are copy-only in a sentence. `.cli-installs` gained `align-items: flex-start` so the toggle hugs its content. · [spec](SPEC.md#34-ui-shipped) · Added: 2026-08-25 · Done: 2026-08-25
 - [x] **The Updates headline names the version**: "You're on the latest version, v1.13.0". · [spec](SPEC.md#38-desktop-shell--cli-shipped) · Added: 2026-08-25 · Done: 2026-08-25
 - [x] **Verified**: 243 core + 84 daemon JS tests, 57 shell unit tests, `cargo fmt`, `clippy -D warnings`, clean builds, HTTP smoke, all re-run inside this branch's worktree after a stray working-directory mixup was caught and reverted. Live on an isolated daemon: the vercel row renders npm/pnpm/yarn/bun as a toggle with one Install; a real cowsay install ran from the new button (log streaming), the row flipped to Repair/armed Uninstall on the selected route, and a real uninstall left the machine clean; Fly CLI's `curl | sh` route shows the copy-only sentence; Settings shows the versioned headline. Before/after screenshots in the PR. · Added: 2026-08-25 · Done: 2026-08-25
+
+## v1.38.0: identify Nekko Labs servers (#137)
+
+- [x] Show the publisher chip on the two curated entries and on matching registry namespaces; wrap badges on narrow rows. Verify look-alike namespaces are not tagged.

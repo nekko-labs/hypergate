@@ -26,6 +26,10 @@ describe('REGISTRY catalog', () => {
     }
   });
 
+  it('tags the curated Nekko Labs servers, not other official servers', () => {
+    expect(REGISTRY.filter((e) => e.nekkoLabs).map((e) => e.id).sort()).toEqual(['nekko-agent', 'nekko-vault']);
+  });
+
   it('uses Vercel’s verified remote OAuth endpoint', () => {
     expect(registryEntry('vercel')).toMatchObject({
       runtime: 'remote',

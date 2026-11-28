@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { registryConnections, resolveRegistryConnection, type RegistryEntry } from '@hypergate/shared';
 import { RUNTIME_CHIP } from '../../lib/format';
+import { NekkoLabsChip } from '../NekkoLabsChip';
 
 /** One catalog row (curated or registry-search result) with an Add button. */
 export function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: RegistryEntry) => void }) {
@@ -15,9 +16,10 @@ export function CatalogRow({ e, onPick }: { e: RegistryEntry; onPick: (e: Regist
     <div className="list-row">
       <div className="row between wrap-gap">
         <div style={{ flex: 1, minWidth: 200 }}>
-          <div className="row" style={{ gap: 8 }}>
+          <div className="row wrap-gap" style={{ gap: 8 }}>
             {e.recommended && <span className="rec-star" title="Recommended">★</span>}
             <span className="server-name">{e.name}</span>
+            <NekkoLabsChip e={e} />
             {e.official === true && (
               <span className="chip chip-official" title={e.publisher ? `Verified publisher: ${e.publisher}` : 'First-party / official server'}>✓ Official</span>
             )}
