@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// Move the release version. Every PR bumps the minor by one (see TASKS.md §4),
-// so this exists to make that one command rather than six hand edits that drift.
+// Write one version into every file that carries it. PRs no longer bump the
+// version (TASKS.md §4.1): release.yml and build-artifacts.yml run this with the
+// release tag's version before building, so the tag is the version.
 //
-//   node scripts/bump-version.mjs            # minor bump (the default rule)
-//   node scripts/bump-version.mjs --patch    # patch, for a fix on a cut release
-//   node scripts/bump-version.mjs 0.20.0     # an exact version
+//   node scripts/bump-version.mjs 1.38.2     # an exact version (what CI stamps)
+//   node scripts/bump-version.mjs            # minor bump, only when Philip asks
+//   node scripts/bump-version.mjs --patch    # patch
 //   node scripts/bump-version.mjs --check    # assert every file already agrees
 //
 // The root package.json is the source of truth; the release workflow checks the

@@ -2,6 +2,25 @@
 
 Conventions for any AI agent or human opening PRs in this repo.
 
+## Landing work
+
+- **Open the PR ready, not draft**, once your own checks pass. Draft is only for
+  work you are still doing, or a named release blocker: the change breaks
+  something that worked, a required check is red because of it, the evidence this
+  file requires is missing, or Philip said to wait. Name which one when a PR
+  stays draft. "CI is still running" or "another PR should land first" is never a
+  reason.
+- **Never bump the version** in a PR unless Philip asks. Releases go out nightly
+  from tags (TASKS.md §4.1), so PRs don't wait on each other for a version number.
+  Put user-visible notes in `docs/releases/unreleased/<topic>.md`
+  ([docs/releases/README.md](docs/releases/README.md)).
+- Every PR description has an **Unfinished work / release blockers** section.
+  Things this environment can't produce (a native-window recording without
+  Screen Recording permission, live sign-in accounts, proof of a production
+  deploy) go there as follow-ups with the next step. They are not reasons to stay
+  in draft, except where the visual evidence rule below applies and *some*
+  before/after capture is possible (isolated Chromium counts for the web UI).
+
 ## UI changes need visual evidence
 
 Any PR that changes what the app looks like ships the proof in its description:

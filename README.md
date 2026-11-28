@@ -149,14 +149,9 @@ On macOS, run `/Applications/Hypergate.app/Contents/Resources/uninstall.sh` befo
 
 [`.github/workflows/build-artifacts.yml`](.github/workflows/build-artifacts.yml) builds all five platforms and can be run on demand, without cutting a release, when you want an installer to test.
 
-Releases are cut by tag: `git tag v0.9.0 && git push --tags` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds all five shells, publishes the platform packages and then the main package to npm with provenance, and attaches standalone binaries to the GitHub release.
+Releases go out **nightly**: [`.github/workflows/nightly-release.yml`](.github/workflows/nightly-release.yml) tags whatever merged since the last release as the next patch (v1.38.1, v1.38.2, …) and runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which stamps that version, builds all five shells, publishes the platform packages and then the main package to npm with provenance, and attaches standalone binaries to the GitHub release. A new MAJOR.MINOR line starts from a short tag: `git tag -a v1.39 -m v1.39 origin/main && git push origin v1.39`.
 
-**Every pull request bumps the version by one minor**, unless the PR says otherwise, so `main` is always taggable:
-
-```bash
-npm run version:bump    # 0.17.0 → 0.18.0 across all seven files that carry the version
-npm run version:check   # assert they still agree
-```
+**Pull requests don't bump the version.** A PR with a user-visible change adds a note file under `docs/releases/unreleased/` instead ([TASKS.md §4.1](TASKS.md), [docs/releases/README.md](docs/releases/README.md)).
 
 ### Run it as a desktop app (Windows, macOS, Linux)
 
