@@ -37,7 +37,7 @@ export const KNOWN_CLIS: CliTool[] = [
     name: 'Claude Code',
     command: 'claude',
     category: 'mcp',
-    description: "Anthropic's Claude Code CLI — a first-class Hypergate gateway client.",
+    description: "Anthropic's command-line coding assistant.",
     homepage: 'https://code.claude.com/docs/en/setup',
     install: 'curl -fsSL https://claude.ai/install.sh | bash',
     official: true,

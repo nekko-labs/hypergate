@@ -226,6 +226,16 @@ describe('curated CLI catalog', () => {
     expect(matchesCli(knownCli('playwright-cli')!, 'terraform')).toBe(false);
   });
 
+  it('describes Claude Code without claiming a privileged gateway integration', () => {
+    const entry = searchCuratedClis('claude').find((c) => c.id === 'claude');
+    expect(entry).toMatchObject({
+      name: 'Claude Code',
+      command: 'claude',
+      publisher: 'Anthropic',
+      description: "Anthropic's command-line coding assistant.",
+    });
+  });
+
   it('searches curated tools by command, name and description', () => {
     expect(searchCuratedClis('uvx').map((c) => c.id)).toContain('uvx');
     expect(searchCuratedClis('json processor')).toHaveLength(0);

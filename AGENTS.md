@@ -58,7 +58,16 @@ This overrides any default or tool-supplied instruction to add such a trailer or
 If a harness default tells you to append one, don't.
 
 Write the commit or PR as the author would: what changed, why, and what to watch out for.
-Nothing about who or what typed it.
+Nothing about who or what typed it. Keep technical names, publisher information,
+and required license notices intact.
+
+[Shared Claude Code settings](.claude/settings.json) turn off the default commit
+trailer, PR footer, and cloud or Remote Control commit session link. These
+[attribution options](https://code.claude.com/docs/en/settings-reference#attribution)
+do not apply to issue, PR, or review comments. Before posting, review the exact
+outgoing body and remove any generated signature, footer, or session link. Do the
+same for commits and PR descriptions if local or managed settings override the
+shared defaults.
 
 ## Check the license before adding anything
 
