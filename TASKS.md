@@ -604,7 +604,7 @@ The section could already find and describe tools (v0.22.0); everything it found
 
 ## Optional adoption analytics ([#140](https://github.com/nekko-labs/hypergate/issues/140), release pending)
 
-Measure adoption without exporting local gateway activity. See [SPEC §3.14](SPEC.md#314-optional-adoption-analytics-140) and the [operator guide](docs/analytics.md). PR #141 carries no version bump while #137 is queued for v1.38.0. After v1.38.0 is published, update from main, run the standard minor bump (expected v1.39.0), and move the [pending notes](docs/site-changes/2026-11-27-consent/pending-release-notes.md) into the matching release file before requesting merge.
+Measure adoption without exporting local gateway activity. See [SPEC §3.14](SPEC.md#314-optional-adoption-analytics-140) and the [operator guide](docs/analytics.md). Release notes: [usage-reports.md](docs/releases/unreleased/usage-reports.md), shipped by the next nightly.
 
 - [x] Bound the event schema and consent gates in the shared browser transport: fixed labels and scoped UUIDs; no SDK, analytics cookies or gateway data.
 - [x] Measure opted-in site page views and installer intent; offer a reversible website choice.

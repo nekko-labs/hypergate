@@ -1,5 +1,3 @@
-# Optional Hypergate usage reports
-
 ### Features
 
 - **Choose whether to share desktop usage reports.** The new **Help the Nekko team** section in Settings is off by default and excludes tool calls, credentials, and gateway activity.
