@@ -2859,8 +2859,11 @@ if (STDIO_MODE) {
         const wanted=new Map(b.desired.servers.map(s=>[s.catalogId,s.enabled]));
         const installed=new Set(local.servers.map(s=>s.catalogId));
         const next=servers.map(s=>installed.has(s.id) && wanted.has(s.id) ? {...s,enabled:wanted.get(s.id)!} : s);
-        saveConfig(next); servers=next;
-        saveSettings({...cur,startMinimized:b.desired.startMinimized,closeAction:b.desired.closeAction});
+        // Two files: if the second write fails, put the first back so apply is all-or-nothing.
+        try { saveConfig(next); } catch { return json(res,500,{error:'apply_failed'}); }
+        try { saveSettings({...cur,startMinimized:b.desired.startMinimized,closeAction:b.desired.closeAction}); }
+        catch { try { saveConfig(servers); } catch { /* config keeps the new flags; reported below */ } return json(res,500,{error:'apply_failed'}); }
+        servers=next;
         return json(res,200,projectSetup(loadSettings(),servers));
       }
       return json(res,405,{error:'method_not_allowed'});
