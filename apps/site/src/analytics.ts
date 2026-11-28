@@ -25,12 +25,19 @@ export function initSiteAnalytics(page: Page): void {
   banner.setAttribute('data-lenis-prevent', '');
   banner.hidden = true;
   banner.innerHTML = `
-    <p class="feat-k">Your choice</p>
-    <h2 id="analytics-banner-title">Allow website analytics?</h2>
-    <p>Help us understand which pages people visit and how they choose to install Hypergate. It’s optional and uses no analytics cookies.</p>
+    <div class="cookie-head">
+      <svg class="cookie-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+        <defs><linearGradient id="cookie-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c6bff"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs>
+        <path d="M24 4a20 20 0 1 0 20 20 6 6 0 0 1-7-6 6 6 0 0 1-6-7 6 6 0 0 1-7-7Z" fill="var(--bg-2)" stroke="url(#cookie-grad)" stroke-width="2.5" stroke-linejoin="round"/>
+        <circle cx="16" cy="18" r="2.6" fill="var(--violet)"/><circle cx="27" cy="27" r="2.6" fill="var(--cyan)"/>
+        <circle cx="15" cy="31" r="2.2" fill="var(--cyan)"/><circle cx="33" cy="36" r="2" fill="var(--violet)"/><circle cx="23" cy="38" r="1.6" fill="var(--ice)"/>
+      </svg>
+      <h2 id="analytics-banner-title">Care for a cookie?</h2>
+    </div>
+    <p>Our cookies are made with only the best ingredients. No spam or data sales risks inside. They only tell us which pages get visited and how people install Hypergate.</p>
     <div class="analytics-actions">
-      <button type="button" data-deny>Decline analytics</button>
-      <button type="button" data-allow>Allow analytics</button>
+      <button type="button" class="btn btn-ghost" data-deny>No thanks</button>
+      <button type="button" class="btn btn-ghost" data-allow>Accept cookies</button>
     </div>
     <a class="analytics-details" href="/privacy/#website-analytics">Privacy details</a>`;
   document.querySelector('main')?.before(banner);

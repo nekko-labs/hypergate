@@ -96,7 +96,7 @@ async function visit(page, origin, path) {
   }
 }
 
-const bubble = (p) => p.getByRole('region', { name: 'Allow website analytics?' });
+const bubble = (p) => p.getByRole('region', { name: 'Care for a cookie?' });
 const dialog = (p) => p.getByRole('dialog', { name: 'Privacy choices' });
 const manage = (p) => p.getByRole('button', { name: 'Privacy choices' });
 const local = (p) => p.evaluate(() => Object.fromEntries(Object.entries(localStorage)));
@@ -146,8 +146,8 @@ async function verify(browser) {
     const s = getComputedStyle(el);
     return [s.width, s.height, s.font, s.backgroundColor, s.color, s.borderColor];
   });
-  assert.deepEqual(await style('Decline analytics'), await style('Allow analytics'));
-  await bannerAction(page, 'Decline analytics').focus();
+  assert.deepEqual(await style('No thanks'), await style('Accept cookies'));
+  await bannerAction(page, 'No thanks').focus();
   await page.keyboard.press('Enter');
   assert.equal(await page.evaluate(() => document.activeElement.tagName), 'MAIN');
   assert(!await bubble(page).isVisible());
@@ -254,7 +254,7 @@ async function verify(browser) {
     const p = await check.ctx.newPage();
     p.setDefaultTimeout(5000);
     await p.goto(`${after}/`);
-    await bannerAction(p, 'Allow analytics').click();
+    await bannerAction(p, 'Accept cookies').click();
     await count(check.requests, 1);
     const id = (await local(p))[idKey];
     await assertEvent(check.requests[0], 'page_view', 'home', id);
@@ -284,7 +284,7 @@ async function verify(browser) {
   const phone = await mobile.ctx.newPage();
   await visit(phone, after, '/');
   assert(!await phone.locator('[data-download-primary]').first().isVisible());
-  await bannerAction(phone, 'Decline analytics').tap();
+  await bannerAction(phone, 'No thanks').tap();
   assert(!await bubble(phone).isVisible());
   await manage(phone).tap();
   await dialog(phone).getByRole('button', { name: 'Allow analytics' }).tap();
@@ -331,7 +331,7 @@ async function capture(browser) {
         const save = (surface) => page.screenshot({ path: resolve(evidence, `${name}-${surface}-${mode}.png`) });
         await save(route);
         if (name === 'after') {
-          await bannerAction(page, 'Decline analytics').click();
+          await bannerAction(page, 'No thanks').click();
           if (route === 'privacy' || route === 'terms') {
             await page.screenshot({ path: resolve(evidence, `after-${route}-full-${mode}.png`), fullPage: true });
           }
@@ -358,7 +358,7 @@ async function capture(browser) {
       await visit(page, after, '/');
       await page.waitForTimeout(850);
       assert.deepEqual(requests, []);
-      await bannerAction(page, 'Allow analytics').click();
+      await bannerAction(page, 'Accept cookies').click();
       const id = (await local(page))[idKey];
       if (mode === 'desktop') {
         await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => {} } }));
