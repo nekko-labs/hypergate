@@ -18,6 +18,6 @@ process.on('SIGINT', () => {});
 process.on('SIGTERM', () => {});
 
 for (;;) {
-  const r = spawnSync(process.execPath, [launcher], { stdio: 'inherit', env: { ...process.env, HYPERGATE_DEV_LOOP: '1' } });
+  const r = spawnSync(process.execPath, [launcher, ...process.argv.slice(2)], { stdio: 'inherit', env: { ...process.env, HYPERGATE_DEV_LOOP: '1' } });
   if (r.status !== RESTART) process.exit(r.status ?? 1);
 }

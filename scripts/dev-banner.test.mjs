@@ -37,6 +37,15 @@ test('lists the keys only where there is a keyboard to press them', () => {
   assert.match(without, /Ctrl\+C stops it/);
 });
 
+test('says when the manager is in the desktop app, and that o is the browser then', () => {
+  const app = devBanner({ ...info, keys: true, desktop: true });
+  assert.match(app, /Desktop\s+the manager in the app's own window \(npm run dev:browser for a tab instead\)/);
+  assert.match(app, /o\s+open the manager in your browser/);
+  const tab = devBanner({ ...info, keys: true });
+  assert.doesNotMatch(tab, /Desktop/);
+  assert.doesNotMatch(tab, /in your browser/);
+});
+
 test('colour only when asked: escapes in a terminal, plain text otherwise', () => {
   assert.doesNotMatch(devBanner(info), /\x1b\[/);
   // The gate's violet-to-cyan gradient, one truecolour escape per character.

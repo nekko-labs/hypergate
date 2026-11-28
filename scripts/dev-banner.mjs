@@ -50,6 +50,7 @@ const gradient = (line, width) =>
  *   scratch?: boolean,
  *   keys?: boolean,
  *   restart?: boolean,
+ *   desktop?: boolean,
  *   color?: boolean,
  * }} info
  */
@@ -72,6 +73,7 @@ export function devBanner(info) {
     '',
   ];
   if (info.manager) lines.push(row('Manager', `${info.manager} ${c.dim('(hot reload)')}`));
+  if (info.desktop) lines.push(row('Desktop', `the manager in the app's own window ${c.dim('(npm run dev:browser for a tab instead)')}`));
   if (info.gateway) lines.push(row('Gateway', `${info.gateway} ${c.dim('(restarts on save)')}`));
   if (info.dataDir) {
     lines.push(
@@ -84,7 +86,7 @@ export function devBanner(info) {
       `  ${c.key('q')} or ${c.key('Enter')}  stop, with every server it started`,
       `  ${c.key('Ctrl+C')}      same; press again to force`,
       ...(info.restart === false ? [] : [`  ${c.key('r')}           restart with what is on disk ${c.dim('(after a git pull: installs, rebuilds)')}`]),
-      `  ${c.key('o')}           open the manager`,
+      `  ${c.key('o')}           open the manager${info.desktop ? ' in your browser' : ''}`,
       '',
     );
   } else {
